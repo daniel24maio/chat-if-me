@@ -1,14 +1,21 @@
-import React from 'react';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import ChatInterface from './components/ChatInterface/ChatInterface';
+import EmbeddingPage from './pages/EmbeddingPage/EmbeddingPage';
 
-// Nota: Se houver um arquivo de estilos globais (ex: global.css ou index.css),
-// certifique-se de importá-lo aqui para resetar o CSS padrão do navegador.
-// Ex: import './globals.css'; 
-
+/**
+ * Componente raiz da aplicação.
+ *
+ * Rotas:
+ *   / — Interface do chat (assistente virtual)
+ *   /embedding — Painel de administração para upload de documentos
+ */
 export default function App() {
   return (
-    <React.StrictMode>
-      <ChatInterface />
-    </React.StrictMode>
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<ChatInterface />} />
+        <Route path="/embedding" element={<EmbeddingPage />} />
+      </Routes>
+    </BrowserRouter>
   );
 }

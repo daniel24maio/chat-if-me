@@ -1,0 +1,22 @@
+services:
+  # ── PostgreSQL com pgvector ──
+  # Imagem oficial do pgvector já vem com a extensão pronta para uso.
+  # Ao subir pela primeira vez, executa automaticamente o init.sql.
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: chatifme-db
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: chatifme
+      POSTGRES_PASSWORD: chatifme123
+      POSTGRES_DB: chatifme
+    volumes:
+      # Persistência dos dados entre reinicializações
+      - pgdata:/var/lib/postgresql/data
+      # Executa o init.sql automaticamente na primeira subida do container
+      - ./packages/api/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+
+volumes:
+  pgdata:

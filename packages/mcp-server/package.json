@@ -1,0 +1,19 @@
+{
+  "name": "@chatifme/mcp-server",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --target es2022",
+    "dev": "tsup src/index.ts --format esm --target es2022 --watch"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "zod": "^3.25.11",
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.6",
+    "tsup": "^7.2.0",
+    "typescript": "^5.3.3"
+  }
+}

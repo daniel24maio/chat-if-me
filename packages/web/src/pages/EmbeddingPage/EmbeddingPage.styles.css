@@ -1,0 +1,456 @@
+/* ==========================================================================
+   EmbeddingPage — Painel de administração para ingestão de documentos
+   Paleta baseada nas cores oficiais do IFMG (Manual de Comunicação, p.55):
+     Verde IF: #2F9E41  (RGB 50/160/65)
+     Vermelho IF: #CD191E (RGB 200/25/30)
+   ========================================================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+/* ==========================================================================
+   Variáveis (modo claro e escuro)
+   ========================================================================== */
+
+:root {
+  --emb-ifmg-verde: #2F9E41;
+  --emb-ifmg-verde-escuro: #237a32;
+  --emb-ifmg-verde-claro: #3cc454;
+  --emb-ifmg-vermelho: #CD191E;
+
+  --emb-bg-page: #f0f4f1;
+  --emb-bg-card: #ffffff;
+  --emb-bg-dropzone: #f7faf8;
+  --emb-bg-dropzone-hover: rgba(47, 158, 65, 0.06);
+  --emb-border: #d4ddd6;
+  --emb-border-dropzone: #a3cba9;
+  --emb-text-primary: #1a2e1f;
+  --emb-text-secondary: #4a6b52;
+  --emb-text-muted: #7a9482;
+  --emb-shadow: rgba(47, 158, 65, 0.08);
+  --emb-success-bg: rgba(47, 158, 65, 0.08);
+  --emb-error-bg: rgba(205, 25, 30, 0.08);
+  --emb-error-text: #CD191E;
+}
+
+/* ── Modo escuro semântico ── */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --emb-bg-page: #0f1610;
+    --emb-bg-card: #151d17;
+    --emb-bg-dropzone: #1a241c;
+    --emb-bg-dropzone-hover: rgba(47, 158, 65, 0.1);
+    --emb-border: #2a3d2e;
+    --emb-border-dropzone: #3a5d40;
+    --emb-text-primary: #e8f0ea;
+    --emb-text-secondary: #a3bfa9;
+    --emb-text-muted: #6b8a72;
+    --emb-shadow: rgba(0, 0, 0, 0.3);
+    --emb-success-bg: rgba(47, 158, 65, 0.12);
+    --emb-error-bg: rgba(205, 25, 30, 0.12);
+    --emb-error-text: #f87171;
+  }
+}
+
+/* ==========================================================================
+   Layout da página
+   ========================================================================== */
+
+.embedding-page {
+  font-family: 'Inter', 'Segoe UI', Roboto, sans-serif;
+  min-height: 100vh;
+  background-color: var(--emb-bg-page);
+  color: var(--emb-text-primary);
+  display: flex;
+  flex-direction: column;
+}
+
+/* ==========================================================================
+   Header (reutiliza identidade visual IFMG)
+   ========================================================================== */
+
+.embedding-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.5rem;
+  background-color: var(--emb-bg-card);
+  border-bottom: 2px solid var(--emb-ifmg-verde);
+  box-shadow: 0 2px 12px var(--emb-shadow);
+  position: relative;
+  flex-shrink: 0;
+}
+
+/* Barra decorativa verde/vermelha no topo */
+.embedding-header::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(
+    90deg,
+    var(--emb-ifmg-verde) 0%,
+    var(--emb-ifmg-verde) 70%,
+    var(--emb-ifmg-vermelho) 70%,
+    var(--emb-ifmg-vermelho) 100%
+  );
+}
+
+.embedding-header-left {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.embedding-header .logo-img {
+  height: 3rem;
+  border-radius: 4px;
+}
+
+.embedding-header-text h1 {
+  font-size: 1.3rem;
+  font-weight: 800;
+  margin: 0;
+  line-height: 1.2;
+  color: var(--emb-text-primary);
+}
+
+.admin-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 0.15rem;
+  padding: 0.12rem 0.5rem;
+  background-color: rgba(205, 25, 30, 0.08);
+  border: 1px solid rgba(205, 25, 30, 0.3);
+  border-radius: 100px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--emb-ifmg-vermelho);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  background-color: transparent;
+  border: 1px solid var(--emb-border);
+  color: var(--emb-text-secondary);
+  text-decoration: none;
+  font-size: 0.85rem;
+  font-weight: 600;
+  transition: all 150ms ease;
+}
+
+.back-link:hover {
+  background-color: var(--emb-bg-dropzone-hover);
+  border-color: var(--emb-ifmg-verde);
+  color: var(--emb-ifmg-verde);
+}
+
+/* ==========================================================================
+   Conteúdo principal
+   ========================================================================== */
+
+.embedding-content {
+  flex: 1;
+  max-width: 720px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* ==========================================================================
+   Upload Zone (Drag & Drop)
+   ========================================================================== */
+
+.upload-card {
+  background-color: var(--emb-bg-card);
+  border: 1px solid var(--emb-border);
+  border-radius: 1rem;
+  padding: 1.5rem;
+  box-shadow: 0 2px 8px var(--emb-shadow);
+}
+
+.upload-card h2 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin: 0 0 1rem;
+  color: var(--emb-text-primary);
+}
+
+.dropzone {
+  border: 2px dashed var(--emb-border-dropzone);
+  border-radius: 0.75rem;
+  padding: 2.5rem 1.5rem;
+  text-align: center;
+  cursor: pointer;
+  transition: all 200ms ease;
+  background-color: var(--emb-bg-dropzone);
+  position: relative;
+}
+
+.dropzone:hover,
+.dropzone.drag-over {
+  border-color: var(--emb-ifmg-verde);
+  background-color: var(--emb-bg-dropzone-hover);
+  box-shadow: inset 0 0 0 1px rgba(47, 158, 65, 0.15);
+}
+
+.dropzone.drag-over {
+  transform: scale(1.01);
+}
+
+.dropzone-icon {
+  font-size: 2.5rem;
+  margin-bottom: 0.75rem;
+  display: block;
+}
+
+.dropzone-text {
+  font-size: 0.95rem;
+  color: var(--emb-text-secondary);
+  margin: 0;
+  line-height: 1.6;
+}
+
+.dropzone-text strong {
+  color: var(--emb-ifmg-verde);
+  cursor: pointer;
+}
+
+.dropzone-hint {
+  font-size: 0.78rem;
+  color: var(--emb-text-muted);
+  margin-top: 0.5rem;
+}
+
+.dropzone input[type="file"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* ==========================================================================
+   Lista de arquivos
+   ========================================================================== */
+
+.files-card {
+  background-color: var(--emb-bg-card);
+  border: 1px solid var(--emb-border);
+  border-radius: 1rem;
+  padding: 1.5rem;
+  box-shadow: 0 2px 8px var(--emb-shadow);
+}
+
+.files-card h2 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin: 0 0 1rem;
+  color: var(--emb-text-primary);
+}
+
+.files-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.file-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-radius: 0.6rem;
+  border: 1px solid var(--emb-border);
+  background-color: var(--emb-bg-dropzone);
+  animation: fadeSlideIn 0.3s ease;
+}
+
+@keyframes fadeSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.file-icon {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+}
+
+.file-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.file-name {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--emb-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-status {
+  font-size: 0.75rem;
+  color: var(--emb-text-muted);
+  margin-top: 0.15rem;
+}
+
+.file-status.success {
+  color: var(--emb-ifmg-verde);
+}
+
+.file-status.error {
+  color: var(--emb-error-text);
+}
+
+/* Barra de progresso */
+.progress-bar-container {
+  width: 100%;
+  height: 4px;
+  background-color: var(--emb-border);
+  border-radius: 100px;
+  margin-top: 0.4rem;
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--emb-ifmg-verde), var(--emb-ifmg-verde-claro));
+  border-radius: 100px;
+  transition: width 400ms ease;
+}
+
+/* Estado vazio */
+.empty-state {
+  text-align: center;
+  padding: 1.5rem 0;
+  color: var(--emb-text-muted);
+  font-size: 0.88rem;
+}
+
+.empty-state-icon {
+  font-size: 2rem;
+  margin-bottom: 0.5rem;
+  display: block;
+}
+
+/* ==========================================================================
+   Documentos já processados
+   ========================================================================== */
+
+.docs-card {
+  background-color: var(--emb-bg-card);
+  border: 1px solid var(--emb-border);
+  border-radius: 1rem;
+  padding: 1.5rem;
+  box-shadow: 0 2px 8px var(--emb-shadow);
+}
+
+.docs-card h2 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin: 0 0 1rem;
+  color: var(--emb-text-primary);
+}
+
+.doc-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--emb-border);
+}
+
+.doc-item:last-child {
+  border-bottom: none;
+}
+
+.doc-info {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.doc-name {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--emb-text-primary);
+}
+
+.doc-chunks {
+  font-size: 0.75rem;
+  color: var(--emb-text-muted);
+  background-color: var(--emb-success-bg);
+  padding: 0.2rem 0.6rem;
+  border-radius: 100px;
+  font-weight: 600;
+}
+
+.delete-doc-btn {
+  background: none;
+  border: none;
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 0.3rem;
+  border-radius: 0.3rem;
+  transition: all 150ms ease;
+  opacity: 0.6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.delete-doc-btn:hover {
+  opacity: 1;
+  background-color: var(--emb-error-bg);
+}
+
+/* ==========================================================================
+   Responsividade
+   ========================================================================== */
+
+@media (max-width: 600px) {
+  .embedding-header {
+    padding: 0.75rem 1rem;
+    flex-direction: column;
+    gap: 0.75rem;
+    align-items: flex-start;
+  }
+
+  .back-link {
+    align-self: flex-end;
+  }
+
+  .embedding-content {
+    padding: 1rem;
+  }
+
+  .dropzone {
+    padding: 1.5rem 1rem;
+  }
+
+  .embedding-header .logo-img {
+    height: 2.2rem;
+  }
+
+  .embedding-header-text h1 {
+    font-size: 1.1rem;
+  }
+}
