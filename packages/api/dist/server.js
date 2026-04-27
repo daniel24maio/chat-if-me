@@ -186,7 +186,12 @@ var REWRITE_SYSTEM_PROMPT = `Voc\xEA \xE9 um assistente de pr\xE9-processamento 
 Sua tarefa: reescrever a pergunta do usu\xE1rio para melhorar a busca sem\xE2ntica em documentos acad\xEAmicos.
 
 REGRAS:
-1. Expanda TODAS as siglas acad\xEAmicas:
+1. Classifique a inten\xE7\xE3o da pergunta e inicie a resposta com uma Tag de Inten\xE7\xE3o:
+   - [CURSO]: D\xFAvidas sobre o projeto pedag\xF3gico, regras gerais, est\xE1gios, TCC.
+   - [DISCIPLINA]: D\xFAvidas sobre nomes de mat\xE9rias, c\xF3digos, carga hor\xE1ria, pr\xE9-requisitos.
+   - [CONTEUDO]: D\xFAvidas espec\xEDficas sobre a ementa ou t\xF3picos ensinados dentro de uma disciplina.
+   - [OUTRAS]: D\xFAvidas administrativas, infraestrutura do campus, portarias, calend\xE1rio.
+2. Expanda TODAS as siglas acad\xEAmicas:
    - TCC \u2192 Trabalho de Conclus\xE3o de Curso
    - PPC \u2192 Projeto Pedag\xF3gico do Curso
    - CR \u2192 Coeficiente de Rendimento
@@ -199,26 +204,33 @@ REGRAS:
    - IRA \u2192 \xCDndice de Rendimento Acad\xEAmico
    - AC \u2192 Atividades Complementares
    - DP \u2192 Depend\xEAncia (disciplina em depend\xEAncia)
-2. Transforme linguagem coloquial em linguagem formal/acad\xEAmica.
-3. Adicione contexto impl\xEDcito quando cab\xEDvel (ex: "reprovar" \u2192 "crit\xE9rios de reprova\xE7\xE3o").
-4. Mantenha o sentido original da pergunta.
-5. Responda APENAS com a pergunta reescrita, sem explica\xE7\xF5es, sem aspas, sem prefixos.`;
+3. Transforme linguagem coloquial em linguagem formal/acad\xEAmica.
+4. Adicione contexto impl\xEDcito quando cab\xEDvel (ex: "reprovar" \u2192 "crit\xE9rios de reprova\xE7\xE3o").
+5. Mantenha o sentido original da pergunta.
+6. Responda APENAS com a Tag de Inten\xE7\xE3o seguida da pergunta reescrita, sem aspas. Exemplo: "[DISCIPLINA] qual \xE9 a carga hor\xE1ria de c\xE1lculo 1?"`;
 async function reescreverPergunta(pergunta) {
   try {
     console.log(`\u270D\uFE0F  [Reescrita] Original: "${pergunta}"`);
     const reescrita = await reescreverComLLM(REWRITE_SYSTEM_PROMPT, pergunta);
     if (!reescrita || reescrita.length > 1e3) {
       console.log(`\u270D\uFE0F  [Reescrita] Resultado inv\xE1lido, usando original.`);
-      return pergunta;
+      return { intencao: "OUTRAS", perguntaReescrita: pergunta };
     }
-    console.log(`\u270D\uFE0F  [Reescrita] Resultado: "${reescrita}"`);
-    return reescrita;
+    const match = reescrita.trim().match(/^\[(.*?)\]\s*(.*)/);
+    if (match) {
+      const intencao = match[1].toUpperCase();
+      const perguntaReescrita = match[2];
+      console.log(`\u270D\uFE0F  [Reescrita] Inten\xE7\xE3o: [${intencao}] | Reescrita: "${perguntaReescrita}"`);
+      return { intencao, perguntaReescrita };
+    }
+    console.log(`\u270D\uFE0F  [Reescrita] Resultado sem tag: "${reescrita}"`);
+    return { intencao: "OUTRAS", perguntaReescrita: reescrita };
   } catch (error) {
     console.warn(
       `\u26A0\uFE0F  [Reescrita] Falha na reescrita, usando pergunta original:`,
       error instanceof Error ? error.message : error
     );
-    return pergunta;
+    return { intencao: "OUTRAS", perguntaReescrita: pergunta };
   }
 }
 async function gerarEmbedding(texto) {
@@ -289,23 +301,29 @@ async function buscarHibrido(embedding, queryTexto, limite = 5) {
   }
   return documentos;
 }
-function montarMensagensRAG(pergunta, documentos) {
+function montarMensagensRAG(pergunta, documentos, intencao) {
   const contexto = documentos.length > 0 ? documentos.map(
     (doc, i) => `--- Trecho ${i + 1} (fonte: ${doc.origem}, similaridade: ${doc.similaridade.toFixed(2)}) ---
 ${doc.conteudo}`
   ).join("\n\n") : "Nenhum documento relevante foi encontrado na base de conhecimento.";
-  const systemPrompt = `Voc\xEA \xE9 o chatIFme, assistente virtual oficial do curso de Sistemas de Informa\xE7\xE3o do IFMG Campus Ouro Branco.
+  const systemPrompt = `Voc\xEA \xE9 o assistente virtual oficial do IFMG Campus Ouro Branco.
 
 Sua fun\xE7\xE3o \xE9 responder d\xFAvidas dos alunos sobre regulamentos, PPC (Projeto Pedag\xF3gico do Curso), grade curricular, normas acad\xEAmicas e informa\xE7\xF5es do campus.
+
+INTEN\xC7\xC3O DA PERGUNTA: [${intencao}] (Foque a sua resposta no contexto dessa inten\xE7\xE3o).
 
 REGRAS OBRIGAT\xD3RIAS (siga rigorosamente):
 1. Use EXCLUSIVAMENTE as informa\xE7\xF5es dos trechos de documentos fornecidos abaixo.
 2. N\xC3O invente, suponha ou complemente com conhecimento externo.
 3. Se a resposta n\xE3o estiver nos trechos, diga: "N\xE3o encontrei essa informa\xE7\xE3o nos documentos dispon\xEDveis. Recomendo consultar a coordena\xE7\xE3o do curso ou acessar o portal do IFMG."
-4. Seja educado, objetivo e claro.
-5. Cite a fonte (nome do documento) quando poss\xEDvel.
-6. Responda sempre em portugu\xEAs brasileiro.
-7. Formate a resposta de forma organizada (use listas quando apropriado).
+4. Cite a fonte (nome do documento) quando poss\xEDvel.
+
+DIRETIVAS DE IDIOMA E FORMATA\xC7\xC3O:
+- REGRA ABSOLUTA: Voc\xEA deve responder EXCLUSIVAMENTE em Portugu\xEAs do Brasil (pt-BR). Traduza qualquer termo do contexto que esteja em ingl\xEAs.
+- Seja direto, cordial e acad\xEAmico. Nunca invente informa\xE7\xF5es.
+- Use '### ' para subt\xEDtulos.
+- Use bullet points ('* ') para listar disciplinas, cargas hor\xE1rias ou t\xF3picos.
+- Use **negrito** para destacar nomes de cursos, regras e n\xFAmeros importantes.
 
 CONTEXTO (trechos dos documentos oficiais do curso):
 ${contexto}`;
@@ -320,13 +338,13 @@ ${"\u2500".repeat(50)}`);
   console.log(`\u{1F4E8} [RAG] Nova pergunta (stream): "${pergunta}"`);
   console.log(`${"\u2500".repeat(50)}`);
   const inicio = Date.now();
-  const perguntaReescrita = await reescreverPergunta(pergunta);
+  const { intencao, perguntaReescrita } = await reescreverPergunta(pergunta);
   const embedding = await gerarEmbedding(perguntaReescrita);
   const documentos = await buscarHibrido(embedding, perguntaReescrita);
   const fontes = documentos.map(
     (doc) => `${doc.origem} (similaridade: ${doc.similaridade.toFixed(2)})`
   );
-  const mensagens = montarMensagensRAG(pergunta, documentos);
+  const mensagens = montarMensagensRAG(pergunta, documentos, intencao);
   console.log(
     `\u{1F916} [RAG] Iniciando streaming com ${documentos.length} documentos de contexto...`
   );
@@ -400,8 +418,82 @@ import multer from "multer";
 // src/services/embedding.service.ts
 import { PDFExtract } from "pdf.js-extract";
 import { createWorker } from "tesseract.js";
-var CHUNK_SIZE = 1500;
-var CHUNK_OVERLAP = 200;
+import mammoth from "mammoth";
+import xlsx from "xlsx";
+
+// src/services/sanitization.service.ts
+var RE = {
+  // Marcadores de página inseridos pela extração: "--- Página 5 ---"
+  marcadorPagina: /---\s*P[aá]gina\s+\d+\s*---/gi,
+  // Pilcrow (¶) e variantes de caracteres de formatação de parágrafo de PDF
+  pilcrow: /[¶§]/g,
+  // Superíndices e subíndices numéricos unicode (notas de rodapé, unidades)
+  superSubIndices: /[\u00B9\u00B2\u00B3\u2070-\u2079\u2080-\u2089]/g,
+  // Hifenização de palavras no final de linha: "infor-\nmação" → "informação"
+  hifenQuebraDeLinha: /(\w)-\n(\w)/g,
+  // Separadores decorativos de linha: "||", "| |", "___", "---", "==="
+  separadoresDecorativos: /^[\s|_\-=]{3,}$/gm,
+  // Linhas que são só pipe e espaço (resíduo de tabela sem conteúdo)
+  linhasSoPipe: /^\s*\|[\s|]*\|\s*$/gm,
+  // Múltiplos espaços e tabs → espaço único
+  espacosMultiplos: /[ \t]{2,}/g,
+  // Mais de 2 quebras de linha consecutivas → parágrafo duplo
+  quebrasDeLinhaTriplas: /\n{3,}/g,
+  // Linhas com menos de 3 caracteres não-espaço (ruído puro)
+  linhasRuido: /^.{0,2}\n/gm,
+  // Caracteres de controle não-visíveis (exceto \n e \t)
+  caracteresControle: /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g,
+  // Aspas tipográficas → ASCII
+  aspasCurvas: /[\u201C\u201D]/g,
+  aspasSimples: /[\u2018\u2019]/g,
+  travessao: /[\u2013\u2014]/g,
+  // Sequências de pontuação repetida decorativa: ".....", "-----"
+  pontuacaoRepetida: /([.!?=\-_])\1{3,}/g,
+  // Número de página solto: linha com apenas 1-4 dígitos
+  numeroPaginaSolto: /^\s*\d{1,4}\s*$/gm
+};
+function tabelaMarkdownParaTexto(linha) {
+  if (!linha.includes("|"))
+    return linha;
+  if (/^\|[\s\-:|]+\|/.test(linha))
+    return "";
+  return linha.split("|").map((c) => c.trim()).filter((c) => c.length > 0 && !/^[-:]+$/.test(c)).join(" ");
+}
+function normalizarLinhasTabela(texto) {
+  return texto.split("\n").map(
+    (linha) => linha.includes("|") ? tabelaMarkdownParaTexto(linha) : linha
+  ).filter((l) => l.trim().length > 0).join("\n");
+}
+function sanitizarTexto(texto) {
+  const tamanhoOriginal = texto.length;
+  let r = texto;
+  r = r.replace(RE.hifenQuebraDeLinha, "$1$2");
+  r = r.replace(RE.marcadorPagina, "");
+  r = r.replace(RE.caracteresControle, "");
+  r = r.replace(RE.pilcrow, "");
+  r = r.replace(RE.superSubIndices, "");
+  r = r.replace(RE.separadoresDecorativos, "");
+  r = normalizarLinhasTabela(r);
+  r = r.replace(RE.numeroPaginaSolto, "");
+  r = r.replace(RE.pontuacaoRepetida, "$1");
+  r = r.replace(RE.aspasCurvas, '"');
+  r = r.replace(RE.aspasSimples, "'");
+  r = r.replace(RE.travessao, "-");
+  r = r.replace(RE.espacosMultiplos, " ");
+  r = r.replace(RE.linhasRuido, "");
+  r = r.replace(RE.quebrasDeLinhaTriplas, "\n\n");
+  r = r.trim();
+  const reducao = ((tamanhoOriginal - r.length) / tamanhoOriginal * 100).toFixed(1);
+  console.log(
+    `\u{1F9F9} [Sanitiza\xE7\xE3o] ${tamanhoOriginal} \u2192 ${r.length} chars (redu\xE7\xE3o: ${reducao}%)`
+  );
+  return r;
+}
+
+// src/services/embedding.service.ts
+var CHUNK_SIZE = 600;
+var CHUNK_OVERLAP = 100;
+var EMBEDDING_MAX_CHARS = 1500;
 var pdfExtract = new PDFExtract();
 async function extrairTextoPDF(buffer, filename) {
   console.log(
@@ -495,17 +587,77 @@ async function extrairTextoImagem(buffer, filename) {
     await worker.terminate();
   }
 }
+async function extrairTextoWord(buffer, filename) {
+  console.log(`\u{1F4DD} [Extra\xE7\xE3o] Iniciando extra\xE7\xE3o de documento Word "${filename}"...`);
+  const result = await mammoth.extractRawText({ buffer });
+  return result.value;
+}
+async function extrairTextoPlanilha(buffer, filename) {
+  console.log(`\u{1F4CA} [Extra\xE7\xE3o] Iniciando extra\xE7\xE3o de planilha "${filename}"...`);
+  const workbook = xlsx.read(buffer, { type: "buffer" });
+  const planilhas = [];
+  for (const sheetName of workbook.SheetNames) {
+    const worksheet = workbook.Sheets[sheetName];
+    const data = xlsx.utils.sheet_to_json(worksheet, { header: 1 });
+    if (data.length === 0)
+      continue;
+    const result = [];
+    const maxCols = Math.max(...data.map((row) => row.length));
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i] || [];
+      while (row.length < maxCols)
+        row.push("");
+      const formattedRow = row.map((cell) => String(cell ?? "").replace(/[\n\r\|]/g, " ").trim());
+      result.push(`| ${formattedRow.join(" | ")} |`);
+      if (i === 0) {
+        result.push(`| ${formattedRow.map(() => "---").join(" | ")} |`);
+      }
+    }
+    planilhas.push(`--- Planilha: ${sheetName} ---
+${result.join("\n")}`);
+  }
+  return planilhas.join("\n\n");
+}
 async function extrairTexto(buffer, filename, mimetype) {
-  if (mimetype === "application/pdf") {
+  const nomeLower = filename.toLowerCase();
+  if (mimetype === "application/pdf" || nomeLower.endsWith(".pdf")) {
     return extrairTextoPDF(buffer, filename);
   }
-  if (mimetype.startsWith("image/")) {
+  if (mimetype.startsWith("image/") || nomeLower.match(/\.(png|jpe?g)$/)) {
     return extrairTextoImagem(buffer, filename);
   }
-  if (mimetype === "text/plain") {
+  if (mimetype === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || mimetype === "application/msword" || nomeLower.endsWith(".docx") || nomeLower.endsWith(".doc")) {
+    return extrairTextoWord(buffer, filename);
+  }
+  if (mimetype === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" || mimetype === "application/vnd.ms-excel" || mimetype === "text/csv" || nomeLower.endsWith(".xlsx") || nomeLower.endsWith(".xls") || nomeLower.endsWith(".csv")) {
+    return extrairTextoPlanilha(buffer, filename);
+  }
+  if (mimetype === "text/plain" || nomeLower.endsWith(".txt")) {
     return buffer.toString("utf-8");
   }
   throw new Error(`Formato n\xE3o suportado: ${mimetype}`);
+}
+function subdividirBloco(texto, maxChars) {
+  if (texto.length <= maxChars)
+    return [texto];
+  const partes = [];
+  let restante = texto;
+  while (restante.length > maxChars) {
+    let corte = restante.lastIndexOf(". ", maxChars);
+    if (corte === -1 || corte < maxChars * 0.5) {
+      corte = restante.lastIndexOf("\n", maxChars);
+    }
+    if (corte === -1 || corte < maxChars * 0.5) {
+      corte = maxChars;
+    } else {
+      corte += 1;
+    }
+    partes.push(restante.slice(0, corte).trim());
+    restante = restante.slice(corte).trim();
+  }
+  if (restante.length > 0)
+    partes.push(restante);
+  return partes;
 }
 function dividirEmChunks(texto, filename) {
   const blocos = texto.split(/\n{2,}/).filter((b) => b.trim().length > 0);
@@ -517,7 +669,9 @@ function dividirEmChunks(texto, filename) {
   let chunkAtual = "";
   for (const bloco of blocos) {
     if (chunkAtual.length > 0 && chunkAtual.length + bloco.length > CHUNK_SIZE) {
-      chunks.push(criarChunk(chunkAtual, filename, chunks.length));
+      for (const parte of subdividirBloco(chunkAtual, EMBEDDING_MAX_CHARS)) {
+        chunks.push(criarChunk(parte, filename, chunks.length));
+      }
       const overlap = chunkAtual.slice(-CHUNK_OVERLAP);
       chunkAtual = overlap + "\n\n" + bloco;
     } else {
@@ -525,13 +679,15 @@ function dividirEmChunks(texto, filename) {
     }
   }
   if (chunkAtual.trim().length > 0) {
-    chunks.push(criarChunk(chunkAtual, filename, chunks.length));
+    for (const parte of subdividirBloco(chunkAtual, EMBEDDING_MAX_CHARS)) {
+      chunks.push(criarChunk(parte, filename, chunks.length));
+    }
   }
   for (const chunk of chunks) {
     chunk.metadata.totalChunks = chunks.length;
   }
   console.log(
-    `\u2702\uFE0F  [Chunking] "${filename}" dividido em ${chunks.length} chunks (alvo: ${CHUNK_SIZE}, overlap: ${CHUNK_OVERLAP})`
+    `\u2702\uFE0F  [Chunking] "${filename}" \u2192 ${chunks.length} chunks (alvo: ${CHUNK_SIZE}, overlap: ${CHUNK_OVERLAP}, max: ${EMBEDDING_MAX_CHARS})`
   );
   return chunks;
 }
@@ -545,21 +701,31 @@ function criarChunk(conteudo, filename, index) {
     }
   };
 }
+function truncarParaEmbedding(texto) {
+  if (texto.length <= EMBEDDING_MAX_CHARS)
+    return texto;
+  console.warn(
+    `\u26A0\uFE0F [Embedding] Chunk com ${texto.length} chars excede o limite (${EMBEDDING_MAX_CHARS}). Truncando.`
+  );
+  const corte = texto.lastIndexOf(". ", EMBEDDING_MAX_CHARS);
+  return corte > EMBEDDING_MAX_CHARS * 0.5 ? texto.slice(0, corte + 1).trim() : texto.slice(0, EMBEDDING_MAX_CHARS).trim();
+}
 async function vetorizarEGravar(chunks) {
   let gravados = 0;
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
     const progresso = `[${i + 1}/${chunks.length}]`;
     try {
+      const conteudoSeguro = truncarParaEmbedding(chunk.conteudo);
       console.log(
-        `\u{1F522} [Embedding] ${progresso} Vetorizando: "${chunk.conteudo.substring(0, 40)}..."`
+        `\u{1F522} [Embedding] ${progresso} Vetorizando: "${conteudoSeguro.substring(0, 40)}..." (${conteudoSeguro.length} chars)`
       );
-      const embedding = await gerarEmbeddingOllama(chunk.conteudo);
+      const embedding = await gerarEmbeddingOllama(conteudoSeguro);
       const vectorStr = `[${embedding.join(",")}]`;
       await pool.query(
         `INSERT INTO documents (content, metadata, embedding)
          VALUES ($1, $2, $3)`,
-        [chunk.conteudo, JSON.stringify(chunk.metadata), vectorStr]
+        [conteudoSeguro, JSON.stringify(chunk.metadata), vectorStr]
       );
       gravados++;
       console.log(
@@ -581,8 +747,8 @@ ${"=".repeat(60)}`);
   console.log(`${"=".repeat(60)}
 `);
   const inicio = Date.now();
-  const texto = await extrairTexto(buffer, filename, mimetype);
-  if (texto.trim().length === 0) {
+  const textoRaw = await extrairTexto(buffer, filename, mimetype);
+  if (textoRaw.trim().length === 0) {
     return {
       mensagem: "O arquivo n\xE3o cont\xE9m texto extra\xEDvel.",
       arquivo: filename,
@@ -590,6 +756,7 @@ ${"=".repeat(60)}`);
       chunksGravados: 0
     };
   }
+  const texto = sanitizarTexto(textoRaw);
   const chunks = dividirEmChunks(texto, filename);
   const chunksGravados = await vetorizarEGravar(chunks);
   const duracao = ((Date.now() - inicio) / 1e3).toFixed(1);
@@ -640,7 +807,25 @@ async function removerDocumento(filename) {
 }
 
 // src/controllers/embedding.controller.ts
-var TIPOS_ACEITOS = ["application/pdf"];
+var TIPOS_ACEITOS = [
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  // .docx
+  "application/msword",
+  // .doc
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  // .xlsx
+  "application/vnd.ms-excel",
+  // .xls
+  "text/csv",
+  // .csv
+  "text/plain",
+  // .txt
+  "image/jpeg",
+  // .jpg, .jpeg
+  "image/png"
+  // .png
+];
 async function uploadDocumento(req, res) {
   try {
     const arquivo = req.file;
@@ -652,7 +837,7 @@ async function uploadDocumento(req, res) {
     }
     if (!TIPOS_ACEITOS.includes(arquivo.mimetype)) {
       res.status(400).json({
-        erro: `Tipo de arquivo n\xE3o suportado: ${arquivo.mimetype}. Aceito: PDF.`
+        erro: `Tipo de arquivo n\xE3o suportado: ${arquivo.mimetype}. Aceitos: PDF, Word, Excel, CSV, TXT, Imagens.`
       });
       return;
     }
@@ -668,7 +853,8 @@ async function uploadDocumento(req, res) {
     );
     const resultado = await processarDocumento(
       arquivo.buffer,
-      arquivo.originalname
+      arquivo.originalname,
+      arquivo.mimetype
     );
     res.status(200).json(resultado);
   } catch (error) {
@@ -731,7 +917,7 @@ import { fileURLToPath } from "url";
 import { dirname, resolve } from "path";
 var OLLAMA_BASE_URL2 = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
 var LLM_MODEL2 = process.env.OLLAMA_LLM_MODEL || "qwen3.5:latest";
-var AGENT_SYSTEM_PROMPT = `Voc\xEA \xE9 o chatIFme, assistente virtual oficial do curso de Sistemas de Informa\xE7\xE3o do IFMG Campus Ouro Branco.
+var AGENT_SYSTEM_PROMPT = `Voc\xEA \xE9 o assistente virtual oficial do IFMG Campus Ouro Branco.
 
 Voc\xEA tem acesso a uma ferramenta de busca nos documentos oficiais do curso. USE ESTA FERRAMENTA para responder perguntas sobre:
 - Regulamentos acad\xEAmicos
@@ -742,12 +928,19 @@ Voc\xEA tem acesso a uma ferramenta de busca nos documentos oficiais do curso. U
 
 REGRAS OBRIGAT\xD3RIAS:
 1. SEMPRE use a ferramenta search_ifmg_knowledge antes de responder perguntas sobre o curso.
-2. Use EXCLUSIVAMENTE as informa\xE7\xF5es retornadas pela ferramenta.
-3. N\xC3O invente, suponha ou complemente com conhecimento externo.
-4. Se a ferramenta n\xE3o retornar resultados relevantes, diga: "N\xE3o encontrei essa informa\xE7\xE3o nos documentos dispon\xEDveis. Recomendo consultar a coordena\xE7\xE3o do curso."
-5. Cite a fonte (nome do documento) quando poss\xEDvel.
-6. Responda sempre em portugu\xEAs brasileiro, de forma educada e organizada.
-7. Para sauda\xE7\xF5es simples (ol\xE1, bom dia), responda diretamente sem usar a ferramenta.`;
+2. Na ferramenta de busca, voc\xEA DEVE classificar a inten\xE7\xE3o (intent) da pergunta (CURSO, DISCIPLINA, CONTEUDO ou OUTRAS).
+3. Use EXCLUSIVAMENTE as informa\xE7\xF5es retornadas pela ferramenta.
+4. N\xC3O invente, suponha ou complemente com conhecimento externo.
+5. Se a ferramenta n\xE3o retornar resultados relevantes, diga: "N\xE3o encontrei essa informa\xE7\xE3o nos documentos dispon\xEDveis. Recomendo consultar a coordena\xE7\xE3o do curso."
+6. Cite a fonte (nome do documento) quando poss\xEDvel.
+7. Para sauda\xE7\xF5es simples (ol\xE1, bom dia), responda diretamente sem usar a ferramenta.
+
+DIRETIVAS DE IDIOMA E FORMATA\xC7\xC3O:
+- REGRA ABSOLUTA: Voc\xEA deve responder EXCLUSIVAMENTE em Portugu\xEAs do Brasil (pt-BR). Traduza qualquer termo do contexto que esteja em ingl\xEAs.
+- Seja direto, cordial e acad\xEAmico. Nunca invente informa\xE7\xF5es.
+- Use '### ' para subt\xEDtulos.
+- Use bullet points ('* ') para listar disciplinas, cargas hor\xE1rias ou t\xF3picos.
+- Use **negrito** para destacar nomes de cursos, regras e n\xFAmeros importantes.`;
 var mcpClient = null;
 var ollamaTools = [];
 async function inicializarMCPClient() {

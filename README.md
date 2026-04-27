@@ -63,8 +63,9 @@ O LLM decide **autonomamente** se precisa buscar nos documentos (via Tool Callin
 - ✍️ Cursor piscante durante a geração
 
 ### Ingestão de Documentos (Admin)
-- 📄 Upload de PDFs e Imagens via drag-and-drop (`/embedding`)
-- 📊 **Extração Avançada**: Reconstrução automática de layout de tabelas via coordenadas (x,y)
+- 📄 Upload de PDF, Word (.docx), Planilhas/Excel (.xlsx, .csv), Imagens e TXT via drag-and-drop (`/embedding`)
+- 📊 **Extração e Conversão**: Reconstrução de layout de tabelas via PDF e conversão nativa de planilhas para `Markdown Tables`.
+- 🧹 **Serviço de Sanitização Dedicado**: Remoção de artefatos estruturais, cabeçalhos, notas de rodapé e hifenização.
 - 👁️ **OCR Nativo**: Leitura automática de imagens e PDFs escaneados via `tesseract.js`
 - ✂️ **Chunking Semântico** (1500 caracteres, overlap de 200) — preserva parágrafos e tabelas intactas
 - 🔢 Vetorização via Ollama (`nomic-embed-text`)
@@ -73,10 +74,10 @@ O LLM decide **autonomamente** se precisa buscar nos documentos (via Tool Callin
 - 🗑️ Exclusão de documentos e de todos os seus fragmentos associados
 
 ### Backend (API)
-- 🔄 **Query Rewriting** — reescrita inteligente com expansão de siglas acadêmicas (RAG clássico)
-- 🤖 **Agentic RAG (MCP)** — LLM decide autonomamente quando buscar via Tool Calling
-- 🔀 **Busca Híbrida (RRF)** — combina busca semântica (`pgvector`) com busca léxica por palavras-chave (`tsvector` + `portuguese_unaccent`) usando Reciprocal Rank Fusion
-- 🛡️ System Prompt rigoroso anti-alucinação
+- 🔄 **Query Rewriting & Roteamento de Intenção** — reescrita com expansão de siglas e extração da Tag de Intenção (`[CURSO]`, `[DISCIPLINA]`, etc) para guiar o contexto.
+- 🤖 **Agentic RAG (MCP)** — LLM decide autonomamente quando buscar via Tool Calling (agora com suporte à classificação de intenção no prompt).
+- 🔀 **Busca Híbrida (RRF)** — combina busca semântica (`pgvector`) com busca léxica por palavras-chave (`tsvector` + `portuguese_unaccent`) usando Reciprocal Rank Fusion.
+- 🛡️ System Prompt rigoroso anti-alucinação focado na intenção detectada.
 - ❤️ Health check para PostgreSQL, Ollama e MCP na inicialização
 - 📝 Logs detalhados de todo o pipeline no terminal
 
@@ -233,7 +234,7 @@ Acesse `http://localhost:5173` e faça perguntas sobre o curso.
 | **MCP** | @modelcontextprotocol/sdk (Server + Client) |
 | **Banco de Dados** | PostgreSQL 16 + pgvector + Full-Text Search (unaccent) |
 | **IA / LLM** | Ollama (nomic-embed-text + qwen3.5) |
-| **Ingestão/Upload** | Multer (memória) + pdf.js-extract + tesseract.js |
+| **Ingestão/Upload** | Multer (memória) + pdf.js-extract + tesseract.js + mammoth + xlsx |
 | **Streaming** | Server-Sent Events (SSE) |
 | **Containerização** | Docker Compose |
 

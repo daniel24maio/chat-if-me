@@ -52,7 +52,12 @@ const REWRITE_SYSTEM_PROMPT = `Você é um assistente de pré-processamento de c
 Sua tarefa: reescrever a pergunta do usuário para melhorar a busca semântica em documentos acadêmicos.
 
 REGRAS:
-1. Expanda TODAS as siglas acadêmicas:
+1. Classifique a intenção da pergunta e inicie a resposta com uma Tag de Intenção:
+   - [CURSO]: Dúvidas sobre o projeto pedagógico, regras gerais, estágios, TCC.
+   - [DISCIPLINA]: Dúvidas sobre nomes de matérias, códigos, carga horária, pré-requisitos.
+   - [CONTEUDO]: Dúvidas específicas sobre a ementa ou tópicos ensinados dentro de uma disciplina.
+   - [OUTRAS]: Dúvidas administrativas, infraestrutura do campus, portarias, calendário.
+2. Expanda TODAS as siglas acadêmicas:
    - TCC → Trabalho de Conclusão de Curso
    - PPC → Projeto Pedagógico do Curso
    - CR → Coeficiente de Rendimento
@@ -65,10 +70,10 @@ REGRAS:
    - IRA → Índice de Rendimento Acadêmico
    - AC → Atividades Complementares
    - DP → Dependência (disciplina em dependência)
-2. Transforme linguagem coloquial em linguagem formal/acadêmica.
-3. Adicione contexto implícito quando cabível (ex: "reprovar" → "critérios de reprovação").
-4. Mantenha o sentido original da pergunta.
-5. Responda APENAS com a pergunta reescrita, sem explicações, sem aspas, sem prefixos.`;
+3. Transforme linguagem coloquial em linguagem formal/acadêmica.
+4. Adicione contexto implícito quando cabível (ex: "reprovar" → "critérios de reprovação").
+5. Mantenha o sentido original da pergunta.
+6. Responda APENAS com a Tag de Intenção seguida da pergunta reescrita, sem aspas. Exemplo: "[DISCIPLINA] qual é a carga horária de cálculo 1?"`;
 
 /**
  * Reescreve a pergunta do aluno para melhorar a qualidade da busca semântica.
@@ -82,7 +87,7 @@ REGRAS:
  * @param pergunta - Pergunta original do aluno
  * @returns Pergunta reescrita e expandida
  */
-async function reescreverPergunta(pergunta: string): Promise<string> {
+async function reescreverPergunta(pergunta: string): Promise<{ intencao: string; perguntaReescrita: string }> {
   try {
     console.log(`✍️  [Reescrita] Original: "${pergunta}"`);
 
@@ -91,18 +96,26 @@ async function reescreverPergunta(pergunta: string): Promise<string> {
     // Validação: se a reescrita ficou vazia ou absurdamente longa, usa a original
     if (!reescrita || reescrita.length > 1000) {
       console.log(`✍️  [Reescrita] Resultado inválido, usando original.`);
-      return pergunta;
+      return { intencao: "OUTRAS", perguntaReescrita: pergunta };
     }
 
-    console.log(`✍️  [Reescrita] Resultado: "${reescrita}"`);
-    return reescrita;
+    const match = reescrita.trim().match(/^\[(.*?)\]\s*(.*)/);
+    if (match) {
+      const intencao = match[1].toUpperCase();
+      const perguntaReescrita = match[2];
+      console.log(`✍️  [Reescrita] Intenção: [${intencao}] | Reescrita: "${perguntaReescrita}"`);
+      return { intencao, perguntaReescrita };
+    }
+
+    console.log(`✍️  [Reescrita] Resultado sem tag: "${reescrita}"`);
+    return { intencao: "OUTRAS", perguntaReescrita: reescrita };
   } catch (error) {
     // Fallback gracioso: se a reescrita falhar, não bloqueia o pipeline
     console.warn(
       `⚠️  [Reescrita] Falha na reescrita, usando pergunta original:`,
       error instanceof Error ? error.message : error
     );
-    return pergunta;
+    return { intencao: "OUTRAS", perguntaReescrita: pergunta };
   }
 }
 
@@ -239,7 +252,8 @@ async function buscarHibrido(
  */
 function montarMensagensRAG(
   pergunta: string,
-  documentos: DocumentoRecuperado[]
+  documentos: DocumentoRecuperado[],
+  intencao: string
 ): OllamaChatMessage[] {
   // Monta o contexto a partir dos documentos recuperados
   const contexto =
@@ -252,19 +266,25 @@ function montarMensagensRAG(
         .join("\n\n")
       : "Nenhum documento relevante foi encontrado na base de conhecimento.";
 
-  // System Prompt RAG rigoroso contra alucinações
-  const systemPrompt = `Você é o chatIFme, assistente virtual oficial do curso de Sistemas de Informação do IFMG Campus Ouro Branco.
+  // System Prompt RAG rigoroso contra alucinações e com diretivas de formatação
+  const systemPrompt = `Você é o assistente virtual oficial do IFMG Campus Ouro Branco.
 
 Sua função é responder dúvidas dos alunos sobre regulamentos, PPC (Projeto Pedagógico do Curso), grade curricular, normas acadêmicas e informações do campus.
+
+INTENÇÃO DA PERGUNTA: [${intencao}] (Foque a sua resposta no contexto dessa intenção).
 
 REGRAS OBRIGATÓRIAS (siga rigorosamente):
 1. Use EXCLUSIVAMENTE as informações dos trechos de documentos fornecidos abaixo.
 2. NÃO invente, suponha ou complemente com conhecimento externo.
 3. Se a resposta não estiver nos trechos, diga: "Não encontrei essa informação nos documentos disponíveis. Recomendo consultar a coordenação do curso ou acessar o portal do IFMG."
-4. Seja educado, objetivo e claro.
-5. Cite a fonte (nome do documento) quando possível.
-6. Responda sempre em português brasileiro.
-7. Formate a resposta de forma organizada (use listas quando apropriado).
+4. Cite a fonte (nome do documento) quando possível.
+
+DIRETIVAS DE IDIOMA E FORMATAÇÃO:
+- REGRA ABSOLUTA: Você deve responder EXCLUSIVAMENTE em Português do Brasil (pt-BR). Traduza qualquer termo do contexto que esteja em inglês.
+- Seja direto, cordial e acadêmico. Nunca invente informações.
+- Use '### ' para subtítulos.
+- Use bullet points ('* ') para listar disciplinas, cargas horárias ou tópicos.
+- Use **negrito** para destacar nomes de cursos, regras e números importantes.
 
 CONTEXTO (trechos dos documentos oficiais do curso):
 ${contexto}`;
@@ -305,7 +325,7 @@ export async function processarPerguntaStream(
   const inicio = Date.now();
 
   // Etapa 0: Reescrever a pergunta para melhorar a busca semântica
-  const perguntaReescrita = await reescreverPergunta(pergunta);
+  const { intencao, perguntaReescrita } = await reescreverPergunta(pergunta);
 
   // Etapa 1: Vetorizar a pergunta REESCRITA (não a original)
   const embedding = await gerarEmbedding(perguntaReescrita);
@@ -318,10 +338,10 @@ export async function processarPerguntaStream(
     (doc) => `${doc.origem} (similaridade: ${doc.similaridade.toFixed(2)})`
   );
 
-  // Etapa 3: Montar mensagens RAG com a PERGUNTA ORIGINAL (não a reescrita)
+  // Etapa 3: Montar mensagens RAG com a PERGUNTA ORIGINAL (não a reescrita) e a intenção
   // Isso garante que a resposta do LLM soe natural e responda exatamente
   // o que o aluno perguntou, sem a formalização artificial da reescrita.
-  const mensagens = montarMensagensRAG(pergunta, documentos);
+  const mensagens = montarMensagensRAG(pergunta, documentos, intencao);
 
   console.log(
     `🤖 [RAG] Iniciando streaming com ${documentos.length} documentos de contexto...`

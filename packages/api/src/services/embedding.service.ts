@@ -1,31 +1,58 @@
 import { PDFExtract } from "pdf.js-extract";
 import { createWorker } from "tesseract.js";
+import mammoth from "mammoth";
+import xlsx from "xlsx";
 import { pool } from "../config/database.js";
 import { gerarEmbeddingOllama } from "../config/ollama.js";
+import { sanitizarTexto } from "./sanitization.service.js";
 import type {
   ChunkData,
   UploadResponse,
 } from "../interfaces/embedding.interfaces.js";
 
 /**
- * Serviço de Ingestão de Documentos (Embedding) — v2 (Robusta).
+ * Serviço de Ingestão de Documentos (Embedding) — v3 (Sanitização).
  *
- * Melhorias em relação à v1:
- *   1. Extração com pdf.js-extract (preserva coordenadas x,y para tabelas)
- *   2. OCR via tesseract.js para imagens (PNG, JPEG)
- *   3. Chunking semântico (respeita parágrafos e tabelas, não quebra no meio)
- *   4. Suporte multi-formato: PDF, imagens, texto puro
+ * Melhorias em relação à v2:
+ *   5. Camada de sanitização entre extração e chunking
+ *      - Remove artefatos de PDF: ¶, marcadores de página, separadores
+ *      - Converte tabelas markdown em texto corrido (crítico para busca semântica)
+ *      - Reconstrói palavras hifenadas entre linhas
+ *      - Normaliza espaçamento e remove linhas de ruído puro
+ *   6. Chunking ajustado para respeitar o contexto do modelo Ollama
+ *      - CHUNK_SIZE reduzido para 600 chars (~150 tokens — seguro para maioria dos modelos)
+ *      - subdividirBloco() quebra blocos únicos muito grandes antes do chunking
+ *      - truncarParaEmbedding() é a última linha de defesa antes de chamar o Ollama
  */
 
 // ---------------------------------------------------------------------------
 // Configuração de chunking
 // ---------------------------------------------------------------------------
 
-/** Tamanho alvo de cada chunk em caracteres */
-const CHUNK_SIZE = 1500;
+/**
+ * Tamanho alvo de cada chunk em caracteres.
+ *
+ * Regra de bolso: 1 token ≈ 4 chars em português.
+ * Ajuste conforme o modelo configurado em ollama.ts:
+ *
+ *   nomic-embed-text   → contexto 2048 tokens → CHUNK_SIZE ≤ 600
+ *   mxbai-embed-large  → contexto  512 tokens → CHUNK_SIZE ≤ 400
+ *   all-minilm         → contexto  256 tokens → CHUNK_SIZE ≤ 200
+ */
+const CHUNK_SIZE = 600;
 
 /** Sobreposição entre chunks para manter contexto nas bordas */
-const CHUNK_OVERLAP = 200;
+const CHUNK_OVERLAP = 100;
+
+/**
+ * Limite máximo de caracteres enviados ao Ollama por chamada.
+ * Última linha de defesa contra o erro 500 "input length exceeds context length".
+ *
+ * Fórmula: (contexto_tokens_do_modelo - 10) * 4
+ * Ex: nomic-embed-text com 2048 tokens → (2048 - 10) * 4 = 8152
+ * Usando 2000 como valor conservador e seguro para múltiplos modelos.
+ */
+const EMBEDDING_MAX_CHARS = 1500;
 
 /** Instância do extrator PDF (reutilizável) */
 const pdfExtract = new PDFExtract();
@@ -63,10 +90,7 @@ async function extrairTextoPDF(
 
     if (items.length === 0) continue;
 
-    // Agrupa itens por linha (proximidade no eixo Y)
     const linhas = agruparPorLinhas(items);
-
-    // Detecta se há estrutura tabular (≥3 linhas com ≥2 colunas consistentes)
     const ehTabela = detectarTabela(linhas);
 
     let textoPage: string;
@@ -104,7 +128,6 @@ interface TextItem {
 function agruparPorLinhas(items: TextItem[]): string[][] {
   if (items.length === 0) return [];
 
-  // Ordena por Y (cima → baixo), depois por X (esquerda → direita)
   const sorted = [...items]
     .filter((it) => it.str.trim().length > 0)
     .sort((a, b) => a.y - b.y || a.x - b.x);
@@ -115,7 +138,6 @@ function agruparPorLinhas(items: TextItem[]): string[][] {
 
   for (const item of sorted) {
     if (Math.abs(item.y - yAtual) > 3) {
-      // Nova linha
       if (linhaAtual.length > 0) linhas.push(linhaAtual);
       linhaAtual = [];
       yAtual = item.y;
@@ -134,20 +156,17 @@ function agruparPorLinhas(items: TextItem[]): string[][] {
 function detectarTabela(linhas: string[][]): boolean {
   if (linhas.length < 3) return false;
 
-  // Conta linhas com ≥2 itens e agrupa por quantidade de colunas
   const colCounts = linhas
     .filter((l) => l.length >= 2)
     .map((l) => l.length);
 
   if (colCounts.length < 3) return false;
 
-  // Verifica se ≥60% das linhas têm o mesmo número de colunas
-  const moda = colCounts
-    .sort(
-      (a, b) =>
-        colCounts.filter((v) => v === b).length -
-        colCounts.filter((v) => v === a).length
-    )[0];
+  const moda = colCounts.sort(
+    (a, b) =>
+      colCounts.filter((v) => v === b).length -
+      colCounts.filter((v) => v === a).length
+  )[0];
 
   const consistentes = colCounts.filter((c) => c === moda).length;
   return consistentes / colCounts.length >= 0.6;
@@ -155,21 +174,19 @@ function detectarTabela(linhas: string[][]): boolean {
 
 /**
  * Formata linhas como tabela markdown para preservar a associação coluna↔valor.
+ * Nota: a sanitização posterior converterá esse markdown em texto corrido,
+ * garantindo que códigos e nomes de disciplina fiquem no mesmo texto contínuo.
  */
 function formatarComoTabela(linhas: string[][]): string {
   if (linhas.length === 0) return "";
 
-  // Header: primeira linha com mais colunas define a estrutura
   const maxCols = Math.max(...linhas.map((l) => l.length));
   const resultado: string[] = [];
 
   for (let i = 0; i < linhas.length; i++) {
     const linha = linhas[i];
-    // Padroniza para o número de colunas
     while (linha.length < maxCols) linha.push("");
     resultado.push(`| ${linha.join(" | ")} |`);
-
-    // Separador após a primeira linha (header)
     if (i === 0) {
       resultado.push(`| ${linha.map(() => "---").join(" | ")} |`);
     }
@@ -180,10 +197,6 @@ function formatarComoTabela(linhas: string[][]): string {
 
 /**
  * Extrai texto de uma imagem via OCR (tesseract.js).
- *
- * @param buffer - Buffer binário da imagem (PNG, JPEG)
- * @param filename - Nome do arquivo (para logs)
- * @returns Texto extraído via OCR
  */
 async function extrairTextoImagem(
   buffer: Buffer,
@@ -208,6 +221,50 @@ async function extrairTextoImagem(
 }
 
 /**
+ * Extrai texto de um documento Word (.docx) usando mammoth.
+ */
+async function extrairTextoWord(buffer: Buffer, filename: string): Promise<string> {
+  console.log(`📝 [Extração] Iniciando extração de documento Word "${filename}"...`);
+  const result = await mammoth.extractRawText({ buffer });
+  return result.value;
+}
+
+/**
+ * Extrai dados de planilhas (.xls, .xlsx, .csv) convertendo para Markdown Table.
+ */
+async function extrairTextoPlanilha(buffer: Buffer, filename: string): Promise<string> {
+  console.log(`📊 [Extração] Iniciando extração de planilha "${filename}"...`);
+  const workbook = xlsx.read(buffer, { type: "buffer" });
+  const planilhas: string[] = [];
+
+  for (const sheetName of workbook.SheetNames) {
+    const worksheet = workbook.Sheets[sheetName];
+    const data = xlsx.utils.sheet_to_json<string[]>(worksheet, { header: 1 });
+
+    if (data.length === 0) continue;
+
+    const result: string[] = [];
+    const maxCols = Math.max(...data.map(row => row.length));
+
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i] || [];
+      while (row.length < maxCols) row.push("");
+
+      const formattedRow = row.map(cell => String(cell ?? "").replace(/[\n\r\|]/g, " ").trim());
+      result.push(`| ${formattedRow.join(" | ")} |`);
+
+      if (i === 0) {
+        result.push(`| ${formattedRow.map(() => "---").join(" | ")} |`);
+      }
+    }
+
+    planilhas.push(`--- Planilha: ${sheetName} ---\n${result.join("\n")}`);
+  }
+
+  return planilhas.join("\n\n");
+}
+
+/**
  * Extrai texto de qualquer formato suportado.
  */
 async function extrairTexto(
@@ -215,36 +272,89 @@ async function extrairTexto(
   filename: string,
   mimetype: string
 ): Promise<string> {
-  if (mimetype === "application/pdf") {
+  const nomeLower = filename.toLowerCase();
+
+  if (mimetype === "application/pdf" || nomeLower.endsWith(".pdf")) {
     return extrairTextoPDF(buffer, filename);
   }
 
-  if (mimetype.startsWith("image/")) {
+  if (mimetype.startsWith("image/") || nomeLower.match(/\.(png|jpe?g)$/)) {
     return extrairTextoImagem(buffer, filename);
   }
 
-  if (mimetype === "text/plain") {
+  if (
+    mimetype === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    mimetype === "application/msword" ||
+    nomeLower.endsWith(".docx") || nomeLower.endsWith(".doc")
+  ) {
+    return extrairTextoWord(buffer, filename);
+  }
+
+  if (
+    mimetype === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+    mimetype === "application/vnd.ms-excel" ||
+    mimetype === "text/csv" ||
+    nomeLower.endsWith(".xlsx") || nomeLower.endsWith(".xls") || nomeLower.endsWith(".csv")
+  ) {
+    return extrairTextoPlanilha(buffer, filename);
+  }
+
+  if (mimetype === "text/plain" || nomeLower.endsWith(".txt")) {
     return buffer.toString("utf-8");
   }
 
   throw new Error(`Formato não suportado: ${mimetype}`);
 }
 
+
+
 // ---------------------------------------------------------------------------
 // Etapa 2 — Chunking Semântico
 // ---------------------------------------------------------------------------
 
 /**
- * Divide texto em chunks respeitando fronteiras semânticas.
+ * Subdivide um bloco único longo em pedaços de até `maxChars` caracteres,
+ * tentando cortar em limites de frase (". ") ou linha ("\n").
  *
- * Diferente do chunking bruto (slice), este:
- *   1. Divide primeiro por seções naturais (dupla quebra de linha, tabelas)
- *   2. Agrupa blocos pequenos até atingir ~CHUNK_SIZE
- *   3. Nunca quebra uma tabela ou parágrafo no meio
- *   4. Aplica overlap entre chunks
+ * Necessário quando um parágrafo/seção inteira excede EMBEDDING_MAX_CHARS —
+ * situação que ocorre em bibliografias densas ou seções de ementa longas.
+ */
+function subdividirBloco(texto: string, maxChars: number): string[] {
+  if (texto.length <= maxChars) return [texto];
+
+  const partes: string[] = [];
+  let restante = texto;
+
+  while (restante.length > maxChars) {
+    // Tenta cortar na última quebra de frase antes do limite
+    let corte = restante.lastIndexOf(". ", maxChars);
+
+    if (corte === -1 || corte < maxChars * 0.5) {
+      // Não encontrou ponto — corta na última quebra de linha
+      corte = restante.lastIndexOf("\n", maxChars);
+    }
+
+    if (corte === -1 || corte < maxChars * 0.5) {
+      // Último recurso: corta no limite exato
+      corte = maxChars;
+    } else {
+      corte += 1; // inclui o ponto/quebra no final da parte atual
+    }
+
+    partes.push(restante.slice(0, corte).trim());
+    restante = restante.slice(corte).trim();
+  }
+
+  if (restante.length > 0) partes.push(restante);
+
+  return partes;
+}
+
+/**
+ * Divide texto em chunks respeitando fronteiras semânticas.
+ * Garante que nenhum chunk ultrapasse EMBEDDING_MAX_CHARS.
  */
 function dividirEmChunks(texto: string, filename: string): ChunkData[] {
-  // Divide em blocos por quebras semânticas (parágrafos, seções, tabelas)
   const blocos = texto.split(/\n{2,}/).filter((b) => b.trim().length > 0);
 
   if (blocos.length === 0) {
@@ -256,14 +366,15 @@ function dividirEmChunks(texto: string, filename: string): ChunkData[] {
   let chunkAtual = "";
 
   for (const bloco of blocos) {
-    // Se adicionar este bloco excede o tamanho alvo, salva o chunk atual
     if (
       chunkAtual.length > 0 &&
       chunkAtual.length + bloco.length > CHUNK_SIZE
     ) {
-      chunks.push(criarChunk(chunkAtual, filename, chunks.length));
+      // Salva o chunk atual subdividindo se necessário
+      for (const parte of subdividirBloco(chunkAtual, EMBEDDING_MAX_CHARS)) {
+        chunks.push(criarChunk(parte, filename, chunks.length));
+      }
 
-      // Overlap: pega o final do chunk anterior
       const overlap = chunkAtual.slice(-CHUNK_OVERLAP);
       chunkAtual = overlap + "\n\n" + bloco;
     } else {
@@ -273,16 +384,17 @@ function dividirEmChunks(texto: string, filename: string): ChunkData[] {
 
   // Último chunk
   if (chunkAtual.trim().length > 0) {
-    chunks.push(criarChunk(chunkAtual, filename, chunks.length));
+    for (const parte of subdividirBloco(chunkAtual, EMBEDDING_MAX_CHARS)) {
+      chunks.push(criarChunk(parte, filename, chunks.length));
+    }
   }
 
-  // Atualiza totalChunks
   for (const chunk of chunks) {
     chunk.metadata.totalChunks = chunks.length;
   }
 
   console.log(
-    `✂️  [Chunking] "${filename}" dividido em ${chunks.length} chunks (alvo: ${CHUNK_SIZE}, overlap: ${CHUNK_OVERLAP})`
+    `✂️  [Chunking] "${filename}" → ${chunks.length} chunks (alvo: ${CHUNK_SIZE}, overlap: ${CHUNK_OVERLAP}, max: ${EMBEDDING_MAX_CHARS})`
   );
 
   return chunks;
@@ -308,6 +420,26 @@ function criarChunk(
 // ---------------------------------------------------------------------------
 
 /**
+ * Trunca o texto para EMBEDDING_MAX_CHARS antes de enviar ao Ollama.
+ *
+ * Esta é a última linha de defesa: idealmente nunca deve ser atingida se
+ * CHUNK_SIZE e subdividirBloco() estiverem corretamente configurados.
+ * Ela protege contra casos extremos (ex: um único parágrafo sem quebras).
+ */
+function truncarParaEmbedding(texto: string): string {
+  if (texto.length <= EMBEDDING_MAX_CHARS) return texto;
+
+  console.warn(
+    `⚠️ [Embedding] Chunk com ${texto.length} chars excede o limite (${EMBEDDING_MAX_CHARS}). Truncando.`
+  );
+
+  const corte = texto.lastIndexOf(". ", EMBEDDING_MAX_CHARS);
+  return corte > EMBEDDING_MAX_CHARS * 0.5
+    ? texto.slice(0, corte + 1).trim()
+    : texto.slice(0, EMBEDDING_MAX_CHARS).trim();
+}
+
+/**
  * Gera embeddings e grava os chunks no banco de dados.
  * A coluna content_tsv é gerada automaticamente pelo PostgreSQL.
  */
@@ -319,16 +451,19 @@ async function vetorizarEGravar(chunks: ChunkData[]): Promise<number> {
     const progresso = `[${i + 1}/${chunks.length}]`;
 
     try {
+      const conteudoSeguro = truncarParaEmbedding(chunk.conteudo);
+
       console.log(
-        `🔢 [Embedding] ${progresso} Vetorizando: "${chunk.conteudo.substring(0, 40)}..."`
+        `🔢 [Embedding] ${progresso} Vetorizando: "${conteudoSeguro.substring(0, 40)}..." (${conteudoSeguro.length} chars)`
       );
-      const embedding = await gerarEmbeddingOllama(chunk.conteudo);
+
+      const embedding = await gerarEmbeddingOllama(conteudoSeguro);
       const vectorStr = `[${embedding.join(",")}]`;
 
       await pool.query(
         `INSERT INTO documents (content, metadata, embedding)
          VALUES ($1, $2, $3)`,
-        [chunk.conteudo, JSON.stringify(chunk.metadata), vectorStr]
+        [conteudoSeguro, JSON.stringify(chunk.metadata), vectorStr]
       );
 
       gravados++;
@@ -351,7 +486,7 @@ async function vetorizarEGravar(chunks: ChunkData[]): Promise<number> {
 // ---------------------------------------------------------------------------
 
 /**
- * Processa um documento completo: extrai texto, divide em chunks,
+ * Processa um documento completo: extrai texto, sanitiza, divide em chunks,
  * gera embeddings e grava no banco.
  */
 export async function processarDocumento(
@@ -366,9 +501,9 @@ export async function processarDocumento(
   const inicio = Date.now();
 
   // Etapa 1: Extrair texto (multi-formato)
-  const texto = await extrairTexto(buffer, filename, mimetype);
+  const textoRaw = await extrairTexto(buffer, filename, mimetype);
 
-  if (texto.trim().length === 0) {
+  if (textoRaw.trim().length === 0) {
     return {
       mensagem: "O arquivo não contém texto extraível.",
       arquivo: filename,
@@ -377,10 +512,14 @@ export async function processarDocumento(
     };
   }
 
-  // Etapa 2: Dividir em chunks (semântico)
+  // Etapa 1.5: Sanitização — remove artefatos de PDF e normaliza o texto
+  // para que a busca semântica funcione tanto por código quanto por nome
+  const texto = sanitizarTexto(textoRaw);
+
+  // Etapa 2: Dividir em chunks (semântico + subdivisão de segurança)
   const chunks = dividirEmChunks(texto, filename);
 
-  // Etapa 3: Vetorizar e gravar
+  // Etapa 3: Vetorizar e gravar (com truncamento de segurança)
   const chunksGravados = await vetorizarEGravar(chunks);
 
   const duracao = ((Date.now() - inicio) / 1000).toFixed(1);

@@ -12,7 +12,7 @@ import {
  * Configuração do Multer:
  *   - storage: memória (buffer) — não persiste arquivo em disco
  *   - limits: 20 MB por arquivo
- *   - fileFilter: aceita apenas PDFs
+ *   - fileFilter: validação no controller (PDF, Word, Excel, TXT, Imagens)
  */
 
 /** Configuração do Multer para receber arquivos em memória */
@@ -27,7 +27,7 @@ const embeddingRouter = Router();
 
 /**
  * POST /api/embedding/upload
- * Recebe um arquivo PDF e processa: extrai texto → chunking → embedding → gravação.
+ * Recebe um arquivo suportado e processa: extrai texto → chunking → embedding → gravação.
  *
  * Content-Type: multipart/form-data
  * Campo: "arquivo" (file)

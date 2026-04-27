@@ -88,7 +88,7 @@ const EmbeddingPage: React.FC = () => {
   /** Adiciona arquivo(s) à fila e inicia o upload */
   const adicionarArquivos = useCallback((files: FileList | File[]) => {
     const novosArquivos: FileItem[] = Array.from(files)
-      .filter((f) => f.type === 'application/pdf')
+      .filter((f) => f.name.match(/\.(pdf|docx?|xlsx?|csv|txt|jpe?g|png)$/i) || f.type === 'application/pdf')
       .map((file) => ({
         id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
         file,
@@ -97,7 +97,7 @@ const EmbeddingPage: React.FC = () => {
       }));
 
     if (novosArquivos.length === 0) {
-      alert('Por favor, selecione apenas arquivos PDF.');
+      alert('Por favor, selecione apenas arquivos suportados (PDF, Imagens, Word, Excel, CSV, TXT).');
       return;
     }
 
@@ -241,16 +241,16 @@ const EmbeddingPage: React.FC = () => {
           >
             <span className="dropzone-icon">📁</span>
             <p className="dropzone-text">
-              Arraste e solte arquivos PDF aqui ou{' '}
+              Arraste e solte documentos aqui ou{' '}
               <strong>clique para selecionar</strong>
             </p>
             <p className="dropzone-hint">
-              Aceita apenas PDF • Máximo 20 MB por arquivo
+              Suporta PDF, Imagens, Word, Excel, CSV e TXT • Máximo 20 MB por arquivo
             </p>
             <input
               ref={fileInputRef}
               type="file"
-              accept=".pdf,application/pdf"
+              accept=".pdf,.docx,.doc,.xlsx,.xls,.csv,.txt,.jpg,.jpeg,.png,application/pdf,image/*"
               multiple
               onChange={handleFileSelect}
             />

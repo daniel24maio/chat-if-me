@@ -15,7 +15,17 @@ import {
  */
 
 /** Tipos de arquivo aceitos para upload */
-const TIPOS_ACEITOS = ["application/pdf"];
+const TIPOS_ACEITOS = [
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // .docx
+  "application/msword", // .doc
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
+  "application/vnd.ms-excel", // .xls
+  "text/csv", // .csv
+  "text/plain", // .txt
+  "image/jpeg", // .jpg, .jpeg
+  "image/png", // .png
+];
 
 /**
  * Processa o upload de um documento para ingestão.
@@ -41,7 +51,7 @@ export async function uploadDocumento(
     // Validação: tipo de arquivo
     if (!TIPOS_ACEITOS.includes(arquivo.mimetype)) {
       res.status(400).json({
-        erro: `Tipo de arquivo não suportado: ${arquivo.mimetype}. Aceito: PDF.`,
+        erro: `Tipo de arquivo não suportado: ${arquivo.mimetype}. Aceitos: PDF, Word, Excel, CSV, TXT, Imagens.`,
       });
       return;
     }
@@ -62,7 +72,8 @@ export async function uploadDocumento(
     // Delega o processamento ao serviço de embedding
     const resultado = await processarDocumento(
       arquivo.buffer,
-      arquivo.originalname
+      arquivo.originalname,
+      arquivo.mimetype
     );
 
     res.status(200).json(resultado);

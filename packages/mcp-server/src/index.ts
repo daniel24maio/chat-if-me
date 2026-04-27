@@ -10,7 +10,7 @@ import pg from "pg";
  * que pode ser invocada por qualquer cliente MCP (ex: o agente no Express).
  *
  * Ferramenta exposta:
- *   search_ifmg_knowledge — busca semântica nos documentos do IFMG
+ * search_ifmg_knowledge — busca híbrida nos documentos do IFMG
  *
  * Transporte: stdio (o servidor roda como subprocesso)
  *
@@ -33,10 +33,13 @@ const EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || "nomic-embed-text";
 
 /** Parâmetros do Reciprocal Rank Fusion (RRF) */
 const RRF_K = 60;
-const RRF_ALPHA = 0.5;
+const RRF_ALPHA = 0.4;
+
+/** Nota de corte (Threshold). Documentos abaixo deste score são ignorados (Lixo Semântico) */
+const MIN_RRF_SCORE = 0.008;
 
 /** Número máximo de trechos a retornar */
-const MAX_RESULTS = 5;
+const MAX_RESULTS = 7;
 
 // ---------------------------------------------------------------------------
 // PostgreSQL
@@ -68,7 +71,19 @@ async function gerarEmbedding(texto: string): Promise<number[]> {
 }
 
 /**
- * Busca híbrida (vetorial + FTS) no pgvector usando Reciprocal Rank Fusion (RRF).
+ * Formata a query para o formato tsquery do PostgreSQL (FTS).
+ * Remove caracteres especiais e substitui espaços por ' & '.
+ */
+function formatarQueryFTS(query: string): string {
+  // Remove tudo que não for letra, número ou espaço
+  const queryLimpa = query.replace(/[^\p{L}\p{N}\s]/gu, " ").trim();
+  if (!queryLimpa) return "dummy_fallback_query"; // Evita erro de sintaxe se ficar vazio
+
+  return queryLimpa.split(/\s+/).join(" & ");
+}
+
+/**
+ * Busca híbrida (vetorial + FTS) no pgvector usando Reciprocal Rank Fusion (RRF) e Limite de Corte.
  */
 async function buscarDocumentos(
   embedding: number[],
@@ -76,6 +91,7 @@ async function buscarDocumentos(
   limite: number
 ): Promise<{ conteudo: string; origem: string; similaridade: number }[]> {
   const vectorStr = `[${embedding.join(",")}]`;
+  const ftsQuery = formatarQueryFTS(queryTexto);
 
   const result = await pool.query(
     `WITH
@@ -85,33 +101,37 @@ async function buscarDocumentos(
            ROW_NUMBER() OVER (ORDER BY embedding <=> $1::vector) AS rank
          FROM documents
          ORDER BY embedding <=> $1::vector
-         LIMIT 20
+         LIMIT 40
        ),
        lexical AS (
          SELECT id, content AS conteudo, metadata->>'filename' AS origem,
-           ts_rank_cd(content_tsv, plainto_tsquery('portuguese_unaccent', $2)) AS ts_score,
+           ts_rank_cd(content_tsv, to_tsquery('portuguese_unaccent', $2)) AS ts_score,
            ROW_NUMBER() OVER (
-             ORDER BY ts_rank_cd(content_tsv, plainto_tsquery('portuguese_unaccent', $2)) DESC
+             ORDER BY ts_rank_cd(content_tsv, to_tsquery('portuguese_unaccent', $2)) DESC
            ) AS rank
          FROM documents
-         WHERE content_tsv @@ plainto_tsquery('portuguese_unaccent', $2)
+         WHERE content_tsv @@ to_tsquery('portuguese_unaccent', $2)
          ORDER BY ts_score DESC
-         LIMIT 20
+         LIMIT 40
+       ),
+       hybrid_results AS (
+         SELECT
+           COALESCE(s.id, l.id) AS id,
+           COALESCE(s.conteudo, l.conteudo) AS conteudo,
+           COALESCE(s.origem, l.origem) AS origem,
+           COALESCE(s.similaridade, 0) AS similaridade,
+           (
+             ${RRF_ALPHA} * COALESCE(1.0 / (${RRF_K} + s.rank), 0.0) +
+             ${1 - RRF_ALPHA} * COALESCE(1.0 / (${RRF_K} + l.rank), 0.0)
+           ) AS rrf_score
+         FROM semantic s
+         FULL OUTER JOIN lexical l ON s.id = l.id
        )
-     SELECT
-       COALESCE(s.id, l.id) AS id,
-       COALESCE(s.conteudo, l.conteudo) AS conteudo,
-       COALESCE(s.origem, l.origem) AS origem,
-       COALESCE(s.similaridade, 0) AS similaridade,
-       (
-         ${RRF_ALPHA} * COALESCE(1.0 / (${RRF_K} + s.rank), 0.0) +
-         ${1 - RRF_ALPHA} * COALESCE(1.0 / (${RRF_K} + l.rank), 0.0)
-       ) AS rrf_score
-     FROM semantic s
-     FULL OUTER JOIN lexical l ON s.id = l.id
+     SELECT * FROM hybrid_results
+     WHERE rrf_score >= ${MIN_RRF_SCORE}
      ORDER BY rrf_score DESC
-     LIMIT $3`,
-    [vectorStr, queryTexto, limite]
+     LIMIT $5`,
+    [vectorStr, ftsQuery, limite]
   );
 
   return result.rows.map((row) => ({
@@ -143,19 +163,25 @@ server.registerTool(
     description:
       "Busca informações nos documentos oficiais do curso de Sistemas de Informação do IFMG Campus Ouro Branco. " +
       "Use esta ferramenta para responder perguntas sobre regulamentos, PPC (Projeto Pedagógico do Curso), " +
-      "grade curricular, normas acadêmicas, carga horária, TCC, estágio e informações do campus. " +
-      "Passe a consulta de busca expandida e formal como argumento.",
+      "grade curricular, normas acadêmicas, carga horária, TCC, estágio e informações do campus.\n\n" +
+      "DIRETIVA OBRIGATÓRIA PARA O LLM: Extraia APENAS palavras-chave principais e nomes próprios da dúvida do usuário. " +
+      "É EXPRESSAMENTE PROIBIDO enviar frases completas, pronomes, artigos ou conectivos.\n" +
+      "Exemplo: Em vez de 'Qual a ementa de Cálculo I?', envie apenas 'ementa Cálculo I'. " +
+      "Além disso, classifique a intenção da busca no parâmetro 'intent'.",
     inputSchema: {
       query: z
         .string()
         .describe(
-          "A consulta de busca. Deve ser formal e com siglas expandidas. " +
-          "Exemplo: 'Qual é a carga horária do Trabalho de Conclusão de Curso I?'"
+          "Apenas palavras-chave e nomes próprios. PROIBIDO frases completas, pronomes ou conectivos. " +
+          "Exemplo: 'carga horária Trabalho Conclusão Curso'"
         ),
+      intent: z
+        .enum(["CURSO", "DISCIPLINA", "CONTEUDO", "OUTRAS"])
+        .describe("Intenção da busca: CURSO (regras gerais), DISCIPLINA (carga horária, pré-requisito), CONTEUDO (ementa), OUTRAS."),
     },
   },
-  async ({ query }) => {
-    console.error(`🔍 [MCP] Buscando: "${query}"`);
+  async ({ query, intent }) => {
+    console.error(`🔍 [MCP] Buscando: "${query}" | Intenção: [${intent}]`);
 
     try {
       // 1. Vetorizar a query
@@ -164,19 +190,20 @@ server.registerTool(
         `🔢 [MCP] Embedding gerado (${embedding.length} dimensões)`
       );
 
-      // 2. Buscar no banco (Híbrida)
+      // 2. Buscar no banco (Híbrida com Threshold)
       const documentos = await buscarDocumentos(embedding, query, MAX_RESULTS);
       console.error(
-        `📄 [MCP] ${documentos.length} trechos encontrados (híbrida)`
+        `📄 [MCP] ${documentos.length} trechos encontrados (acima da nota de corte)`
       );
 
-      // 3. Formatar resultado
+      // 3. Formatar resultado (Barreira contra alucinações)
       if (documentos.length === 0) {
+        console.error(`⚠️ [MCP] Nenhum documento superou o MIN_RRF_SCORE (${MIN_RRF_SCORE})`);
         return {
           content: [
             {
               type: "text" as const,
-              text: "Nenhum trecho relevante encontrado nos documentos do IFMG para esta consulta.",
+              text: "Nenhum trecho relevante encontrado nos documentos oficiais do IFMG para esta consulta. Responda ao usuário que você não encontrou a informação nos regulamentos atuais.",
             },
           ],
         };
@@ -185,7 +212,7 @@ server.registerTool(
       const resultado = documentos
         .map(
           (doc, i) =>
-            `--- Trecho ${i + 1} (fonte: ${doc.origem}, similaridade: ${doc.similaridade.toFixed(2)}) ---\n${doc.conteudo}`
+            `--- Trecho ${i + 1} (fonte: ${doc.origem}, score RRF: ${doc.similaridade.toFixed(4)}) ---\n${doc.conteudo}`
         )
         .join("\n\n");
 
@@ -194,7 +221,7 @@ server.registerTool(
       );
 
       return {
-        content: [{ type: "text" as const, text: resultado }],
+        content: [{ type: "text" as const, text: `[INTENÇÃO DA BUSCA: ${intent}]\n\n${resultado}` }],
       };
     } catch (error) {
       const msg =
@@ -205,7 +232,7 @@ server.registerTool(
         content: [
           {
             type: "text" as const,
-            text: `Erro ao buscar nos documentos: ${msg}`,
+            text: `Erro interno do banco de dados ao buscar nos documentos: ${msg}`,
           },
         ],
         isError: true,
