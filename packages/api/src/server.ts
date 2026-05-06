@@ -38,7 +38,7 @@ const PORT = Number(process.env.PORT) || 3333;
 app.use(
   cors({
     origin: process.env.FRONTEND_URL || "http://localhost:5173",
-    methods: ["GET", "POST"],
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   })
 );
 

@@ -170,24 +170,30 @@ Isso cria um container PostgreSQL 16 com pgvector e executa o `init.sql` automat
 
 ### 3. Configurar variáveis de ambiente
 
+**Backend:**
 ```bash
 cp packages/api/.env.example packages/api/.env
 ```
 
-Edite o `packages/api/.env`:
+Edite o `packages/api/.env` (ajuste IPs e credenciais conforme sua rede):
 
 ```env
-# Servidor
 PORT=3333
-
-# PostgreSQL (credenciais do docker-compose)
+FRONTEND_URL=http://localhost:5173
 DATABASE_URL=postgresql://chatifme:chatifme123@localhost:5432/chatifme
-
-# Ollama (ajustar IP conforme sua rede)
 OLLAMA_BASE_URL=http://192.168.31.50:11434
 OLLAMA_EMBED_MODEL=nomic-embed-text
 OLLAMA_LLM_MODEL=qwen3.5:latest
-OLLAMA_REWRITE_MODEL=qwen3.5:latest
+```
+
+**Frontend:**
+```bash
+cp packages/web/.env.example packages/web/.env
+```
+
+Edite o `packages/web/.env` para apontar para a sua API local:
+```env
+VITE_API_URL=http://localhost:3333
 ```
 
 ### 4. Rodar em modo desenvolvimento
@@ -209,6 +215,24 @@ npm run dev:web
 ### 6. Usar o chat
 
 Acesse `http://localhost:5173` e faça perguntas sobre o curso.
+
+---
+
+## 🐳 Deploy para Produção (Docker)
+
+O projeto está configurado para ser 100% agnóstico de ambiente e preparado para deploy via Docker. O GitHub Actions (`deploy.yml`) constrói e publica automaticamente as imagens do Frontend e Backend no **GitHub Container Registry (GHCR)**.
+
+### Variáveis de Ambiente Essenciais
+Para rodar em produção (ex: homelab com Nginx/Cloudflare Tunnels), você precisará definir as seguintes variáveis nos seus containers:
+
+**Backend (`chatifme-backend`):**
+- `PORT`: Porta do servidor (ex: 3333)
+- `FRONTEND_URL`: URL pública do seu frontend para configuração de CORS (ex: `https://chatifme.seu-dominio.com`)
+- `DATABASE_URL`: String de conexão do PostgreSQL
+- `OLLAMA_BASE_URL`: URL do servidor Ollama no seu homelab
+
+**Frontend (`chatifme-frontend`):**
+- `VITE_API_URL`: URL pública da sua API (injetada no momento do **build** do container via argumento).
 
 ---
 
