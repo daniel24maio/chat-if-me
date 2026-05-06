@@ -32,5 +32,8 @@ COPY --from=builder /app/packages/mcp-server/package.json ./packages/mcp-server/
 # A porta que o seu Express usa (ajuste se for 3000)
 EXPOSE 3333
 
+# A variável de ambiente que define a URL do servidor (agora interno)
+#ENV API_BASE_URL=http://localhost:3333
+
 # O comando para iniciar a API (que, por sua vez, vai iniciar o MCP como subprocesso)
 CMD ["node", "packages/api/dist/server.js"]
