@@ -15,8 +15,9 @@ COPY packages/api packages/api
 COPY packages/mcp-server packages/mcp-server
 
 # Builda os dois pacotes
-RUN npm --workspace=packages/api run build
 RUN npm --workspace=packages/mcp-server run build
+RUN npm --workspace=packages/api run build
+
 
 # Estágio 2: Produção (Imagem mais leve)
 FROM node:20-alpine

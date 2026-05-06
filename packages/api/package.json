@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsup --watch",
+    "dev": "tsup --watch --onSuccess \"node dist/server.js\"",
     "build": "tsup"
   },
   "dependencies": {
