@@ -2,6 +2,11 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 
+# Avisa o Docker que vamos receber esta variável
+ARG VITE_API_URL
+# Transforma o ARG numa ENV para que o Vite a consiga ler durante o build
+ENV VITE_API_URL=$VITE_API_URL
+
 COPY package*.json ./
 COPY packages/web/package.json packages/web/
 RUN npm ci
