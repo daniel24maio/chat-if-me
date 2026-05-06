@@ -37,7 +37,7 @@ const PORT = Number(process.env.PORT) || 3333;
  */
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN || "*",
+    origin: process.env.FRONTEND_URL || "http://localhost:5173",
     methods: ["GET", "POST"],
   })
 );
@@ -71,12 +71,12 @@ app.get("/api/health", (_req, res) => {
 // ---------------------------------------------------------------------------
 
 const server = app.listen(PORT, async () => {
-  console.log(`\n🚀 Servidor rodando em http://localhost:${PORT}`);
-  console.log(`📡 Chat (RAG):         POST http://localhost:${PORT}/api/chat`);
-  console.log(`🤖 Agent (MCP):        POST http://localhost:${PORT}/api/agent`);
-  console.log(`📤 Upload endpoint:    POST http://localhost:${PORT}/api/embedding/upload`);
-  console.log(`📋 Documentos:         GET  http://localhost:${PORT}/api/embedding/documentos`);
-  console.log(`💚 Health check:       GET  http://localhost:${PORT}/api/health\n`);
+  console.log(`\n🚀 Servidor rodando na porta ${PORT}`);
+  console.log(`📡 Chat (RAG):         POST /api/chat`);
+  console.log(`🤖 Agent (MCP):        POST /api/agent`);
+  console.log(`📤 Upload endpoint:    POST /api/embedding/upload`);
+  console.log(`📋 Documentos:         GET  /api/embedding/documentos`);
+  console.log(`💚 Health check:       GET  /api/health\n`);
 
   // Testa conexões externas (não bloqueia a subida do servidor)
   await testarConexaoDB();
