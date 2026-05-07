@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import './ChatInterface.styles.css';
 import logoImage from '../../assets/logo-ifmg.png';
 import ThemeToggle from '../ThemeToggle/ThemeToggle';
+import MarkdownRenderer from '../MarkdownRenderer/MarkdownRenderer';
 
 /**
  * URL base da API backend.
@@ -277,9 +278,13 @@ const ChatInterface: React.FC = () => {
             className={`message ${msg.sender === 'user' ? 'user-message' : 'ai-message'}`}
           >
             <div className="message-content">
-              {msg.text}
+              {msg.sender === 'ai' ? (
+                <MarkdownRenderer content={msg.text} />
+              ) : (
+                msg.text
+              )}
               {/* Cursor piscando durante o streaming */}
-              {msg.isStreaming && <span className="streaming-cursor">▊</span>}
+              {msg.isStreaming && <span className="streaming-cursor">█</span>}
             </div>
 
             {/* Exibe fontes dos documentos quando disponíveis */}
