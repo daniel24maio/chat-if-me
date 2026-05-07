@@ -105,12 +105,12 @@ async function buscarDocumentos(
        ),
        lexical AS (
          SELECT id, content AS conteudo, metadata->>'filename' AS origem,
-           ts_rank_cd(content_tsv, to_tsquery('portuguese_unaccent', $2)) AS ts_score,
+           ts_rank_cd(content_tsv, to_tsquery('portuguese_unaccent', $2::text)) AS ts_score,
            ROW_NUMBER() OVER (
-             ORDER BY ts_rank_cd(content_tsv, to_tsquery('portuguese_unaccent', $2)) DESC
+             ORDER BY ts_rank_cd(content_tsv, to_tsquery('portuguese_unaccent', $2::text)) DESC
            ) AS rank
          FROM documents
-         WHERE content_tsv @@ to_tsquery('portuguese_unaccent', $2)
+         WHERE content_tsv @@ to_tsquery('portuguese_unaccent', $2::text)
          ORDER BY ts_score DESC
          LIMIT 40
        ),
@@ -130,7 +130,7 @@ async function buscarDocumentos(
      SELECT * FROM hybrid_results
      WHERE rrf_score >= ${MIN_RRF_SCORE}
      ORDER BY rrf_score DESC
-     LIMIT $5`,
+     LIMIT $3`,
     [vectorStr, ftsQuery, limite]
   );
 
