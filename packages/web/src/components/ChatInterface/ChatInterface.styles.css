@@ -52,19 +52,24 @@
 
 /* ── Modo escuro (controlado via ThemeContext → data-theme no <html>) ── */
 [data-theme="dark"] {
-  --bg-body: #0f1610;
-  --bg-header: #151d17;
-  --bg-message-user: #237a32;
-  --bg-message-ai: #1a241c;
-  --bg-input: #1a241c;
-  --bg-footer: #151d17;
-  --border-color: #2a3d2e;
-  --shadow-color: rgba(0, 0, 0, 0.3);
-  --text-primary: #e8f0ea;
-  --text-secondary: #a3bfa9;
-  --text-muted: #6b8a72;
-  --primary-light: rgba(47, 158, 65, 0.15);
-  --primary-border: rgba(47, 158, 65, 0.4);
+  /* Cores institucionais ajustadas para alto contraste */
+  --ifmg-verde: #4ade80;          /* verde-400 — alto contraste no escuro */
+  --ifmg-verde-escuro: #22c55e;   /* verde-500 — hover */
+  --ifmg-verde-claro: #86efac;    /* verde-300 — destaques */
+
+  --bg-body: #0a0f0c;
+  --bg-header: #0d1210;           /* fundo bem profundo para contraste */
+  --bg-message-user: #166534;     /* verde-800 — msg do usuário */
+  --bg-message-ai: #141c16;
+  --bg-input: #141c16;
+  --bg-footer: #0d1210;
+  --border-color: #1e3326;
+  --shadow-color: rgba(0, 0, 0, 0.4);
+  --text-primary: #f0fdf4;        /* verde-50 — texto principal brilhante */
+  --text-secondary: #bbf7d0;      /* verde-200 — texto secundário legível */
+  --text-muted: #86efac;          /* verde-300 — texto sutil mas visível */
+  --primary-light: rgba(74, 222, 128, 0.12);
+  --primary-border: rgba(74, 222, 128, 0.35);
 }
 
 

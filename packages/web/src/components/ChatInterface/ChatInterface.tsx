@@ -1,8 +1,10 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import './ChatInterface.styles.css';
-import logoImage from '../../assets/logo-ifmg.png';
+import logoLight from '../../assets/logo-ifmg.png';
+import logoDark from '../../assets/logo-ifmg-dark-mode.png';
 import ThemeToggle from '../ThemeToggle/ThemeToggle';
 import MarkdownRenderer from '../MarkdownRenderer/MarkdownRenderer';
+import { useTheme } from '../../contexts/ThemeContext';
 
 /**
  * URL base da API backend.
@@ -29,6 +31,7 @@ interface Message {
  * dando a sensação de que a IA está "digitando".
  */
 const ChatInterface: React.FC = () => {
+  const { theme } = useTheme();
   const [inputValue, setInputValue] = useState('');
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -250,7 +253,7 @@ const ChatInterface: React.FC = () => {
       {/* Cabeçalho com identidade visual IFMG Campus Ouro Branco */}
       <header className="chat-header">
         <div className="logo-container">
-          <img src={logoImage} alt="Logo IFMG Campus Ouro Branco" className="logo-img" />
+          <img src={theme === 'dark' ? logoDark : logoLight} alt="Logo IFMG Campus Ouro Branco" className="logo-img" />
           <div className="header-text">
             <h1>chatIFme</h1>
             <span className="campus-badge">Campus Ouro Branco — Sistemas de Informação</span>

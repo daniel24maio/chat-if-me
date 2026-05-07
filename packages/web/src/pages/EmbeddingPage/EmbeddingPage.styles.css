@@ -34,19 +34,24 @@
 
 /* ── Modo escuro (controlado via ThemeContext → data-theme no <html>) ── */
 [data-theme="dark"] {
-  --emb-bg-page: #0f1610;
-  --emb-bg-card: #151d17;
-  --emb-bg-dropzone: #1a241c;
-  --emb-bg-dropzone-hover: rgba(47, 158, 65, 0.1);
-  --emb-border: #2a3d2e;
-  --emb-border-dropzone: #3a5d40;
-  --emb-text-primary: #e8f0ea;
-  --emb-text-secondary: #a3bfa9;
-  --emb-text-muted: #6b8a72;
-  --emb-shadow: rgba(0, 0, 0, 0.3);
-  --emb-success-bg: rgba(47, 158, 65, 0.12);
-  --emb-error-bg: rgba(205, 25, 30, 0.12);
-  --emb-error-text: #f87171;
+  --emb-ifmg-verde: #4ade80;
+  --emb-ifmg-verde-escuro: #22c55e;
+  --emb-ifmg-verde-claro: #86efac;
+  --emb-ifmg-vermelho: #f87171;
+
+  --emb-bg-page: #0a0f0c;
+  --emb-bg-card: #0d1210;
+  --emb-bg-dropzone: #111a14;
+  --emb-bg-dropzone-hover: rgba(74, 222, 128, 0.08);
+  --emb-border: #1e3326;
+  --emb-border-dropzone: #2d5e3a;
+  --emb-text-primary: #f0fdf4;
+  --emb-text-secondary: #bbf7d0;
+  --emb-text-muted: #86efac;
+  --emb-shadow: rgba(0, 0, 0, 0.4);
+  --emb-success-bg: rgba(74, 222, 128, 0.12);
+  --emb-error-bg: rgba(248, 113, 113, 0.12);
+  --emb-error-text: #fca5a5;
 }
 
 /* ==========================================================================

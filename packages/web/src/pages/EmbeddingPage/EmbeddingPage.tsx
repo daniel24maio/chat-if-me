@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import logoImage from '../../assets/logo-ifmg.png';
+import logoLight from '../../assets/logo-ifmg.png';
+import logoDark from '../../assets/logo-ifmg-dark-mode.png';
 import ThemeToggle from '../../components/ThemeToggle/ThemeToggle';
+import { useTheme } from '../../contexts/ThemeContext';
 import './EmbeddingPage.styles.css';
 
 /**
@@ -39,6 +41,7 @@ interface DocumentoProcessado {
  *   - Lista de documentos já processados no banco
  */
 const EmbeddingPage: React.FC = () => {
+  const { theme } = useTheme();
   const [arquivos, setArquivos] = useState<FileItem[]>([]);
   const [documentos, setDocumentos] = useState<DocumentoProcessado[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -218,7 +221,7 @@ const EmbeddingPage: React.FC = () => {
       {/* Header com identidade IFMG */}
       <header className="embedding-header">
         <div className="embedding-header-left">
-          <img src={logoImage} alt="Logo IFMG Campus Ouro Branco" className="logo-img" />
+          <img src={theme === 'dark' ? logoDark : logoLight} alt="Logo IFMG Campus Ouro Branco" className="logo-img" />
           <div className="embedding-header-text">
             <h1>chatIFme</h1>
             <span className="admin-badge">Administração — Ingestão de Documentos</span>
