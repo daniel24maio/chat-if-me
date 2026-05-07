@@ -5,6 +5,8 @@
      Vermelho IF: #CD191E (RGB 200/25/30)
    ========================================================================== */
 
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
 :root {
   /* ── Cores institucionais IFMG ── */
   --ifmg-verde: #2F9E41;
@@ -48,27 +50,23 @@
   --transition-normal: 250ms ease;
 }
 
-/* ── Modo escuro ── */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg-body: #0f1610;
-    --bg-header: #151d17;
-    --bg-message-user: #237a32;
-    --bg-message-ai: #1a241c;
-    --bg-input: #1a241c;
-    --bg-footer: #151d17;
-    --border-color: #2a3d2e;
-    --shadow-color: rgba(0, 0, 0, 0.3);
-    --text-primary: #e8f0ea;
-    --text-secondary: #a3bfa9;
-    --text-muted: #6b8a72;
-    --primary-light: rgba(47, 158, 65, 0.15);
-    --primary-border: rgba(47, 158, 65, 0.4);
-  }
+/* ── Modo escuro (controlado via ThemeContext → data-theme no <html>) ── */
+[data-theme="dark"] {
+  --bg-body: #0f1610;
+  --bg-header: #151d17;
+  --bg-message-user: #237a32;
+  --bg-message-ai: #1a241c;
+  --bg-input: #1a241c;
+  --bg-footer: #151d17;
+  --border-color: #2a3d2e;
+  --shadow-color: rgba(0, 0, 0, 0.3);
+  --text-primary: #e8f0ea;
+  --text-secondary: #a3bfa9;
+  --text-muted: #6b8a72;
+  --primary-light: rgba(47, 158, 65, 0.15);
+  --primary-border: rgba(47, 158, 65, 0.4);
 }
 
-/* ── Google Fonts — Inter ── */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
 /* ==========================================================================
    Layout principal
@@ -128,6 +126,14 @@
   height: 3.5rem;
   display: block;
   border-radius: 4px;
+}
+
+/* Container dos controles do header (toggle modo + toggle tema) */
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
 }
 
 .header-text {

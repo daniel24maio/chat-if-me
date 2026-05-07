@@ -1,0 +1,58 @@
+/* ==========================================================================
+   ThemeToggle — Botão de troca de tema (light ↔ dark)
+   ========================================================================== */
+
+.theme-toggle {
+  position: relative;
+  width: 2.2rem;
+  height: 2.2rem;
+  border: 1.5px solid var(--border-color, #d4ddd6);
+  border-radius: 50%;
+  background-color: var(--bg-input, #ffffff);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+  transition:
+    background-color 250ms ease,
+    border-color 250ms ease,
+    transform 150ms ease;
+}
+
+.theme-toggle:hover {
+  transform: scale(1.08);
+  border-color: var(--ifmg-verde, #2F9E41);
+}
+
+.theme-toggle:active {
+  transform: scale(0.95);
+}
+
+.theme-toggle:focus-visible {
+  outline: 2px solid var(--ifmg-verde, #2F9E41);
+  outline-offset: 2px;
+}
+
+/* ── Ícones com animação de entrada/saída ── */
+
+.theme-icon {
+  position: absolute;
+  font-size: 1.15rem;
+  line-height: 1;
+  transition:
+    opacity 300ms ease,
+    transform 300ms ease;
+}
+
+.icon-visible {
+  opacity: 1;
+  transform: rotate(0deg) scale(1);
+}
+
+.icon-hidden {
+  opacity: 0;
+  transform: rotate(90deg) scale(0.5);
+  pointer-events: none;
+}

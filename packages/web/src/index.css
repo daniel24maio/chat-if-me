@@ -24,7 +24,7 @@
 
   font: 18px/145% var(--sans);
   letter-spacing: 0.18px;
-  color-scheme: light dark;
+  color-scheme: light;
   color: var(--text);
   background: var(--bg);
   font-synthesis: none;
@@ -37,24 +37,24 @@
   }
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --text: #a3bfa9;
-    --text-h: #e8f0ea;
-    --bg: #0f1610;
-    --border: #2a3d2e;
-    --code-bg: #1a241c;
-    --accent: #3cc454;
-    --accent-bg: rgba(60, 196, 84, 0.15);
-    --accent-border: rgba(60, 196, 84, 0.5);
-    --social-bg: rgba(26, 36, 28, 0.5);
-    --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
-  }
+/* ── Modo escuro (controlado via ThemeContext → data-theme no <html>) ── */
+[data-theme="dark"] {
+  color-scheme: dark;
+  --text: #a3bfa9;
+  --text-h: #e8f0ea;
+  --bg: #0f1610;
+  --border: #2a3d2e;
+  --code-bg: #1a241c;
+  --accent: #3cc454;
+  --accent-bg: rgba(60, 196, 84, 0.15);
+  --accent-border: rgba(60, 196, 84, 0.5);
+  --social-bg: rgba(26, 36, 28, 0.5);
+  --shadow:
+    rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
+}
 
-  #social .button-icon {
-    filter: invert(1) brightness(2);
-  }
+[data-theme="dark"] #social .button-icon {
+  filter: invert(1) brightness(2);
 }
 
 #root {

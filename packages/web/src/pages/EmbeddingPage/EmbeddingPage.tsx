@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import logoImage from '../../assets/logo-ifmg.png';
+import ThemeToggle from '../../components/ThemeToggle/ThemeToggle';
 import './EmbeddingPage.styles.css';
 
 /**
@@ -223,9 +224,12 @@ const EmbeddingPage: React.FC = () => {
             <span className="admin-badge">Administração — Ingestão de Documentos</span>
           </div>
         </div>
-        <Link to="/" className="back-link">
-          ← Voltar ao Chat
-        </Link>
+        <div className="embedding-header-right">
+          <Link to="/" className="back-link">
+            ← Voltar ao Chat
+          </Link>
+          <ThemeToggle />
+        </div>
       </header>
 
       <main className="embedding-content">

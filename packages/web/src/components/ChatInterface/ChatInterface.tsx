@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import './ChatInterface.styles.css';
 import logoImage from '../../assets/logo-ifmg.png';
+import ThemeToggle from '../ThemeToggle/ThemeToggle';
 
 /**
  * URL base da API backend.
@@ -254,15 +255,18 @@ const ChatInterface: React.FC = () => {
             <span className="campus-badge">Campus Ouro Branco — Sistemas de Informação</span>
           </div>
         </div>
-        {/* Toggle RAG ↔ Agente */}
-        <button
-          className={`mode-toggle ${useAgent ? 'mode-agent' : 'mode-rag'}`}
-          onClick={() => setUseAgent((prev) => !prev)}
-          disabled={isStreaming}
-          title={useAgent ? 'Modo: Agente MCP (Tool Calling)' : 'Modo: RAG Clássico'}
-        >
-          {useAgent ? '🤖 Agente' : '📚 RAG'}
-        </button>
+        {/* Controles do header: toggle modo + toggle tema */}
+        <div className="header-controls">
+          <button
+            className={`mode-toggle ${useAgent ? 'mode-agent' : 'mode-rag'}`}
+            onClick={() => setUseAgent((prev) => !prev)}
+            disabled={isStreaming}
+            title={useAgent ? 'Modo: Agente MCP (Tool Calling)' : 'Modo: RAG Clássico'}
+          >
+            {useAgent ? '🤖 Agente' : '📚 RAG'}
+          </button>
+          <ThemeToggle />
+        </div>
       </header>
 
       {/* Área de Mensagens */}

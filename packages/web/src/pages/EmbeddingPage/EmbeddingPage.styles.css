@@ -32,23 +32,21 @@
   --emb-error-text: #CD191E;
 }
 
-/* ── Modo escuro semântico ── */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --emb-bg-page: #0f1610;
-    --emb-bg-card: #151d17;
-    --emb-bg-dropzone: #1a241c;
-    --emb-bg-dropzone-hover: rgba(47, 158, 65, 0.1);
-    --emb-border: #2a3d2e;
-    --emb-border-dropzone: #3a5d40;
-    --emb-text-primary: #e8f0ea;
-    --emb-text-secondary: #a3bfa9;
-    --emb-text-muted: #6b8a72;
-    --emb-shadow: rgba(0, 0, 0, 0.3);
-    --emb-success-bg: rgba(47, 158, 65, 0.12);
-    --emb-error-bg: rgba(205, 25, 30, 0.12);
-    --emb-error-text: #f87171;
-  }
+/* ── Modo escuro (controlado via ThemeContext → data-theme no <html>) ── */
+[data-theme="dark"] {
+  --emb-bg-page: #0f1610;
+  --emb-bg-card: #151d17;
+  --emb-bg-dropzone: #1a241c;
+  --emb-bg-dropzone-hover: rgba(47, 158, 65, 0.1);
+  --emb-border: #2a3d2e;
+  --emb-border-dropzone: #3a5d40;
+  --emb-text-primary: #e8f0ea;
+  --emb-text-secondary: #a3bfa9;
+  --emb-text-muted: #6b8a72;
+  --emb-shadow: rgba(0, 0, 0, 0.3);
+  --emb-success-bg: rgba(47, 158, 65, 0.12);
+  --emb-error-bg: rgba(205, 25, 30, 0.12);
+  --emb-error-text: #f87171;
 }
 
 /* ==========================================================================
@@ -151,6 +149,14 @@
   background-color: var(--emb-bg-dropzone-hover);
   border-color: var(--emb-ifmg-verde);
   color: var(--emb-ifmg-verde);
+}
+
+/* Container dos controles do header (link + toggle tema) */
+.embedding-header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-shrink: 0;
 }
 
 /* ==========================================================================
