@@ -11,28 +11,32 @@ Sistema **Agentic RAG** (Retrieval-Augmented Generation com agentes autônomos) 
 ## 🏗️ Arquitetura
 
 ```
-┌───────────────────────────────────────────────────────────────────┐
-│                      MONOREPO (npm workspaces)                    │
-│                                                                   │
-│  ┌──────────────────┐  ┌───────────────────┐  ┌───────────────┐  │
-│  │  packages/web     │  │  packages/api      │  │ packages/     │  │
-│  │  React + Vite     │  │  Express + TS      │  │ mcp-server    │  │
-│  │                   │  │                    │  │               │  │
-│  │ • Chat (SSE)      │  │ • /api/chat (RAG)  │  │ • MCP Tool:   │  │
-│  │ • Toggle RAG/MCP  │  │ • /api/agent (MCP) │  │   search_     │  │
-│  │ • Upload PDFs     │  │ • MCP Client       │  │   ifmg_       │  │
-│  │                   │  │ • Tool Calling     │  │   knowledge   │  │
-│  └─────────┬────────┘  └──────┬────────┬────┘  └──────┬────────┘  │
-│            │ HTTP              │  stdio │               │          │
-│            └──────────────────►│◄───────┘               │          │
-│                                │                        │          │
-│                                ▼                        ▼          │
-│                        ┌───────────┐            ┌────────────┐    │
-│                        │ PostgreSQL │            │   Ollama    │    │
-│                        │ + pgvector │            │  (homelab)  │    │
-│                        │  (Docker)  │            │             │    │
-│                        └───────────┘            └────────────┘    │
-└───────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────┐
+│                      MONOREPO (npm workspaces)                        │
+│                                                                       │
+│  ┌──────────────────┐  ┌───────────────────┐  ┌───────────────────┐  │
+│  │  packages/web     │  │  packages/api      │  │  packages/        │  │
+│  │  React + Vite     │  │  Express + TS      │  │  mcp-server       │  │
+│  │                   │  │                    │  │                   │  │
+│  │ • Chat (SSE)      │  │ • /api/chat (RAG)  │  │ • MCP Tool:       │  │
+│  │ • Toggle RAG/MCP  │  │ • /api/agent (MCP) │  │   search_ifmg_    │  │
+│  │ • Upload PDFs     │  │ • MCP Client       │  │   knowledge       │  │
+│  │                   │  │ • BullMQ Semaphore  │  │                   │  │
+│  └─────────┬────────┘  └──────┬────────┬────┘  └──────┬────────────┘  │
+│            │ HTTP              │  stdio │               │              │
+│            └──────────────────►│◄───────┘               │              │
+│                                │                        │              │
+│                          ┌─────┴─────┐          ┌──────┴───────┐     │
+│                          │ PostgreSQL │          │    Ollama     │     │
+│                          │ + pgvector │          │  (homelab)   │     │
+│                          │  (Docker)  │          │              │     │
+│                          └─────┬─────┘          └──────────────┘     │
+│                                │                                      │
+│                          ┌─────┴─────┐                                │
+│                          │   Redis    │                                │
+│                          │  (BullMQ)  │                                │
+│                          └───────────┘                                │
+└───────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Duas abordagens de RAG (comparáveis no TCC)
@@ -51,12 +55,26 @@ O LLM decide **autonomamente** se precisa buscar nos documentos (via Tool Callin
 
 ---
 
+## 📊 Distribuição de VRAM
+
+| Componente | VRAM |
+|---|---|
+| qwen3.5:2b-q4_K_M (geração + reescrita) | ~1.9 GiB |
+| bge-m3 (embeddings 1024d) | ~1.2 GiB |
+| **Total** | **~3.1 GiB (19%)** |
+| **Livre (de 16 GiB)** | **~12.8 GiB** |
+
+> Otimizado para GPUs com 16 GiB de VRAM. Suporta ~10 usuários simultâneos.
+
+---
+
 ## ✨ Funcionalidades
 
 ### Chat (Frontend)
 - 💬 Interface de chat com identidade visual IFMG (verde `#2F9E41` / vermelho `#CD191E`)
 - ⚡ **Streaming de respostas** via Server-Sent Events (SSE) — token a token
 - 📚 Exibição das fontes documentais utilizadas na resposta
+- ⏱️ Métricas de timing por etapa do pipeline (rewrite, embedding, retrieval, generation)
 - 🌙 Dark mode automático (segue preferência do sistema)
 - 📱 Layout responsivo (mobile e desktop)
 - 🔄 Auto-scroll suave durante streaming
@@ -67,19 +85,25 @@ O LLM decide **autonomamente** se precisa buscar nos documentos (via Tool Callin
 - 📊 **Extração e Conversão**: Reconstrução de layout de tabelas via PDF e conversão nativa de planilhas para `Markdown Tables`.
 - 🧹 **Serviço de Sanitização Dedicado**: Remoção de artefatos estruturais, cabeçalhos, notas de rodapé e hifenização.
 - 👁️ **OCR Nativo**: Leitura automática de imagens e PDFs escaneados via `tesseract.js`
-- ✂️ **Chunking Semântico** (1500 caracteres, overlap de 200) — preserva parágrafos e tabelas intactas
-- 🔢 Vetorização via Ollama (`nomic-embed-text`)
-- 💾 Armazenamento Híbrido no PostgreSQL (`pgvector` + `tsvector`)
+- ✂️ **Chunking Adaptativo** — tamanho de chunk varia por tipo de conteúdo:
+  - Regulamentos: 1024 chars (granular para artigos/incisos)
+  - Tabelas: 8000 chars (mantém tabelas intactas)
+  - Texto geral: 2048 chars (~512 tokens)
+- 🔢 Vetorização via Ollama (`bge-m3`, 1024 dimensões)
+- 💾 Armazenamento Híbrido no PostgreSQL (`pgvector` HNSW + `tsvector`)
 - 📋 Listagem de documentos já processados na base de conhecimento
 - 🗑️ Exclusão de documentos e de todos os seus fragmentos associados
 
 ### Backend (API)
 - 🔄 **Query Rewriting & Roteamento de Intenção** — reescrita com expansão de siglas e extração da Tag de Intenção (`[CURSO]`, `[DISCIPLINA]`, etc) para guiar o contexto.
 - 🤖 **Agentic RAG (MCP)** — LLM decide autonomamente quando buscar via Tool Calling (agora com suporte à classificação de intenção no prompt).
-- 🔀 **Busca Híbrida (RRF)** — combina busca semântica (`pgvector`) com busca léxica por palavras-chave (`tsvector` + `portuguese_unaccent`) usando Reciprocal Rank Fusion.
+- 🔀 **Busca Híbrida (RRF)** — combina busca semântica (`pgvector` HNSW) com busca léxica por palavras-chave (`tsvector` + `portuguese_unaccent`) usando Reciprocal Rank Fusion.
+- 🔐 **Segurança**: Rate limiting (20 req/min chat, 5 req/min upload), autenticação admin via `X-API-Key`, validação de MIME/extensão no upload, CORS restrito.
+- 🚦 **Controle de Concorrência**: Semáforo BullMQ para serializar requests ao Ollama e evitar OOM na GPU.
 - 🛡️ System Prompt rigoroso anti-alucinação focado na intenção detectada.
-- ❤️ Health check para PostgreSQL, Ollama e MCP na inicialização
-- 📝 Logs detalhados de todo o pipeline no terminal
+- 💚 Health check expandido (`/api/health`) com status de DB, Ollama, Redis, fila e memória.
+- ⏱️ Métricas de timing por etapa do pipeline RAG enviadas via SSE.
+- 📝 Logs detalhados de todo o pipeline no terminal.
 
 ### MCP Server
 - 🔧 Ferramenta `search_ifmg_knowledge` exposta via protocolo MCP
@@ -88,11 +112,28 @@ O LLM decide **autonomamente** se precisa buscar nos documentos (via Tool Callin
 
 ---
 
+## 🔒 Segurança
+
+| Recurso | Detalhes |
+|---|---|
+| **Rate Limiting** | 20 req/min para `/api/chat` e `/api/agent`; 5 req/min para `/api/embedding` |
+| **Autenticação Admin** | Header `X-API-Key` obrigatório em rotas de ingestão (configurável via `ADMIN_API_KEY`) |
+| **Validação de Upload** | MIME type + extensão dupla validação; apenas PDF, Word, Excel, CSV, TXT, JPEG, PNG |
+| **CORS** | Origens configuráveis via `CORS_ORIGINS` (lista separada por vírgula) |
+| **Connection Pooling** | Pool PostgreSQL com max=20 conexões, timeout de 5s |
+
+### Limitações Conhecidas
+- Context window limitado a 4096 tokens por requisição (configurável via `OLLAMA_NUM_CTX`)
+- Modelo de geração é `qwen3.5:2b` (2B parâmetros) — menor qualidade que modelos maiores
+- Sem autenticação de usuários finais (sistema acadêmico aberto)
+
+---
+
 ## 📁 Estrutura do Projeto
 
 ```
 chat-if-me/
-├── docker-compose.yml          # PostgreSQL + pgvector
+├── docker-compose.yml          # PostgreSQL + pgvector + Redis
 ├── package.json                # Workspaces (monorepo)
 │
 ├── packages/mcp-server/        # Servidor MCP (Tool: search_ifmg_knowledge)
@@ -104,24 +145,31 @@ chat-if-me/
 ├── packages/api/               # Backend (Express + TypeScript)
 │   ├── .env                    # Variáveis de ambiente (não commitado)
 │   ├── .env.example            # Template de configuração
-│   ├── init.sql                # Schema do banco (pgvector + tabela documents)
+│   ├── init.sql                # Schema do banco (pgvector HNSW + FTS)
+│   ├── migrate_bge_m3.sql      # Migração 768d → 1024d (deploys existentes)
 │   └── src/
-│       ├── server.ts           # Entry point — Express + MCP Client init
+│       ├── server.ts           # Entry point — Express + health check + MCP init
 │       ├── config/
-│       │   ├── database.ts     # Pool de conexão PostgreSQL
-│       │   └── ollama.ts       # Integração Ollama (embed, rewrite, stream)
+│       │   ├── database.ts     # Pool de conexão PostgreSQL (max=20)
+│       │   ├── ollama.ts       # Integração Ollama (embed, rewrite, stream)
+│       │   └── redis.ts        # Conexão Redis para BullMQ
+│       ├── middlewares/
+│       │   ├── rateLimiter.ts  # Rate limiting (chat + upload)
+│       │   └── adminAuth.ts    # Autenticação admin via X-API-Key
 │       ├── controllers/
-│       │   ├── chat.controller.ts       # SSE — RAG clássico
-│       │   ├── agent.controller.ts      # SSE — Agente MCP
+│       │   ├── chat.controller.ts       # SSE — RAG clássico + semáforo
+│       │   ├── agent.controller.ts      # SSE — Agente MCP + semáforo
 │       │   └── embedding.controller.ts  # Upload de documentos
 │       ├── routes/
 │       │   ├── chat.routes.ts           # POST /api/chat
 │       │   ├── agent.routes.ts          # POST /api/agent
 │       │   └── embedding.routes.ts      # POST /api/embedding/upload
 │       └── services/
-│           ├── rag.service.ts           # Pipeline RAG clássico
+│           ├── rag.service.ts           # Pipeline RAG clássico + timing
 │           ├── mcp_agent.service.ts     # Agente MCP + Tool Calling
-│           └── embedding.service.ts     # Ingestão (PDF → chunks → vectors)
+│           ├── embedding.service.ts     # Ingestão (chunking adaptativo)
+│           ├── sanitization.service.ts  # Sanitização de texto pós-extração
+│           └── queue.service.ts         # Semáforo de concorrência (BullMQ)
 │
 └── packages/web/               # Frontend (React + Vite)
     └── src/
@@ -141,15 +189,16 @@ chat-if-me/
 | Ferramenta | Versão | Uso |
 |------------|--------|-----|
 | **Node.js** | ≥ 20 | Runtime do monorepo |
-| **Docker** + **Docker Compose** | — | Banco de dados PostgreSQL |
+| **Docker** + **Docker Compose** | — | PostgreSQL + Redis |
 | **Ollama** | ≥ 0.6 | LLM e embeddings (pode rodar remoto) |
+| **GPU** | ≥ 4 GiB VRAM | Recomendado para geração fluida |
 
 ### Modelos Ollama necessários
 
 ```bash
 # No servidor onde o Ollama está rodando:
-ollama pull nomic-embed-text     # Embeddings (768 dimensões)
-ollama pull qwen3.5:latest       # Geração de respostas + reescrita de queries
+ollama pull bge-m3              # Embeddings (1024 dimensões, multilíngue)
+ollama pull qwen3.5:2b-q4_K_M  # Geração de respostas (~1.9 GiB VRAM)
 ```
 
 ### 1. Clonar e instalar dependências
@@ -160,13 +209,13 @@ cd chat-if-me
 npm install
 ```
 
-### 2. Subir o banco de dados
+### 2. Subir o banco de dados e Redis
 
 ```bash
 docker compose up -d
 ```
 
-Isso cria um container PostgreSQL 16 com pgvector e executa o `init.sql` automaticamente.
+Isso cria containers para PostgreSQL 16 (com pgvector) e Redis 7, executando o `init.sql` automaticamente na primeira subida.
 
 ### 3. Configurar variáveis de ambiente
 
@@ -179,11 +228,14 @@ Edite o `packages/api/.env` (ajuste IPs e credenciais conforme sua rede):
 
 ```env
 PORT=3333
-FRONTEND_URL=http://localhost:5173
+CORS_ORIGINS=http://localhost:5173
+ADMIN_API_KEY=sua-chave-secreta-aqui
 DATABASE_URL=postgresql://chatifme:chatifme123@localhost:5432/chatifme
 OLLAMA_BASE_URL=http://192.168.31.50:11434
-OLLAMA_EMBED_MODEL=nomic-embed-text
-OLLAMA_LLM_MODEL=qwen3.5:latest
+OLLAMA_EMBED_MODEL=bge-m3
+OLLAMA_LLM_MODEL=qwen3.5:2b-q4_K_M
+OLLAMA_REWRITE_MODEL=qwen3.5:2b-q4_K_M
+REDIS_URL=redis://localhost:6379
 ```
 
 **Frontend:**
@@ -210,7 +262,7 @@ npm run dev:web
 
 1. Acesse `http://localhost:5173/embedding`
 2. Faça upload dos PDFs (PPC, regulamentos, normas)
-3. Aguarde o processamento (chunking + vetorização)
+3. Aguarde o processamento (chunking adaptativo + vetorização)
 
 ### 6. Usar o chat
 
@@ -227,9 +279,11 @@ Para rodar em produção (ex: homelab com Nginx/Cloudflare Tunnels), você preci
 
 **Backend (`chatifme-backend`):**
 - `PORT`: Porta do servidor (ex: 3333)
-- `FRONTEND_URL`: URL pública do seu frontend para configuração de CORS (ex: `https://chatifme.seu-dominio.com`)
+- `CORS_ORIGINS`: Origens permitidas para CORS (ex: `https://chatifme.seu-dominio.com`)
+- `ADMIN_API_KEY`: Chave de autenticação para rotas admin
 - `DATABASE_URL`: String de conexão do PostgreSQL
 - `OLLAMA_BASE_URL`: URL do servidor Ollama no seu homelab
+- `REDIS_URL`: URL do servidor Redis
 
 **Frontend (`chatifme-frontend`):**
 - `VITE_API_URL`: URL pública da sua API (injetada no momento do **build** do container via argumento).
@@ -238,14 +292,14 @@ Para rodar em produção (ex: homelab com Nginx/Cloudflare Tunnels), você preci
 
 ## 🔌 Endpoints da API
 
-| Método | Rota | Descrição |
-|--------|------|-----------|
-| `POST` | `/api/chat` | Pergunta via RAG clássico (streaming SSE) |
-| `POST` | `/api/agent` | Pergunta via Agente MCP (Tool Calling + SSE) |
-| `POST` | `/api/embedding/upload` | Upload de PDF/Imagem para ingestão multimodal |
-| `GET` | `/api/embedding/documentos` | Lista documentos processados |
-| `DELETE`| `/api/embedding/documentos/:filename`| Remove documento e seus chunks |
-| `GET` | `/api/health` | Health check da API |
+| Método | Rota | Descrição | Auth |
+|--------|------|-----------|------|
+| `POST` | `/api/chat` | Pergunta via RAG clássico (streaming SSE) | — |
+| `POST` | `/api/agent` | Pergunta via Agente MCP (Tool Calling + SSE) | — |
+| `POST` | `/api/embedding/upload` | Upload de documento para ingestão | `X-API-Key` |
+| `GET` | `/api/embedding/documentos` | Lista documentos processados | `X-API-Key` |
+| `DELETE`| `/api/embedding/documentos/:filename`| Remove documento e seus chunks | `X-API-Key` |
+| `GET` | `/api/health` | Health check expandido (DB, Ollama, Redis, fila, memória) | — |
 
 ---
 
@@ -256,11 +310,13 @@ Para rodar em produção (ex: homelab com Nginx/Cloudflare Tunnels), você preci
 | **Frontend** | React 19, Vite 8, React Router, CSS puro |
 | **Backend** | Express 4, TypeScript 5, tsup |
 | **MCP** | @modelcontextprotocol/sdk (Server + Client) |
-| **Banco de Dados** | PostgreSQL 16 + pgvector + Full-Text Search (unaccent) |
-| **IA / LLM** | Ollama (nomic-embed-text + qwen3.5) |
+| **Banco de Dados** | PostgreSQL 16 + pgvector (HNSW) + Full-Text Search (unaccent) |
+| **Cache / Fila** | Redis 7 + BullMQ (semáforo de concorrência) |
+| **IA / LLM** | Ollama (bge-m3 embeddings + qwen3.5:2b-q4_K_M) |
 | **Ingestão/Upload** | Multer (memória) + pdf.js-extract + tesseract.js + mammoth + xlsx |
 | **Streaming** | Server-Sent Events (SSE) |
-| **Containerização** | Docker Compose |
+| **Segurança** | express-rate-limit, CORS restrito, admin API key |
+| **Containerização** | Docker Compose (PostgreSQL + Redis) |
 
 ---
 

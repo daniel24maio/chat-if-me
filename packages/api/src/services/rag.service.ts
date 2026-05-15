@@ -125,7 +125,7 @@ async function reescreverPergunta(pergunta: string): Promise<{ intencao: string;
 
 /**
  * Converte o texto da pergunta em um vetor numérico (embedding).
- * Utiliza o modelo configurado no Ollama (ex: nomic-embed-text, 768 dimensões).
+ * Utiliza o modelo configurado no Ollama (ex: bge-m3, 1024 dimensões).
  *
  * @param texto - Texto a ser vetorizado (pergunta do aluno)
  * @returns Vetor numérico representando o texto no espaço semântico
@@ -325,13 +325,19 @@ export async function processarPerguntaStream(
   const inicio = Date.now();
 
   // Etapa 0: Reescrever a pergunta para melhorar a busca semântica
+  const t0 = Date.now();
   const { intencao, perguntaReescrita } = await reescreverPergunta(pergunta);
+  const rewriteMs = Date.now() - t0;
 
   // Etapa 1: Vetorizar a pergunta REESCRITA (não a original)
+  const t1 = Date.now();
   const embedding = await gerarEmbedding(perguntaReescrita);
+  const embedMs = Date.now() - t1;
 
   // Etapa 2: Busca híbrida (vetorial + FTS) com RRF
+  const t2 = Date.now();
   const documentos = await buscarHibrido(embedding, perguntaReescrita);
+  const retrievalMs = Date.now() - t2;
 
   // Extrair as fontes dos documentos recuperados para referência
   const fontes = documentos.map(
@@ -348,8 +354,25 @@ export async function processarPerguntaStream(
   );
 
   // Etapa 4: Stream da resposta do LLM diretamente para o frontend
+  const t3 = Date.now();
   await streamRespostaOllama(mensagens, res, fontes);
+  const generationMs = Date.now() - t3;
 
-  const duracao = ((Date.now() - inicio) / 1000).toFixed(1);
-  console.log(`⏱️  [RAG] Pipeline streaming concluído em ${duracao}s\n`);
+  const totalMs = Date.now() - inicio;
+
+  // Envia métricas de timing como evento SSE antes do fim
+  const timings = {
+    rewrite: rewriteMs,
+    embedding: embedMs,
+    retrieval: retrievalMs,
+    generation: generationMs,
+    total: totalMs,
+  };
+
+  res.write(`data: ${JSON.stringify({ type: "metrics", timings })}\n\n`);
+
+  console.log(
+    `⏱️  [RAG] Pipeline concluído em ${(totalMs / 1000).toFixed(1)}s ` +
+    `(rewrite: ${rewriteMs}ms, embed: ${embedMs}ms, retrieval: ${retrievalMs}ms, gen: ${generationMs}ms)\n`
+  );
 }

@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import type { ChatRequestBody } from "../interfaces/chat.interfaces.js";
 import { processarPerguntaStream } from "../services/rag.service.js";
+import { comControleDeConcorrencia } from "../services/queue.service.js";
 
 /**
  * Controller do módulo de chat com Server-Sent Events (SSE).
@@ -78,7 +79,10 @@ export async function enviarPergunta(
     });
 
     // Delega o processamento ao serviço RAG com streaming
-    await processarPerguntaStream(perguntaTrimmed, res);
+    // Controlado pelo semáforo de concorrência para evitar OOM na GPU
+    await comControleDeConcorrencia(async () => {
+      await processarPerguntaStream(perguntaTrimmed, res);
+    });
 
     // Encerra a conexão SSE após o stream completo
     res.end();

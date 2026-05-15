@@ -30,29 +30,58 @@ import type {
 // ---------------------------------------------------------------------------
 
 /**
- * Tamanho alvo de cada chunk em caracteres.
+ * Configuração de chunking adaptativo por tipo de conteúdo.
  *
  * Regra de bolso: 1 token ≈ 4 chars em português.
- * Ajuste conforme o modelo configurado em ollama.ts:
+ * O modelo bge-m3 suporta contexto de 8192 tokens, permitindo chunks maiores.
  *
- *   nomic-embed-text   → contexto 2048 tokens → CHUNK_SIZE ≤ 600
- *   mxbai-embed-large  → contexto  512 tokens → CHUNK_SIZE ≤ 400
- *   all-minilm         → contexto  256 tokens → CHUNK_SIZE ≤ 200
+ * Tipos:
+ *   - regulamento: chunks menores para recuperação granular de artigos/incisos
+ *   - tabela: chunks grandes para manter tabelas intactas
+ *   - default: tamanho intermediário para texto corrido
  */
-const CHUNK_SIZE = 600;
+interface ChunkConfig {
+  size: number;    // tamanho alvo em caracteres (≈ tokens × 4)
+  overlap: number; // sobreposição entre chunks adjacentes
+}
 
-/** Sobreposição entre chunks para manter contexto nas bordas */
-const CHUNK_OVERLAP = 100;
+const CHUNK_CONFIGS: Record<string, ChunkConfig> = {
+  regulamento: { size: 1024, overlap: 128 },  // ~256 tokens — granular para artigos
+  tabela:      { size: 8000, overlap: 0 },     // chunk inteiro — não quebrar tabelas
+  default:     { size: 2048, overlap: 256 },   // ~512 tokens — texto corrido
+};
+
+/**
+ * Detecta o tipo de conteúdo para selecionar a estratégia de chunking ideal.
+ *
+ * @param texto    - Conteúdo textual do documento
+ * @param filename - Nome do arquivo original
+ * @returns Chave do CHUNK_CONFIGS
+ */
+function detectarTipoConteudo(texto: string, filename: string): string {
+  // Regulamentos, normas, resoluções — chunks menores para artigos
+  if (/regulament|norma|resolu[çc]|portaria|edital|delibera/i.test(filename)) {
+    return "regulamento";
+  }
+
+  // Tabelas detectadas por contagem de pipes (indicador de markdown table)
+  const pipeCount = (texto.match(/\|/g) || []).length;
+  if (pipeCount > 20 && texto.includes("|")) {
+    return "tabela";
+  }
+
+  return "default";
+}
 
 /**
  * Limite máximo de caracteres enviados ao Ollama por chamada.
  * Última linha de defesa contra o erro 500 "input length exceeds context length".
  *
- * Fórmula: (contexto_tokens_do_modelo - 10) * 4
- * Ex: nomic-embed-text com 2048 tokens → (2048 - 10) * 4 = 8152
- * Usando 2000 como valor conservador e seguro para múltiplos modelos.
+ * Fórmula: (contexto_tokens_do_modelo - margem) × 4
+ * bge-m3 com 8192 tokens → (8192 - 192) × 4 = 32000
+ * Usando 4000 como valor conservador e seguro para múltiplos modelos.
  */
-const EMBEDDING_MAX_CHARS = 1500;
+const EMBEDDING_MAX_CHARS = 4000;
 
 /** Instância do extrator PDF (reutilizável) */
 const pdfExtract = new PDFExtract();
@@ -352,9 +381,14 @@ function subdividirBloco(texto: string, maxChars: number): string[] {
 
 /**
  * Divide texto em chunks respeitando fronteiras semânticas.
+ * Usa chunking adaptativo: seleciona tamanho/overlap pelo tipo de conteúdo.
  * Garante que nenhum chunk ultrapasse EMBEDDING_MAX_CHARS.
  */
 function dividirEmChunks(texto: string, filename: string): ChunkData[] {
+  const tipoConteudo = detectarTipoConteudo(texto, filename);
+  const config = CHUNK_CONFIGS[tipoConteudo] || CHUNK_CONFIGS.default;
+  const { size: chunkSize, overlap: chunkOverlap } = config;
+
   const blocos = texto.split(/\n{2,}/).filter((b) => b.trim().length > 0);
 
   if (blocos.length === 0) {
@@ -368,15 +402,15 @@ function dividirEmChunks(texto: string, filename: string): ChunkData[] {
   for (const bloco of blocos) {
     if (
       chunkAtual.length > 0 &&
-      chunkAtual.length + bloco.length > CHUNK_SIZE
+      chunkAtual.length + bloco.length > chunkSize
     ) {
       // Salva o chunk atual subdividindo se necessário
       for (const parte of subdividirBloco(chunkAtual, EMBEDDING_MAX_CHARS)) {
         chunks.push(criarChunk(parte, filename, chunks.length));
       }
 
-      const overlap = chunkAtual.slice(-CHUNK_OVERLAP);
-      chunkAtual = overlap + "\n\n" + bloco;
+      const overlap = chunkOverlap > 0 ? chunkAtual.slice(-chunkOverlap) : "";
+      chunkAtual = overlap + (overlap ? "\n\n" : "") + bloco;
     } else {
       chunkAtual += (chunkAtual.length > 0 ? "\n\n" : "") + bloco;
     }
@@ -394,7 +428,7 @@ function dividirEmChunks(texto: string, filename: string): ChunkData[] {
   }
 
   console.log(
-    `✂️  [Chunking] "${filename}" → ${chunks.length} chunks (alvo: ${CHUNK_SIZE}, overlap: ${CHUNK_OVERLAP}, max: ${EMBEDDING_MAX_CHARS})`
+    `✂️  [Chunking] "${filename}" → ${chunks.length} chunks (tipo: ${tipoConteudo}, alvo: ${chunkSize}, overlap: ${chunkOverlap}, max: ${EMBEDDING_MAX_CHARS})`
   );
 
   return chunks;
@@ -440,40 +474,88 @@ function truncarParaEmbedding(texto: string): string {
 }
 
 /**
- * Gera embeddings e grava os chunks no banco de dados.
+ * Gera embeddings e grava os chunks no banco de dados em lotes.
+ * Processa BATCH_SIZE chunks em paralelo para acelerar a ingestão.
  * A coluna content_tsv é gerada automaticamente pelo PostgreSQL.
  */
+const BATCH_SIZE = 32;
+
 async function vetorizarEGravar(chunks: ChunkData[]): Promise<number> {
   let gravados = 0;
+  let errosDimensao = 0;
+  let outrosErros = 0;
 
-  for (let i = 0; i < chunks.length; i++) {
-    const chunk = chunks[i];
-    const progresso = `[${i + 1}/${chunks.length}]`;
+  for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+    const batch = chunks.slice(i, i + BATCH_SIZE);
+    const batchLabel = `[Lote ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(chunks.length / BATCH_SIZE)}]`;
 
-    try {
-      const conteudoSeguro = truncarParaEmbedding(chunk.conteudo);
+    console.log(
+      `🔢 [Embedding] ${batchLabel} Processando ${batch.length} chunks em paralelo...`
+    );
 
-      console.log(
-        `🔢 [Embedding] ${progresso} Vetorizando: "${conteudoSeguro.substring(0, 40)}..." (${conteudoSeguro.length} chars)`
-      );
+    const results = await Promise.allSettled(
+      batch.map(async (chunk, j) => {
+        const idx = i + j;
+        const progresso = `[${idx + 1}/${chunks.length}]`;
+        const conteudoSeguro = truncarParaEmbedding(chunk.conteudo);
 
-      const embedding = await gerarEmbeddingOllama(conteudoSeguro);
-      const vectorStr = `[${embedding.join(",")}]`;
+        const embedding = await gerarEmbeddingOllama(conteudoSeguro);
+        const vectorStr = `[${embedding.join(",")}]`;
 
-      await pool.query(
-        `INSERT INTO documents (content, metadata, embedding)
-         VALUES ($1, $2, $3)`,
-        [conteudoSeguro, JSON.stringify(chunk.metadata), vectorStr]
-      );
+        await pool.query(
+          `INSERT INTO documents (content, metadata, embedding)
+           VALUES ($1, $2, $3)`,
+          [conteudoSeguro, JSON.stringify(chunk.metadata), vectorStr]
+        );
 
-      gravados++;
-      console.log(
-        `💾 [Banco] ${progresso} Chunk gravado (${embedding.length} dimensões)`
-      );
-    } catch (error) {
+        console.log(
+          `💾 [Banco] ${progresso} Chunk gravado (${embedding.length} dimensões)`
+        );
+      })
+    );
+
+    // Contabiliza sucessos e loga erros com detalhes
+    for (const result of results) {
+      if (result.status === "fulfilled") {
+        gravados++;
+      } else {
+        const errMsg = result.reason?.message || String(result.reason);
+
+        // Detectar erro de dimensão incompatível (pgvector CheckExpectedDim)
+        if (errMsg.includes("expected") && errMsg.includes("dimensions")) {
+          errosDimensao++;
+          if (errosDimensao === 1) {
+            // Loga apenas na primeira ocorrência para não poluir
+            console.error(
+              `❌ [Embedding] ERRO DE DIMENSÃO: O banco espera uma dimensão diferente do modelo.\n` +
+              `   Detalhe: ${errMsg}\n` +
+              `   Solução: Reinicie a API — a auto-migração corrigirá a dimensão.\n` +
+              `   Alternativa: Execute manualmente: psql -f migrate_bge_m3.sql`
+            );
+          }
+        } else {
+          outrosErros++;
+          console.error(`❌ [Embedding] Erro no lote: ${errMsg}`);
+        }
+      }
+    }
+
+    // Se todos os chunks do lote falharam por dimensão, aborta cedo
+    if (errosDimensao > 0 && gravados === 0 && i + BATCH_SIZE >= chunks.length) {
+      break;
+    }
+  }
+
+  // Resumo final de erros
+  if (errosDimensao > 0 || outrosErros > 0) {
+    console.error(
+      `\n📊 [Embedding] Resumo: ${gravados} gravados, ${errosDimensao} erros de dimensão, ${outrosErros} outros erros`
+    );
+
+    if (errosDimensao > 0) {
       console.error(
-        `❌ [Embedding] ${progresso} Erro:`,
-        error instanceof Error ? error.message : error
+        `   💡 A dimensão do embedding no banco está incompatível com o modelo configurado.\n` +
+        `   💡 Reinicie a API para auto-migrar, ou execute: psql -U chatifme -d chatifme -f migrate_bge_m3.sql`
       );
     }
   }
@@ -523,14 +605,43 @@ export async function processarDocumento(
   const chunksGravados = await vetorizarEGravar(chunks);
 
   const duracao = ((Date.now() - inicio) / 1000).toFixed(1);
+  const falhas = chunks.length - chunksGravados;
+
+  if (chunksGravados === 0 && chunks.length > 0) {
+    // Nenhum chunk gravado — erro grave
+    console.error(`\n${"=".repeat(60)}`);
+    console.error(
+      `❌ [Ingestão] "${filename}" FALHOU em ${duracao}s — 0/${chunks.length} chunks gravados`
+    );
+    console.error(`${"=".repeat(60)}\n`);
+
+    return {
+      mensagem:
+        `Falha na ingestão: nenhum chunk foi gravado (0/${chunks.length}). ` +
+        `Possível causa: dimensão do embedding incompatível com o banco de dados. ` +
+        `Reinicie a API para executar a auto-migração.`,
+      arquivo: filename,
+      totalChunks: chunks.length,
+      chunksGravados: 0,
+    };
+  }
+
   console.log(`\n${"=".repeat(60)}`);
-  console.log(
-    `✅ [Ingestão] "${filename}" concluído em ${duracao}s — ${chunksGravados}/${chunks.length} chunks`
-  );
+  if (falhas > 0) {
+    console.warn(
+      `⚠️  [Ingestão] "${filename}" concluído com erros em ${duracao}s — ${chunksGravados}/${chunks.length} chunks (${falhas} falhas)`
+    );
+  } else {
+    console.log(
+      `✅ [Ingestão] "${filename}" concluído em ${duracao}s — ${chunksGravados}/${chunks.length} chunks`
+    );
+  }
   console.log(`${"=".repeat(60)}\n`);
 
   return {
-    mensagem: `Documento processado com sucesso em ${duracao}s.`,
+    mensagem: falhas > 0
+      ? `Documento processado parcialmente em ${duracao}s. ${falhas} chunk(s) falharam.`
+      : `Documento processado com sucesso em ${duracao}s.`,
     arquivo: filename,
     totalChunks: chunks.length,
     chunksGravados,

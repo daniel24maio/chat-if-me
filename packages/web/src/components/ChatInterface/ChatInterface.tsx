@@ -43,7 +43,7 @@ const ChatInterface: React.FC = () => {
   ]);
   const [isStreaming, setIsStreaming] = useState(false);
   /** Modo agente (MCP) ou RAG clássico */
-  const [useAgent, setUseAgent] = useState(false);
+  const [useAgent, setUseAgent] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   /** Ref para abortar o stream se o usuário enviar outra pergunta */
   const abortControllerRef = useRef<AbortController | null>(null);

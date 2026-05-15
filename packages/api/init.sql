@@ -43,8 +43,8 @@ CREATE TABLE IF NOT EXISTS documents (
   -- Exemplo: {"filename": "PPC_SI_2023.pdf", "page": 12, "chunk_index": 3}
   metadata JSONB NOT NULL DEFAULT '{}',
 
-  -- Vetor de embedding gerado pelo modelo (nomic-embed-text = 768 dimensões)
-  embedding vector(768) NOT NULL,
+  -- Vetor de embedding gerado pelo modelo (bge-m3 = 1024 dimensões)
+  embedding vector(1024) NOT NULL,
 
   -- Full-Text Search: tsvector gerado automaticamente a partir do content
   -- Usa configuração portuguese_unaccent para busca sem acentos com stemming
@@ -56,11 +56,12 @@ CREATE TABLE IF NOT EXISTS documents (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Índice IVFFlat para busca por similaridade eficiente (pgvector)
+-- Índice HNSW para busca por similaridade eficiente (pgvector)
+-- HNSW é superior ao IVFFlat para datasets < 100k registros
 CREATE INDEX IF NOT EXISTS idx_documents_embedding
   ON documents
-  USING ivfflat (embedding vector_cosine_ops)
-  WITH (lists = 100);
+  USING hnsw (embedding vector_cosine_ops)
+  WITH (m = 16, ef_construction = 200);
 
 -- Índice GIN para Full-Text Search eficiente
 CREATE INDEX IF NOT EXISTS idx_documents_fts

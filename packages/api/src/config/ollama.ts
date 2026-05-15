@@ -6,8 +6,8 @@
  *
  * Variáveis de ambiente necessárias:
  *   OLLAMA_BASE_URL    — URL base do Ollama (ex: http://192.168.31.50:11434)
- *   OLLAMA_EMBED_MODEL — Modelo de embeddings (ex: nomic-embed-text)
- *   OLLAMA_LLM_MODEL   — Modelo de geração (ex: qwen2.5:latest)
+ *   OLLAMA_EMBED_MODEL — Modelo de embeddings (ex: bge-m3, 1024 dimensões)
+ *   OLLAMA_LLM_MODEL   — Modelo de geração (ex: qwen3.5:2b-q4_K_M)
  */
 
 import type { Response } from "express";
@@ -16,14 +16,21 @@ import type { Response } from "express";
 const OLLAMA_BASE_URL =
   process.env.OLLAMA_BASE_URL || "http://localhost:11434";
 
-/** Modelo de embeddings — 768 dimensões para nomic-embed-text */
-const EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || "nomic-embed-text";
+/** Modelo de embeddings — 1024 dimensões para bge-m3 (multilíngue) */
+const EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || "bge-m3";
 
 /** Modelo de geração de texto (LLM) */
-const LLM_MODEL = process.env.OLLAMA_LLM_MODEL || "qwen3.5:latest";
+const LLM_MODEL = process.env.OLLAMA_LLM_MODEL || "qwen3.5:2b-q4_K_M";
 
 /** Modelo para reescrita de queries (pode ser o mesmo ou mais leve) */
-const REWRITE_MODEL = process.env.OLLAMA_REWRITE_MODEL || "qwen3.5:latest";
+const REWRITE_MODEL = process.env.OLLAMA_REWRITE_MODEL || "qwen3.5:2b-q4_K_M";
+
+/**
+ * Context window máximo por requisição.
+ * Limita a alocação de VRAM do Ollama para suportar mais usuários simultâneos.
+ * qwen3.5:2b-q4_K_M suporta até 32768 tokens, mas 4096 é suficiente para RAG.
+ */
+const NUM_CTX = Number(process.env.OLLAMA_NUM_CTX) || 4096;
 
 // ---------------------------------------------------------------------------
 // Health Check
@@ -122,6 +129,7 @@ export async function gerarRespostaOllama(
       model: LLM_MODEL,
       messages: mensagens,
       stream: false,
+      options: { num_ctx: NUM_CTX },
     }),
   });
 
@@ -178,6 +186,7 @@ export async function reescreverComLLM(
       stream: false,
       options: {
         temperature: 0, // Determinístico — sem criatividade na reescrita
+        num_ctx: NUM_CTX,
       },
     }),
   });
@@ -238,6 +247,7 @@ export async function streamRespostaOllama(
       model: LLM_MODEL,
       messages: mensagens,
       stream: true,
+      options: { num_ctx: NUM_CTX },
     }),
   });
 

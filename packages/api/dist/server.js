@@ -9,8 +9,15 @@ import { Router } from "express";
 // src/config/database.ts
 import pg from "pg";
 var { Pool } = pg;
+var EMBEDDING_DIM_ESPERADA = 1024;
 var pool = new Pool({
-  connectionString: process.env.DATABASE_URL
+  connectionString: process.env.DATABASE_URL,
+  max: 20,
+  // Máximo de conexões simultâneas
+  idleTimeoutMillis: 3e4,
+  // Fecha conexões ociosas após 30s
+  connectionTimeoutMillis: 5e3
+  // Timeout para obter conexão do pool
 });
 async function testarConexaoDB() {
   try {
@@ -27,12 +34,74 @@ async function testarConexaoDB() {
     );
   }
 }
+async function verificarDimensaoEmbedding() {
+  try {
+    const tabelaExiste = await pool.query(`
+      SELECT EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_name = 'documents'
+      ) AS existe
+    `);
+    if (!tabelaExiste.rows[0]?.existe) {
+      console.log("\u23ED\uFE0F  [Database] Tabela 'documents' n\xE3o existe ainda. Pulando verifica\xE7\xE3o de dimens\xE3o.");
+      return;
+    }
+    const result = await pool.query(`
+      SELECT atttypmod AS dim
+      FROM pg_attribute
+      WHERE attrelid = 'documents'::regclass
+        AND attname = 'embedding'
+    `);
+    if (result.rows.length === 0) {
+      console.warn("\u26A0\uFE0F  [Database] Coluna 'embedding' n\xE3o encontrada na tabela 'documents'.");
+      return;
+    }
+    const dimAtual = result.rows[0].dim;
+    if (dimAtual === EMBEDDING_DIM_ESPERADA) {
+      console.log(`\u2705 [Database] Dimens\xE3o do embedding: ${dimAtual}d \u2713`);
+      return;
+    }
+    console.warn(
+      `\u26A0\uFE0F  [Database] Dimens\xE3o incompat\xEDvel detectada: ${dimAtual}d (esperado: ${EMBEDDING_DIM_ESPERADA}d)`
+    );
+    console.log(`\u{1F504} [Database] Iniciando auto-migra\xE7\xE3o ${dimAtual}d \u2192 ${EMBEDDING_DIM_ESPERADA}d...`);
+    const countResult = await pool.query(`SELECT COUNT(*) AS total FROM documents WHERE embedding IS NOT NULL`);
+    const registrosExistentes = Number(countResult.rows[0]?.total || 0);
+    if (registrosExistentes > 0) {
+      console.warn(
+        `\u26A0\uFE0F  [Database] ${registrosExistentes} registro(s) com embeddings ser\xE3o invalidados. Re-uploade os documentos ap\xF3s a migra\xE7\xE3o.`
+      );
+    }
+    await pool.query(`DROP INDEX IF EXISTS idx_documents_embedding`);
+    await pool.query(`ALTER TABLE documents DROP COLUMN IF EXISTS embedding`);
+    await pool.query(`ALTER TABLE documents ADD COLUMN embedding vector(${EMBEDDING_DIM_ESPERADA})`);
+    await pool.query(`
+      CREATE INDEX idx_documents_embedding
+        ON documents USING hnsw (embedding vector_cosine_ops)
+        WITH (m = 16, ef_construction = 200)
+    `);
+    console.log(
+      `\u2705 [Database] Auto-migra\xE7\xE3o conclu\xEDda! Embedding agora \xE9 ${EMBEDDING_DIM_ESPERADA}d (HNSW).`
+    );
+    if (registrosExistentes > 0) {
+      console.warn(
+        `\u26A0\uFE0F  [Database] A\xC7\xC3O NECESS\xC1RIA: Re-uploade os ${registrosExistentes} documento(s) via /api/embedding/upload`
+      );
+    }
+  } catch (error) {
+    console.error(
+      "\u274C [Database] Falha na verifica\xE7\xE3o/migra\xE7\xE3o de dimens\xE3o:",
+      error instanceof Error ? error.message : error
+    );
+  }
+}
 
 // src/config/ollama.ts
 var OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
-var EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || "nomic-embed-text";
-var LLM_MODEL = process.env.OLLAMA_LLM_MODEL || "qwen3.5:latest";
-var REWRITE_MODEL = process.env.OLLAMA_REWRITE_MODEL || "qwen3.5:latest";
+var EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || "bge-m3";
+var LLM_MODEL = process.env.OLLAMA_LLM_MODEL || "qwen3.5:2b-q4_K_M";
+var REWRITE_MODEL = process.env.OLLAMA_REWRITE_MODEL || "qwen3.5:2b-q4_K_M";
+var NUM_CTX = Number(process.env.OLLAMA_NUM_CTX) || 4096;
 async function verificarOllama() {
   try {
     const response = await fetch(`${OLLAMA_BASE_URL}/api/tags`);
@@ -86,8 +155,9 @@ async function reescreverComLLM(systemPrompt, pergunta) {
       ],
       stream: false,
       options: {
-        temperature: 0
+        temperature: 0,
         // Determinístico — sem criatividade na reescrita
+        num_ctx: NUM_CTX
       }
     })
   });
@@ -116,7 +186,8 @@ async function streamRespostaOllama(mensagens, res, fontes) {
     body: JSON.stringify({
       model: LLM_MODEL,
       messages: mensagens,
-      stream: true
+      stream: true,
+      options: { num_ctx: NUM_CTX }
     })
   });
   if (!ollamaResponse.ok) {
@@ -338,9 +409,15 @@ ${"\u2500".repeat(50)}`);
   console.log(`\u{1F4E8} [RAG] Nova pergunta (stream): "${pergunta}"`);
   console.log(`${"\u2500".repeat(50)}`);
   const inicio = Date.now();
+  const t0 = Date.now();
   const { intencao, perguntaReescrita } = await reescreverPergunta(pergunta);
+  const rewriteMs = Date.now() - t0;
+  const t1 = Date.now();
   const embedding = await gerarEmbedding(perguntaReescrita);
+  const embedMs = Date.now() - t1;
+  const t2 = Date.now();
   const documentos = await buscarHibrido(embedding, perguntaReescrita);
+  const retrievalMs = Date.now() - t2;
   const fontes = documentos.map(
     (doc) => `${doc.origem} (similaridade: ${doc.similaridade.toFixed(2)})`
   );
@@ -348,10 +425,81 @@ ${"\u2500".repeat(50)}`);
   console.log(
     `\u{1F916} [RAG] Iniciando streaming com ${documentos.length} documentos de contexto...`
   );
+  const t3 = Date.now();
   await streamRespostaOllama(mensagens, res, fontes);
-  const duracao = ((Date.now() - inicio) / 1e3).toFixed(1);
-  console.log(`\u23F1\uFE0F  [RAG] Pipeline streaming conclu\xEDdo em ${duracao}s
+  const generationMs = Date.now() - t3;
+  const totalMs = Date.now() - inicio;
+  const timings = {
+    rewrite: rewriteMs,
+    embedding: embedMs,
+    retrieval: retrievalMs,
+    generation: generationMs,
+    total: totalMs
+  };
+  res.write(`data: ${JSON.stringify({ type: "metrics", timings })}
+
 `);
+  console.log(
+    `\u23F1\uFE0F  [RAG] Pipeline conclu\xEDdo em ${(totalMs / 1e3).toFixed(1)}s (rewrite: ${rewriteMs}ms, embed: ${embedMs}ms, retrieval: ${retrievalMs}ms, gen: ${generationMs}ms)
+`
+  );
+}
+
+// src/services/queue.service.ts
+var MAX_CONCURRENT = Number(process.env.OLLAMA_MAX_CONCURRENT) || 2;
+var QUEUE_TIMEOUT_MS = 12e4;
+var OllamaSemaphore = class {
+  constructor(maxConcurrent) {
+    this.maxConcurrent = maxConcurrent;
+  }
+  currentCount = 0;
+  waitQueue = [];
+  /**
+   * Aguarda até que um slot esteja disponível.
+   * @throws Error se o timeout for atingido
+   */
+  async acquire() {
+    if (this.currentCount < this.maxConcurrent) {
+      this.currentCount++;
+      return;
+    }
+    return new Promise((resolve2, reject) => {
+      const timer = setTimeout(() => {
+        const idx = this.waitQueue.findIndex((w) => w.resolve === resolve2);
+        if (idx !== -1)
+          this.waitQueue.splice(idx, 1);
+        reject(new Error("Tempo de espera na fila esgotado. Tente novamente."));
+      }, QUEUE_TIMEOUT_MS);
+      this.waitQueue.push({ resolve: resolve2, timer });
+    });
+  }
+  /** Libera um slot, desbloqueando o próximo request na fila. */
+  release() {
+    if (this.waitQueue.length > 0) {
+      const next = this.waitQueue.shift();
+      clearTimeout(next.timer);
+      next.resolve();
+    } else {
+      this.currentCount = Math.max(0, this.currentCount - 1);
+    }
+  }
+  /** Retorna métricas da fila para observabilidade. */
+  getStatus() {
+    return {
+      active: this.currentCount,
+      waiting: this.waitQueue.length,
+      maxConcurrent: this.maxConcurrent
+    };
+  }
+};
+var ollamaSemaphore = new OllamaSemaphore(MAX_CONCURRENT);
+async function comControleDeConcorrencia(fn) {
+  await ollamaSemaphore.acquire();
+  try {
+    return await fn();
+  } finally {
+    ollamaSemaphore.release();
+  }
 }
 
 // src/controllers/chat.controller.ts
@@ -387,7 +535,9 @@ async function enviarPergunta(req, res) {
     req.on("close", () => {
       console.log("\u{1F50C} [SSE] Cliente desconectou durante o stream");
     });
-    await processarPerguntaStream(perguntaTrimmed, res);
+    await comControleDeConcorrencia(async () => {
+      await processarPerguntaStream(perguntaTrimmed, res);
+    });
     res.end();
   } catch (error) {
     console.error("[ChatController] Erro ao processar pergunta:", error);
@@ -491,9 +641,25 @@ function sanitizarTexto(texto) {
 }
 
 // src/services/embedding.service.ts
-var CHUNK_SIZE = 600;
-var CHUNK_OVERLAP = 100;
-var EMBEDDING_MAX_CHARS = 1500;
+var CHUNK_CONFIGS = {
+  regulamento: { size: 1024, overlap: 128 },
+  // ~256 tokens — granular para artigos
+  tabela: { size: 8e3, overlap: 0 },
+  // chunk inteiro — não quebrar tabelas
+  default: { size: 2048, overlap: 256 }
+  // ~512 tokens — texto corrido
+};
+function detectarTipoConteudo(texto, filename) {
+  if (/regulament|norma|resolu[çc]|portaria|edital|delibera/i.test(filename)) {
+    return "regulamento";
+  }
+  const pipeCount = (texto.match(/\|/g) || []).length;
+  if (pipeCount > 20 && texto.includes("|")) {
+    return "tabela";
+  }
+  return "default";
+}
+var EMBEDDING_MAX_CHARS = 4e3;
 var pdfExtract = new PDFExtract();
 async function extrairTextoPDF(buffer, filename) {
   console.log(
@@ -660,6 +826,9 @@ function subdividirBloco(texto, maxChars) {
   return partes;
 }
 function dividirEmChunks(texto, filename) {
+  const tipoConteudo = detectarTipoConteudo(texto, filename);
+  const config = CHUNK_CONFIGS[tipoConteudo] || CHUNK_CONFIGS.default;
+  const { size: chunkSize, overlap: chunkOverlap } = config;
   const blocos = texto.split(/\n{2,}/).filter((b) => b.trim().length > 0);
   if (blocos.length === 0) {
     console.warn(`\u26A0\uFE0F [Chunking] Texto vazio em "${filename}"`);
@@ -668,12 +837,12 @@ function dividirEmChunks(texto, filename) {
   const chunks = [];
   let chunkAtual = "";
   for (const bloco of blocos) {
-    if (chunkAtual.length > 0 && chunkAtual.length + bloco.length > CHUNK_SIZE) {
+    if (chunkAtual.length > 0 && chunkAtual.length + bloco.length > chunkSize) {
       for (const parte of subdividirBloco(chunkAtual, EMBEDDING_MAX_CHARS)) {
         chunks.push(criarChunk(parte, filename, chunks.length));
       }
-      const overlap = chunkAtual.slice(-CHUNK_OVERLAP);
-      chunkAtual = overlap + "\n\n" + bloco;
+      const overlap = chunkOverlap > 0 ? chunkAtual.slice(-chunkOverlap) : "";
+      chunkAtual = overlap + (overlap ? "\n\n" : "") + bloco;
     } else {
       chunkAtual += (chunkAtual.length > 0 ? "\n\n" : "") + bloco;
     }
@@ -687,7 +856,7 @@ function dividirEmChunks(texto, filename) {
     chunk.metadata.totalChunks = chunks.length;
   }
   console.log(
-    `\u2702\uFE0F  [Chunking] "${filename}" \u2192 ${chunks.length} chunks (alvo: ${CHUNK_SIZE}, overlap: ${CHUNK_OVERLAP}, max: ${EMBEDDING_MAX_CHARS})`
+    `\u2702\uFE0F  [Chunking] "${filename}" \u2192 ${chunks.length} chunks (tipo: ${tipoConteudo}, alvo: ${chunkSize}, overlap: ${chunkOverlap}, max: ${EMBEDDING_MAX_CHARS})`
   );
   return chunks;
 }
@@ -710,31 +879,68 @@ function truncarParaEmbedding(texto) {
   const corte = texto.lastIndexOf(". ", EMBEDDING_MAX_CHARS);
   return corte > EMBEDDING_MAX_CHARS * 0.5 ? texto.slice(0, corte + 1).trim() : texto.slice(0, EMBEDDING_MAX_CHARS).trim();
 }
+var BATCH_SIZE = 32;
 async function vetorizarEGravar(chunks) {
   let gravados = 0;
-  for (let i = 0; i < chunks.length; i++) {
-    const chunk = chunks[i];
-    const progresso = `[${i + 1}/${chunks.length}]`;
-    try {
-      const conteudoSeguro = truncarParaEmbedding(chunk.conteudo);
-      console.log(
-        `\u{1F522} [Embedding] ${progresso} Vetorizando: "${conteudoSeguro.substring(0, 40)}..." (${conteudoSeguro.length} chars)`
-      );
-      const embedding = await gerarEmbeddingOllama(conteudoSeguro);
-      const vectorStr = `[${embedding.join(",")}]`;
-      await pool.query(
-        `INSERT INTO documents (content, metadata, embedding)
-         VALUES ($1, $2, $3)`,
-        [conteudoSeguro, JSON.stringify(chunk.metadata), vectorStr]
-      );
-      gravados++;
-      console.log(
-        `\u{1F4BE} [Banco] ${progresso} Chunk gravado (${embedding.length} dimens\xF5es)`
-      );
-    } catch (error) {
+  let errosDimensao = 0;
+  let outrosErros = 0;
+  for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+    const batch = chunks.slice(i, i + BATCH_SIZE);
+    const batchLabel = `[Lote ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(chunks.length / BATCH_SIZE)}]`;
+    console.log(
+      `\u{1F522} [Embedding] ${batchLabel} Processando ${batch.length} chunks em paralelo...`
+    );
+    const results = await Promise.allSettled(
+      batch.map(async (chunk, j) => {
+        const idx = i + j;
+        const progresso = `[${idx + 1}/${chunks.length}]`;
+        const conteudoSeguro = truncarParaEmbedding(chunk.conteudo);
+        const embedding = await gerarEmbeddingOllama(conteudoSeguro);
+        const vectorStr = `[${embedding.join(",")}]`;
+        await pool.query(
+          `INSERT INTO documents (content, metadata, embedding)
+           VALUES ($1, $2, $3)`,
+          [conteudoSeguro, JSON.stringify(chunk.metadata), vectorStr]
+        );
+        console.log(
+          `\u{1F4BE} [Banco] ${progresso} Chunk gravado (${embedding.length} dimens\xF5es)`
+        );
+      })
+    );
+    for (const result of results) {
+      if (result.status === "fulfilled") {
+        gravados++;
+      } else {
+        const errMsg = result.reason?.message || String(result.reason);
+        if (errMsg.includes("expected") && errMsg.includes("dimensions")) {
+          errosDimensao++;
+          if (errosDimensao === 1) {
+            console.error(
+              `\u274C [Embedding] ERRO DE DIMENS\xC3O: O banco espera uma dimens\xE3o diferente do modelo.
+   Detalhe: ${errMsg}
+   Solu\xE7\xE3o: Reinicie a API \u2014 a auto-migra\xE7\xE3o corrigir\xE1 a dimens\xE3o.
+   Alternativa: Execute manualmente: psql -f migrate_bge_m3.sql`
+            );
+          }
+        } else {
+          outrosErros++;
+          console.error(`\u274C [Embedding] Erro no lote: ${errMsg}`);
+        }
+      }
+    }
+    if (errosDimensao > 0 && gravados === 0 && i + BATCH_SIZE >= chunks.length) {
+      break;
+    }
+  }
+  if (errosDimensao > 0 || outrosErros > 0) {
+    console.error(
+      `
+\u{1F4CA} [Embedding] Resumo: ${gravados} gravados, ${errosDimensao} erros de dimens\xE3o, ${outrosErros} outros erros`
+    );
+    if (errosDimensao > 0) {
       console.error(
-        `\u274C [Embedding] ${progresso} Erro:`,
-        error instanceof Error ? error.message : error
+        `   \u{1F4A1} A dimens\xE3o do embedding no banco est\xE1 incompat\xEDvel com o modelo configurado.
+   \u{1F4A1} Reinicie a API para auto-migrar, ou execute: psql -U chatifme -d chatifme -f migrate_bge_m3.sql`
       );
     }
   }
@@ -760,15 +966,37 @@ ${"=".repeat(60)}`);
   const chunks = dividirEmChunks(texto, filename);
   const chunksGravados = await vetorizarEGravar(chunks);
   const duracao = ((Date.now() - inicio) / 1e3).toFixed(1);
+  const falhas = chunks.length - chunksGravados;
+  if (chunksGravados === 0 && chunks.length > 0) {
+    console.error(`
+${"=".repeat(60)}`);
+    console.error(
+      `\u274C [Ingest\xE3o] "${filename}" FALHOU em ${duracao}s \u2014 0/${chunks.length} chunks gravados`
+    );
+    console.error(`${"=".repeat(60)}
+`);
+    return {
+      mensagem: `Falha na ingest\xE3o: nenhum chunk foi gravado (0/${chunks.length}). Poss\xEDvel causa: dimens\xE3o do embedding incompat\xEDvel com o banco de dados. Reinicie a API para executar a auto-migra\xE7\xE3o.`,
+      arquivo: filename,
+      totalChunks: chunks.length,
+      chunksGravados: 0
+    };
+  }
   console.log(`
 ${"=".repeat(60)}`);
-  console.log(
-    `\u2705 [Ingest\xE3o] "${filename}" conclu\xEDdo em ${duracao}s \u2014 ${chunksGravados}/${chunks.length} chunks`
-  );
+  if (falhas > 0) {
+    console.warn(
+      `\u26A0\uFE0F  [Ingest\xE3o] "${filename}" conclu\xEDdo com erros em ${duracao}s \u2014 ${chunksGravados}/${chunks.length} chunks (${falhas} falhas)`
+    );
+  } else {
+    console.log(
+      `\u2705 [Ingest\xE3o] "${filename}" conclu\xEDdo em ${duracao}s \u2014 ${chunksGravados}/${chunks.length} chunks`
+    );
+  }
   console.log(`${"=".repeat(60)}
 `);
   return {
-    mensagem: `Documento processado com sucesso em ${duracao}s.`,
+    mensagem: falhas > 0 ? `Documento processado parcialmente em ${duracao}s. ${falhas} chunk(s) falharam.` : `Documento processado com sucesso em ${duracao}s.`,
     arquivo: filename,
     totalChunks: chunks.length,
     chunksGravados
@@ -895,11 +1123,32 @@ async function deletarDocumento(req, res) {
 }
 
 // src/routes/embedding.routes.ts
+var EXTENSOES_ACEITAS = /\.(pdf|docx?|xlsx?|csv|txt|jpe?g|png)$/i;
+var MIMES_ACEITOS = /* @__PURE__ */ new Set([
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-excel",
+  "text/csv",
+  "text/plain",
+  "image/jpeg",
+  "image/png"
+]);
 var upload = multer({
   storage: multer.memoryStorage(),
   limits: {
     fileSize: 20 * 1024 * 1024
     // 20 MB
+  },
+  fileFilter: (_req, file, cb) => {
+    const mimeOk = MIMES_ACEITOS.has(file.mimetype);
+    const extOk = EXTENSOES_ACEITAS.test(file.originalname);
+    if (mimeOk && extOk) {
+      cb(null, true);
+    } else {
+      cb(new Error(`Tipo de arquivo n\xE3o permitido: ${file.mimetype} (${file.originalname})`));
+    }
   }
 });
 var embeddingRouter = Router2();
@@ -916,7 +1165,8 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { fileURLToPath } from "url";
 import { dirname, resolve } from "path";
 var OLLAMA_BASE_URL2 = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
-var LLM_MODEL2 = process.env.OLLAMA_LLM_MODEL || "qwen3.5:latest";
+var LLM_MODEL2 = process.env.OLLAMA_LLM_MODEL || "qwen3.5:2b-q4_K_M";
+var NUM_CTX2 = Number(process.env.OLLAMA_NUM_CTX) || 4096;
 var AGENT_SYSTEM_PROMPT = `Voc\xEA \xE9 o assistente virtual oficial do IFMG Campus Ouro Branco.
 
 Voc\xEA tem acesso a uma ferramenta de busca nos documentos oficiais do curso. USE ESTA FERRAMENTA para responder perguntas sobre:
@@ -1020,7 +1270,8 @@ ${"\u2500".repeat(50)}`);
       model: LLM_MODEL2,
       messages,
       tools: ollamaTools,
-      stream: false
+      stream: false,
+      options: { num_ctx: NUM_CTX2 }
     })
   });
   if (!firstResponse.ok) {
@@ -1119,7 +1370,8 @@ ${"\u2500".repeat(50)}`);
     body: JSON.stringify({
       model: LLM_MODEL2,
       messages,
-      stream: true
+      stream: true,
+      options: { num_ctx: NUM_CTX2 }
     })
   });
   if (!streamResponse.ok) {
@@ -1218,7 +1470,9 @@ async function enviarPerguntaAgente(req, res) {
     req.on("close", () => {
       console.log("\u{1F50C} [SSE Agent] Cliente desconectou");
     });
-    await processarPerguntaAgente(perguntaTrimmed, res);
+    await comControleDeConcorrencia(async () => {
+      await processarPerguntaAgente(perguntaTrimmed, res);
+    });
     res.end();
   } catch (error) {
     console.error("[AgentController] Erro:", error);
@@ -1242,35 +1496,140 @@ async function enviarPerguntaAgente(req, res) {
 var agentRouter = Router3();
 agentRouter.post("/", enviarPerguntaAgente);
 
+// src/config/redis.ts
+import IORedis from "ioredis";
+var redisConnection = new IORedis(
+  process.env.REDIS_URL || "redis://localhost:6379",
+  {
+    maxRetriesPerRequest: null,
+    enableReadyCheck: false
+  }
+);
+async function testarConexaoRedis() {
+  try {
+    const pong = await redisConnection.ping();
+    console.log(`\u2705 [Redis] Conectado \u2014 ${pong}`);
+  } catch (error) {
+    console.warn(
+      "\u26A0\uFE0F  [Redis] N\xE3o dispon\xEDvel \u2014 fila de concorr\xEAncia desabilitada.",
+      error instanceof Error ? error.message : error
+    );
+  }
+}
+
+// src/middlewares/rateLimiter.ts
+import rateLimit from "express-rate-limit";
+var chatLimiter = rateLimit({
+  windowMs: 60 * 1e3,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    erro: "Muitas requisi\xE7\xF5es. Aguarde um momento e tente novamente."
+  }
+});
+var uploadLimiter = rateLimit({
+  windowMs: 60 * 1e3,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    erro: "Limite de uploads atingido. Tente novamente em 1 minuto."
+  }
+});
+
+// src/middlewares/adminAuth.ts
+function adminAuth(req, res, next) {
+  if (req.method === "GET") {
+    next();
+    return;
+  }
+  const apiKey = process.env.ADMIN_API_KEY;
+  if (!apiKey) {
+    next();
+    return;
+  }
+  const provided = req.headers["x-api-key"];
+  if (!provided || provided !== apiKey) {
+    res.status(401).json({
+      erro: "Acesso n\xE3o autorizado. Chave de API inv\xE1lida ou ausente."
+    });
+    return;
+  }
+  next();
+}
+
 // src/server.ts
 var app = express();
 var PORT = Number(process.env.PORT) || 3333;
+var allowedOrigins = (process.env.CORS_ORIGINS || process.env.FRONTEND_URL || "http://localhost:5173").split(",").map((s) => s.trim());
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN || "*",
-    methods: ["GET", "POST"]
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes("*") || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error(`Origem n\xE3o permitida pelo CORS: ${origin}`));
+      }
+    },
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
   })
 );
 app.use(express.json());
-app.use("/api/chat", chatRouter);
-app.use("/api/agent", agentRouter);
-app.use("/api/embedding", embeddingRouter);
-app.get("/api/health", (_req, res) => {
-  res.status(200).json({
-    status: "ok",
-    timestamp: (/* @__PURE__ */ new Date()).toISOString()
+app.use("/api/chat", chatLimiter, chatRouter);
+app.use("/api/agent", chatLimiter, agentRouter);
+app.use("/api/embedding", uploadLimiter, adminAuth, embeddingRouter);
+app.get("/api/health", async (_req, res) => {
+  let dbOk = false;
+  try {
+    await pool.query("SELECT 1");
+    dbOk = true;
+  } catch {
+  }
+  let ollamaStatus = { ok: false, models: [] };
+  try {
+    const ollamaUrl = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
+    const r = await fetch(`${ollamaUrl}/api/tags`);
+    const data = await r.json();
+    ollamaStatus = { ok: true, models: data.models?.map((m) => m.name) || [] };
+  } catch {
+  }
+  let redisOk = false;
+  try {
+    const pong = await redisConnection.ping();
+    redisOk = pong === "PONG";
+  } catch {
+  }
+  const queueStatus = ollamaSemaphore.getStatus();
+  const allOk = dbOk && ollamaStatus.ok;
+  res.status(allOk ? 200 : 503).json({
+    status: allOk ? "ok" : "degraded",
+    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+    uptime: Math.floor(process.uptime()),
+    services: {
+      database: dbOk,
+      ollama: ollamaStatus,
+      redis: redisOk
+    },
+    queue: queueStatus,
+    memory: {
+      rss: `${(process.memoryUsage().rss / 1024 / 1024).toFixed(1)} MB`,
+      heapUsed: `${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1)} MB`
+    }
   });
 });
 var server = app.listen(PORT, async () => {
   console.log(`
-\u{1F680} Servidor rodando em http://localhost:${PORT}`);
-  console.log(`\u{1F4E1} Chat (RAG):         POST http://localhost:${PORT}/api/chat`);
-  console.log(`\u{1F916} Agent (MCP):        POST http://localhost:${PORT}/api/agent`);
-  console.log(`\u{1F4E4} Upload endpoint:    POST http://localhost:${PORT}/api/embedding/upload`);
-  console.log(`\u{1F4CB} Documentos:         GET  http://localhost:${PORT}/api/embedding/documentos`);
-  console.log(`\u{1F49A} Health check:       GET  http://localhost:${PORT}/api/health
+\u{1F680} Servidor rodando na porta ${PORT}`);
+  console.log(`\u{1F4E1} Chat (RAG):         POST /api/chat`);
+  console.log(`\u{1F916} Agent (MCP):        POST /api/agent`);
+  console.log(`\u{1F4E4} Upload endpoint:    POST /api/embedding/upload`);
+  console.log(`\u{1F4CB} Documentos:         GET  /api/embedding/documentos`);
+  console.log(`\u{1F49A} Health check:       GET  /api/health
 `);
   await testarConexaoDB();
+  await verificarDimensaoEmbedding();
+  await testarConexaoRedis();
   await verificarOllama();
   try {
     await inicializarMCPClient();

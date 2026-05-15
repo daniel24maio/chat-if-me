@@ -12,14 +12,40 @@ import {
  * Configuração do Multer:
  *   - storage: memória (buffer) — não persiste arquivo em disco
  *   - limits: 20 MB por arquivo
- *   - fileFilter: validação no controller (PDF, Word, Excel, TXT, Imagens)
+ *   - fileFilter: validação dupla (MIME type + extensão)
  */
+
+/** Extensões de arquivo aceitas */
+const EXTENSOES_ACEITAS = /\.(pdf|docx?|xlsx?|csv|txt|jpe?g|png)$/i;
+
+/** MIME types aceitos (validação dupla com extensão) */
+const MIMES_ACEITOS = new Set([
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-excel",
+  "text/csv",
+  "text/plain",
+  "image/jpeg",
+  "image/png",
+]);
 
 /** Configuração do Multer para receber arquivos em memória */
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
     fileSize: 20 * 1024 * 1024, // 20 MB
+  },
+  fileFilter: (_req, file, cb) => {
+    const mimeOk = MIMES_ACEITOS.has(file.mimetype);
+    const extOk = EXTENSOES_ACEITAS.test(file.originalname);
+
+    if (mimeOk && extOk) {
+      cb(null, true);
+    } else {
+      cb(new Error(`Tipo de arquivo não permitido: ${file.mimetype} (${file.originalname})`));
+    }
   },
 });
 

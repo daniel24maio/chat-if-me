@@ -29,7 +29,7 @@ const DATABASE_URL =
 const OLLAMA_BASE_URL =
   process.env.OLLAMA_BASE_URL || "http://localhost:11434";
 
-const EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || "nomic-embed-text";
+const EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || "bge-m3";
 
 /** Parâmetros do Reciprocal Rank Fusion (RRF) */
 const RRF_K = 60;

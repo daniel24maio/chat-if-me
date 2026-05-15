@@ -1,7 +1,29 @@
 services:
+  # ── Redis (fila BullMQ para concorrência) ──
+  # Cache e fila de jobs para serializar requests ao Ollama.
+  redis:
+    image: redis:7-alpine
+    container_name: chatifme-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+
   # ── PostgreSQL com pgvector ──
   # Imagem oficial do pgvector já vem com a extensão pronta para uso.
-  # Ao subir pela primeira vez, executa automaticamente o init.sql.
+  # Na primeira subida, executa automaticamente todos os scripts SQL
+  # em /docker-entrypoint-initdb.d/ em ordem alfabética.
+  #
+  # Ordem de execução:
+  #   01-init.sql         → Schema base (tabela, extensões, índices HNSW 1024d)
+  #   02-migrate_hybrid.sql → FTS (portuguese_unaccent + content_tsv)
+  #   03-migrate_bge_m3.sql → Garante embedding 1024d (idempotente)
+  #
+  # NOTA: Os scripts de docker-entrypoint-initdb.d só rodam na PRIMEIRA
+  # inicialização (quando pgdata está vazio). Para bancos existentes,
+  # a API faz auto-migração no startup (ver database.ts).
   postgres:
     image: pgvector/pgvector:pg16
     container_name: chatifme-db
@@ -15,8 +37,11 @@ services:
     volumes:
       # Persistência dos dados entre reinicializações
       - pgdata:/var/lib/postgresql/data
-      # Executa o init.sql automaticamente na primeira subida do container
+      # Scripts de inicialização (executados na ordem alfabética)
       - ./packages/api/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./packages/api/migrate_hybrid.sql:/docker-entrypoint-initdb.d/02-migrate_hybrid.sql:ro
+      - ./packages/api/migrate_bge_m3.sql:/docker-entrypoint-initdb.d/03-migrate_bge_m3.sql:ro
 
 volumes:
   pgdata:
+  redisdata:

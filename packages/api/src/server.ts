@@ -4,8 +4,12 @@ import cors from "cors";
 import { chatRouter } from "./routes/chat.routes.js";
 import { embeddingRouter } from "./routes/embedding.routes.js";
 import { agentRouter } from "./routes/agent.routes.js";
-import { testarConexaoDB } from "./config/database.js";
+import { pool, testarConexaoDB, verificarDimensaoEmbedding } from "./config/database.js";
 import { verificarOllama } from "./config/ollama.js";
+import { redisConnection, testarConexaoRedis } from "./config/redis.js";
+import { chatLimiter, uploadLimiter } from "./middlewares/rateLimiter.js";
+import { adminAuth } from "./middlewares/adminAuth.js";
+import { ollamaSemaphore } from "./services/queue.service.js";
 import {
   inicializarMCPClient,
   encerrarMCPClient,
@@ -32,12 +36,24 @@ const PORT = Number(process.env.PORT) || 3333;
 // ---------------------------------------------------------------------------
 
 /**
- * CORS: permite requisições do frontend.
- * Em produção, restringir a origin para o domínio específico do frontend.
+ * CORS: permite requisições apenas de origens autorizadas.
+ * Configurável via CORS_ORIGINS (lista separada por vírgula).
+ * Em produção, restringir ao domínio do Cloudflare.
  */
+const allowedOrigins = (process.env.CORS_ORIGINS || process.env.FRONTEND_URL || "http://localhost:5173")
+  .split(",")
+  .map((s) => s.trim());
+
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:5173",
+    origin: (origin, callback) => {
+      // Permite requisições sem origin (ex: curl, Postman, health checks)
+      if (!origin || allowedOrigins.includes("*") || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error(`Origem não permitida pelo CORS: ${origin}`));
+      }
+    },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   })
 );
@@ -49,20 +65,59 @@ app.use(express.json());
 // Registro de rotas
 // ---------------------------------------------------------------------------
 
-/** Rotas do módulo de chat (assistente virtual RAG) */
-app.use("/api/chat", chatRouter);
+/** Rotas do módulo de chat (assistente virtual RAG) — rate limited */
+app.use("/api/chat", chatLimiter, chatRouter);
 
-/** Rotas do agente MCP (Agentic RAG com Tool Calling) */
-app.use("/api/agent", agentRouter);
+/** Rotas do agente MCP (Agentic RAG com Tool Calling) — rate limited */
+app.use("/api/agent", chatLimiter, agentRouter);
 
-/** Rotas do módulo de ingestão de documentos (embedding) */
-app.use("/api/embedding", embeddingRouter);
+/** Rotas do módulo de ingestão de documentos — rate limited + admin auth */
+app.use("/api/embedding", uploadLimiter, adminAuth, embeddingRouter);
 
-/** Rota de health check para verificar se a API está no ar */
-app.get("/api/health", (_req, res) => {
-  res.status(200).json({
-    status: "ok",
+/** Rota de health check expandida — status de todos os serviços */
+app.get("/api/health", async (_req, res) => {
+  // ── Database ──
+  let dbOk = false;
+  try {
+    await pool.query("SELECT 1");
+    dbOk = true;
+  } catch { /* offline */ }
+
+  // ── Ollama ──
+  let ollamaStatus: { ok: boolean; models: string[] } = { ok: false, models: [] };
+  try {
+    const ollamaUrl = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
+    const r = await fetch(`${ollamaUrl}/api/tags`);
+    const data = (await r.json()) as { models?: { name: string }[] };
+    ollamaStatus = { ok: true, models: data.models?.map((m) => m.name) || [] };
+  } catch { /* offline */ }
+
+  // ── Redis ──
+  let redisOk = false;
+  try {
+    const pong = await redisConnection.ping();
+    redisOk = pong === "PONG";
+  } catch { /* offline */ }
+
+  // ── Queue metrics ──
+  const queueStatus = ollamaSemaphore.getStatus();
+
+  const allOk = dbOk && ollamaStatus.ok;
+
+  res.status(allOk ? 200 : 503).json({
+    status: allOk ? "ok" : "degraded",
     timestamp: new Date().toISOString(),
+    uptime: Math.floor(process.uptime()),
+    services: {
+      database: dbOk,
+      ollama: ollamaStatus,
+      redis: redisOk,
+    },
+    queue: queueStatus,
+    memory: {
+      rss: `${(process.memoryUsage().rss / 1024 / 1024).toFixed(1)} MB`,
+      heapUsed: `${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1)} MB`,
+    },
   });
 });
 
@@ -80,6 +135,8 @@ const server = app.listen(PORT, async () => {
 
   // Testa conexões externas (não bloqueia a subida do servidor)
   await testarConexaoDB();
+  await verificarDimensaoEmbedding(); // Auto-migra 768→1024 se necessário
+  await testarConexaoRedis();
   await verificarOllama();
 
   // Inicializa o MCP Client (conecta ao servidor como subprocesso)

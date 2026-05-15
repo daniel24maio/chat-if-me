@@ -1,6 +1,9 @@
 -- ==========================================================================
 -- Migração: Adicionar suporte a Busca Híbrida (FTS + pgvector)
 --
+-- Esta migração é IDEMPOTENTE: verifica o estado antes de cada alteração.
+-- Segura para rodar múltiplas vezes sem efeitos colaterais.
+--
 -- Executar no banco existente que já tem dados:
 --   psql -U chatifme -d chatifme -f migrate_hybrid.sql
 --
@@ -52,4 +55,8 @@ $$;
 CREATE INDEX IF NOT EXISTS idx_documents_fts
   ON documents USING GIN (content_tsv);
 
-RAISE NOTICE 'Migração concluída! Busca híbrida pronta para uso.';
+DO $$
+BEGIN
+  RAISE NOTICE 'Migração de busca híbrida concluída!';
+END
+$$;

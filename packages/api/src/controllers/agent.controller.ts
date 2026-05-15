@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import type { ChatRequestBody } from "../interfaces/chat.interfaces.js";
 import { processarPerguntaAgente } from "../services/mcp_agent.service.js";
+import { comControleDeConcorrencia } from "../services/queue.service.js";
 
 /**
  * Controller do Agente MCP (Agentic RAG).
@@ -62,8 +63,10 @@ export async function enviarPerguntaAgente(
       console.log("🔌 [SSE Agent] Cliente desconectou");
     });
 
-    // Delega ao agente MCP
-    await processarPerguntaAgente(perguntaTrimmed, res);
+    // Delega ao agente MCP com controle de concorrência
+    await comControleDeConcorrencia(async () => {
+      await processarPerguntaAgente(perguntaTrimmed, res);
+    });
 
     res.end();
   } catch (error) {
