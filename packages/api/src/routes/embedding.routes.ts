@@ -16,7 +16,7 @@ import {
  */
 
 /** Extensões de arquivo aceitas */
-const EXTENSOES_ACEITAS = /\.(pdf|docx?|xlsx?|csv|txt|jpe?g|png)$/i;
+const EXTENSOES_ACEITAS = /\.(pdf|docx?|xlsx?|csv|txt|md|jpe?g|png)$/i;
 
 /** MIME types aceitos (validação dupla com extensão) */
 const MIMES_ACEITOS = new Set([
@@ -27,6 +27,7 @@ const MIMES_ACEITOS = new Set([
   "application/vnd.ms-excel",
   "text/csv",
   "text/plain",
+  "text/markdown",
   "image/jpeg",
   "image/png",
 ]);
