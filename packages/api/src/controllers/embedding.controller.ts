@@ -23,6 +23,7 @@ const TIPOS_ACEITOS = [
   "application/vnd.ms-excel", // .xls
   "text/csv", // .csv
   "text/plain", // .txt
+  "text/markdown", // .md
   "image/jpeg", // .jpg, .jpeg
   "image/png", // .png
 ];
@@ -51,7 +52,7 @@ export async function uploadDocumento(
     // Validação: tipo de arquivo
     if (!TIPOS_ACEITOS.includes(arquivo.mimetype)) {
       res.status(400).json({
-        erro: `Tipo de arquivo não suportado: ${arquivo.mimetype}. Aceitos: PDF, Word, Excel, CSV, TXT, Imagens.`,
+        erro: `Tipo de arquivo não suportado: ${arquivo.mimetype}. Aceitos: PDF, Word, Excel, CSV, TXT, MD, Imagens.`,
       });
       return;
     }

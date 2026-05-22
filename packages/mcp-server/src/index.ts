@@ -53,7 +53,7 @@ const pool = new Pool({ connectionString: DATABASE_URL });
 // ---------------------------------------------------------------------------
 
 /**
- * Gera embedding de um texto via Ollama (nomic-embed-text).
+ * Gera embedding de um texto via Ollama (bge-m3).
  */
 async function gerarEmbedding(texto: string): Promise<number[]> {
   const response = await fetch(`${OLLAMA_BASE_URL}/api/embeddings`, {
@@ -154,7 +154,7 @@ const server = new McpServer({
  * Tool: search_ifmg_knowledge
  *
  * Busca semântica nos documentos oficiais do curso de Sistemas de Informação
- * do IFMG Campus Ouro Branco. Vetoriza a query com nomic-embed-text e
+ * do IFMG Campus Ouro Branco. Vetoriza a query com bge-m3 e
  * consulta o PostgreSQL (pgvector) por trechos similares.
  */
 // @ts-expect-error — TS2589: z.enum com 10 valores excede o limite de recursão do TypeScript nos generics do SDK MCP. Runtime funciona normalmente.

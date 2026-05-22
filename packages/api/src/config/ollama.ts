@@ -28,7 +28,7 @@ const REWRITE_MODEL = process.env.OLLAMA_REWRITE_MODEL || "qwen3.5:4b";
 /**
  * Context window máximo por requisição.
  * Limita a alocação de VRAM do Ollama para suportar mais usuários simultâneos.
- * qwen3.5:2b-q4_K_M suporta até 32768 tokens, mas 8192 é suficiente para RAG.
+ * qwen3.5:4b suporta até 8192 tokens, mas 8192 é suficiente para RAG.
  */
 const NUM_CTX = Number(process.env.OLLAMA_NUM_CTX) || 8192;
 

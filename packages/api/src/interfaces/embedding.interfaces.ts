@@ -1,5 +1,13 @@
 /**
- * Interfaces do módulo de ingestão de documentos (Embedding).
+ * Interfaces do módulo de ingestão de documentos (Embedding) — v4.
+ *
+ * Alterações em relação à v3:
+ *   - ChunkData.metadata agora inclui campos de contexto global:
+ *     • nomeDocumento: nome legível do documento (sem extensão)
+ *     • tipoChunking: estratégia usada (juridico | tabela | geral)
+ *     • contextoSecao: seção/capítulo onde o chunk se encontra
+ *   - Esses campos são usados para injetar um prefixo de contexto
+ *     no texto antes da vetorização, evitando OOC (Out of Context).
  */
 
 /** Status de processamento de um documento enviado */
@@ -26,15 +34,22 @@ export interface UploadResponse {
 
 /** Dados de um chunk individual antes da vetorização */
 export interface ChunkData {
-  /** Conteúdo textual do chunk */
+  /** Conteúdo textual do chunk (já com prefixo de contexto) */
   conteudo: string;
-  /** Metadados associados (nome do arquivo, página, índice) */
+  /** Metadados associados (gravados como JSONB no PostgreSQL) */
   metadata: {
+    /** Nome do arquivo original */
     filename: string;
+    /** Índice sequencial do chunk dentro do documento */
     chunkIndex: number;
+    /** Total de chunks gerados para este documento */
     totalChunks: number;
-    /** Página aproximada (estimada pela posição no texto) */
-    paginaAproximada?: number;
+    /** Nome legível do documento (sem extensão, ex: "Regulamento de TCC") */
+    nomeDocumento: string;
+    /** Estratégia de chunking utilizada */
+    tipoChunking: "juridico" | "tabela" | "geral";
+    /** Seção/capítulo do documento onde este chunk se encontra */
+    contextoSecao: string;
   };
 }
 

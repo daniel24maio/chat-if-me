@@ -81,14 +81,15 @@ O LLM decide **autonomamente** se precisa buscar nos documentos (via Tool Callin
 - ✍️ Cursor piscante durante a geração
 
 ### Ingestão de Documentos (Admin)
-- 📄 Upload de PDF, Word (.docx), Planilhas/Excel (.xlsx, .csv), Imagens e TXT via drag-and-drop (`/embedding`)
+- 📄 Upload de PDF, Word (.docx), Planilhas/Excel (.xlsx, .csv), Markdown (.md), Imagens e TXT via drag-and-drop (`/embedding`)
 - 📊 **Extração e Conversão**: Reconstrução de layout de tabelas via PDF e conversão nativa de planilhas para `Markdown Tables`.
-- 🧹 **Serviço de Sanitização Dedicado**: Remoção de artefatos estruturais, cabeçalhos, notas de rodapé e hifenização.
+- 🧹 **Serviço de Sanitização Dedicado**: Remoção de cabeçalhos institucionais do IFMG, poda de anexos/formulários, limpeza de OCR e preparação de quebras jurídicas.
 - 👁️ **OCR Nativo**: Leitura automática de imagens e PDFs escaneados via `tesseract.js`
-- ✂️ **Chunking Adaptativo** — tamanho de chunk varia por tipo de conteúdo:
-  - Regulamentos: 1024 chars (granular para artigos/incisos)
-  - Tabelas: 8000 chars (mantém tabelas intactas)
-  - Texto geral: 2048 chars (~512 tokens)
+- ✂️ **Chunking Semântico Adaptativo** — roteamento automático por tipo de conteúdo:
+  - **Jurídico**: Quebra por `Art.` / `CAPÍTULO` / `TÍTULO` / `Seção` — preserva artigo + incisos + parágrafos como unidade atômica
+  - **Tabela**: Nunca quebra no meio de uma linha; replica o cabeçalho da tabela no topo de cada sub-chunk
+  - **Geral**: Chunking por parágrafo (~2048 chars / ~512 tokens) com overlap de 256 chars
+- 🏷️ **Injeção de Contexto Global**: Cada chunk recebe um prefixo automático `[Documento: X | Contexto: Y]` antes da vetorização para evitar OOC (Out of Context) no pgvector
 - 🔢 Vetorização via Ollama (`bge-m3`, 1024 dimensões)
 - 💾 Armazenamento Híbrido no PostgreSQL (`pgvector` HNSW + `tsvector`)
 - 📋 Listagem de documentos já processados na base de conhecimento
@@ -233,8 +234,8 @@ ADMIN_API_KEY=sua-chave-secreta-aqui
 DATABASE_URL=postgresql://chatifme:chatifme123@localhost:5432/chatifme
 OLLAMA_BASE_URL=http://192.168.31.50:11434
 OLLAMA_EMBED_MODEL=bge-m3
-OLLAMA_LLM_MODEL=qwen3.5:2b-q4_K_M
-OLLAMA_REWRITE_MODEL=qwen3.5:2b-q4_K_M
+OLLAMA_LLM_MODEL=qwen3.5:4b
+OLLAMA_REWRITE_MODEL=qwen3.5:4b
 REDIS_URL=redis://localhost:6379
 ```
 

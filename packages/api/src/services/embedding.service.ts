@@ -11,84 +11,57 @@ import type {
 } from "../interfaces/embedding.interfaces.js";
 
 /**
- * Serviço de Ingestão de Documentos (Embedding) — v3 (Sanitização).
+ * Serviço de Ingestão de Documentos (Embedding) — v4 (Chunking Semântico Adaptativo).
  *
- * Melhorias em relação à v2:
- *   5. Camada de sanitização entre extração e chunking
- *      - Remove artefatos de PDF: ¶, marcadores de página, separadores
- *      - Converte tabelas markdown em texto corrido (crítico para busca semântica)
- *      - Reconstrói palavras hifenadas entre linhas
- *      - Normaliza espaçamento e remove linhas de ruído puro
- *   6. Chunking ajustado para respeitar o contexto do modelo Ollama
- *      - CHUNK_SIZE reduzido para 600 chars (~150 tokens — seguro para maioria dos modelos)
- *      - subdividirBloco() quebra blocos únicos muito grandes antes do chunking
- *      - truncarParaEmbedding() é a última linha de defesa antes de chamar o Ollama
+ * Pipeline:
+ *   1. Extração multi-formato (PDF, Word, Excel, Imagem/OCR, TXT, Markdown)
+ *   2. Sanitização (remove cabeçalhos IFMG, anexos, artefatos de OCR)
+ *   3. Roteamento por tipo de documento → estratégia de chunking
+ *   4. Chunking semântico (jurídico | tabela | geral)
+ *   5. Injeção de contexto global (prefixo com nome do documento e seção)
+ *   6. Vetorização (bge-m3, 1024d) e gravação (PostgreSQL + pgvector)
+ *
+ * Melhorias em relação à v3:
+ *   - Chunking Jurídico: quebra por Art./CAPÍTULO/TÍTULO/Seção (preserva artigo+incisos)
+ *   - Chunking de Tabelas: nunca quebra no meio de uma linha; replica cabeçalho
+ *   - Contexto Global: cada chunk recebe prefixo [Documento: X | Contexto: Y]
+ *   - Roteamento automático: detecta tipo pelo conteúdo (não apenas pelo filename)
  */
 
 // ---------------------------------------------------------------------------
-// Configuração de chunking
+// Configuração
 // ---------------------------------------------------------------------------
 
 /**
- * Configuração de chunking adaptativo por tipo de conteúdo.
+ * Limite máximo de caracteres enviados ao Ollama por chamada de embedding.
+ * Última linha de defesa contra "input length exceeds context length".
  *
- * Regra de bolso: 1 token ≈ 4 chars em português.
- * O modelo bge-m3 suporta contexto de 8192 tokens, permitindo chunks maiores.
- *
- * Tipos:
- *   - regulamento: chunks menores para recuperação granular de artigos/incisos
- *   - tabela: chunks grandes para manter tabelas intactas
- *   - default: tamanho intermediário para texto corrido
- */
-interface ChunkConfig {
-  size: number;    // tamanho alvo em caracteres (≈ tokens × 4)
-  overlap: number; // sobreposição entre chunks adjacentes
-}
-
-const CHUNK_CONFIGS: Record<string, ChunkConfig> = {
-  regulamento: { size: 1024, overlap: 128 },  // ~256 tokens — granular para artigos
-  tabela:      { size: 8000, overlap: 0 },     // chunk inteiro — não quebrar tabelas
-  default:     { size: 2048, overlap: 256 },   // ~512 tokens — texto corrido
-};
-
-/**
- * Detecta o tipo de conteúdo para selecionar a estratégia de chunking ideal.
- *
- * @param texto    - Conteúdo textual do documento
- * @param filename - Nome do arquivo original
- * @returns Chave do CHUNK_CONFIGS
- */
-function detectarTipoConteudo(texto: string, filename: string): string {
-  // Regulamentos, normas, resoluções — chunks menores para artigos
-  if (/regulament|norma|resolu[çc]|portaria|edital|delibera/i.test(filename)) {
-    return "regulamento";
-  }
-
-  // Tabelas detectadas por contagem de pipes (indicador de markdown table)
-  const pipeCount = (texto.match(/\|/g) || []).length;
-  if (pipeCount > 20 && texto.includes("|")) {
-    return "tabela";
-  }
-
-  return "default";
-}
-
-/**
- * Limite máximo de caracteres enviados ao Ollama por chamada.
- * Última linha de defesa contra o erro 500 "input length exceeds context length".
- *
- * Fórmula: (contexto_tokens_do_modelo - margem) × 4
- * bge-m3 com 8192 tokens → (8192 - 192) × 4 = 32000
- * Usando 4000 como valor conservador e seguro para múltiplos modelos.
+ * bge-m3 suporta 8192 tokens. Usando margem conservadora:
+ * (8192 - 200 margem) × 4 chars/token ≈ 32000 → arredondado para 4000 (seguro).
  */
 const EMBEDDING_MAX_CHARS = 4000;
+
+/**
+ * Tamanho alvo para chunks de texto geral (em caracteres).
+ * ~512 tokens × 4 chars/token = 2048.
+ */
+const CHUNK_SIZE_GERAL = 2048;
+
+/** Overlap entre chunks de texto geral (em caracteres). */
+const CHUNK_OVERLAP_GERAL = 256;
+
+/** Máximo de linhas de tabela por chunk antes de subdividir. */
+const TABELA_MAX_LINHAS_POR_CHUNK = 30;
 
 /** Instância do extrator PDF (reutilizável) */
 const pdfExtract = new PDFExtract();
 
-// ---------------------------------------------------------------------------
-// Etapa 1 — Extração de Texto (Multi-formato)
-// ---------------------------------------------------------------------------
+/** Tamanho do lote de vetorização em paralelo. */
+const BATCH_SIZE = 32;
+
+// ===========================================================================
+// ETAPA 1 — EXTRAÇÃO DE TEXTO (Multi-formato)
+// ===========================================================================
 
 /**
  * Extrai texto de um PDF usando pdf.js-extract.
@@ -328,25 +301,409 @@ async function extrairTexto(
     return extrairTextoPlanilha(buffer, filename);
   }
 
-  if (mimetype === "text/plain" || nomeLower.endsWith(".txt")) {
+  if (mimetype === "text/plain" || mimetype === "text/markdown" || nomeLower.endsWith(".txt") || nomeLower.endsWith(".md")) {
     return buffer.toString("utf-8");
   }
 
   throw new Error(`Formato não suportado: ${mimetype}`);
 }
 
-
+// ===========================================================================
+// ETAPA 2 — ROTEAMENTO E CHUNKING SEMÂNTICO ADAPTATIVO
+// ===========================================================================
 
 // ---------------------------------------------------------------------------
-// Etapa 2 — Chunking Semântico
+// 2.0 — Utilitários de Contexto
+// ---------------------------------------------------------------------------
+
+/**
+ * Gera um nome legível do documento a partir do filename.
+ * Remove extensão e substitui underscores/hifens por espaços.
+ *
+ * Ex: "Regulamento_TCC_2024.pdf" → "Regulamento TCC 2024"
+ */
+function gerarNomeDocumento(filename: string): string {
+  return filename
+    .replace(/\.[^.]+$/, "")     // Remove extensão
+    .replace(/[_-]+/g, " ")      // Underscores e hifens → espaço
+    .replace(/\s{2,}/g, " ")     // Colapsa espaços múltiplos
+    .trim();
+}
+
+/**
+ * Injeta o prefixo de contexto global no conteúdo de um chunk.
+ *
+ * O prefixo fornece ao modelo de embedding e ao LLM informações sobre
+ * de onde aquele trecho veio, evitando o problema de Out of Context (OOC).
+ *
+ * Formato:
+ *   [Documento: Regulamento de TCC | Contexto: CAPÍTULO II - Do Estágio]
+ *
+ *   {texto_do_chunk}
+ */
+function injetarContexto(
+  texto: string,
+  nomeDocumento: string,
+  contextoSecao: string
+): string {
+  const partes = [`Documento: ${nomeDocumento}`];
+  if (contextoSecao) {
+    partes.push(`Contexto: ${contextoSecao}`);
+  }
+  return `[${partes.join(" | ")}]\n\n${texto}`;
+}
+
+// ---------------------------------------------------------------------------
+// 2.1 — Detecção do Tipo de Documento (Roteamento)
+// ---------------------------------------------------------------------------
+
+/** Tipos possíveis de estratégia de chunking */
+type TipoChunking = "juridico" | "tabela" | "geral";
+
+/**
+ * Detecta a natureza do texto para decidir a estratégia de chunking.
+ *
+ * Prioridade:
+ *   1. Tabela markdown (pipes "|---|") → chunking de tabela
+ *   2. Marcadores jurídicos (Art., CAPÍTULO, Seção) → chunking jurídico
+ *   3. Default → chunking de texto geral
+ *
+ * A detecção é feita pelo CONTEÚDO (não apenas pelo filename) para
+ * funcionar corretamente com qualquer nome de arquivo.
+ */
+function detectarTipoChunking(texto: string, filename: string): TipoChunking {
+  // 1. Detecção de tabelas por conteúdo: contagem de pipes e separadores markdown
+  const separadoresTabela = (texto.match(/\|[\s-]+\|/g) || []).length;
+  const linhasComPipe = (texto.match(/^\|.+\|$/gm) || []).length;
+  if (separadoresTabela >= 1 && linhasComPipe >= 5) {
+    return "tabela";
+  }
+
+  // 2. Detecção jurídica por conteúdo: presença de artigos e capítulos
+  const artigos = (texto.match(/\bArt\.\s+\d+/g) || []).length;
+  const capitulos = (texto.match(/\bCAP[IÍ]TULO\s+[IVXLCDM\d]+/gi) || []).length;
+  if (artigos >= 3 || capitulos >= 2) {
+    return "juridico";
+  }
+
+  // 3. Detecção jurídica por nome do arquivo (fallback)
+  if (/regulament|norma|resolu[çc]|portaria|edital|delibera|estatut|regimento/i.test(filename)) {
+    return "juridico";
+  }
+
+  return "geral";
+}
+
+// ---------------------------------------------------------------------------
+// 2.2 — Chunking Jurídico
+// ---------------------------------------------------------------------------
+
+/**
+ * Divide texto jurídico preservando a hierarquia legal completa.
+ *
+ * Regra principal: um chunk = um Artigo inteiro (com §, incisos I/II/III, alíneas a/b/c).
+ * A quebra ocorre SOMENTE antes de: Art., CAPÍTULO, TÍTULO, Seção.
+ *
+ * Cada seção estrutural (CAPÍTULO, TÍTULO, Seção) é rastreada para injeção
+ * de contexto global no prefixo do chunk.
+ *
+ * Se um artigo individual exceder EMBEDDING_MAX_CHARS, é subdividido
+ * usando subdividirBloco() como fallback de segurança.
+ */
+function chunkingJuridico(texto: string, filename: string): ChunkData[] {
+  const nomeDocumento = gerarNomeDocumento(filename);
+  const chunks: ChunkData[] = [];
+
+  // Divide o texto nos pontos estruturais (preservando o delimitador)
+  // Regex: quebra ANTES de Art., CAPÍTULO, TÍTULO, Seção (com lookbehind de \n\n)
+  const secoes = texto.split(/(?=\n?\n?(?:Art\.\s|CAP[IÍ]TULO\s|T[IÍ]TULO\s|Se[cç][aã]o\s))/i);
+
+  // Rastreia o contexto atual (último CAPÍTULO/TÍTULO/Seção encontrado)
+  let contextoAtual = "";
+
+  for (const secao of secoes) {
+    const secaoTrimmed = secao.trim();
+    if (secaoTrimmed.length === 0) continue;
+
+    // Atualiza contexto se a seção começa com um marcador de hierarquia
+    const matchHierarquia = secaoTrimmed.match(
+      /^(CAP[IÍ]TULO\s+[IVXLCDM\d]+[\s\S]*?(?:\n|$))/i
+    );
+    if (matchHierarquia) {
+      // Extrai a primeira linha do CAPÍTULO como contexto
+      contextoAtual = matchHierarquia[1].split("\n")[0].trim();
+    }
+
+    const matchTitulo = secaoTrimmed.match(
+      /^(T[IÍ]TULO\s+[IVXLCDM\d]+[\s\S]*?(?:\n|$))/i
+    );
+    if (matchTitulo) {
+      contextoAtual = matchTitulo[1].split("\n")[0].trim();
+    }
+
+    const matchSecao = secaoTrimmed.match(
+      /^(Se[cç][aã]o\s+[IVXLCDM\d]+[\s\S]*?(?:\n|$))/i
+    );
+    if (matchSecao) {
+      contextoAtual = matchSecao[1].split("\n")[0].trim();
+    }
+
+    // Subdivide se exceder o limite de embedding
+    const partes = subdividirBloco(secaoTrimmed, EMBEDDING_MAX_CHARS);
+
+    for (const parte of partes) {
+      if (parte.trim().length === 0) continue;
+
+      const conteudoComContexto = injetarContexto(parte, nomeDocumento, contextoAtual);
+
+      chunks.push({
+        conteudo: conteudoComContexto,
+        metadata: {
+          filename,
+          chunkIndex: chunks.length,
+          totalChunks: 0, // preenchido depois
+          nomeDocumento,
+          tipoChunking: "juridico",
+          contextoSecao: contextoAtual,
+        },
+      });
+    }
+  }
+
+  return chunks;
+}
+
+// ---------------------------------------------------------------------------
+// 2.3 — Chunking de Tabelas
+// ---------------------------------------------------------------------------
+
+/**
+ * Divide tabelas markdown sem quebrar linhas (rows) no meio.
+ *
+ * Regra principal: a quebra NUNCA ocorre dentro de uma linha da tabela.
+ * Se a tabela for muito grande, divide em blocos de TABELA_MAX_LINHAS_POR_CHUNK
+ * linhas, e REPLICA o cabeçalho (primeira linha + separador) no topo de
+ * cada chunk subsequente para que o LLM não perca o significado das colunas.
+ *
+ * Cada chunk recebe o prefixo de contexto global.
+ */
+function chunkingTabela(texto: string, filename: string): ChunkData[] {
+  const nomeDocumento = gerarNomeDocumento(filename);
+  const chunks: ChunkData[] = [];
+
+  // Separa o texto em blocos: tabelas (linhas com pipes) e texto entre tabelas
+  const blocos = separarBlocosTabela(texto);
+
+  for (const bloco of blocos) {
+    if (bloco.tipo === "texto") {
+      // Texto entre tabelas → chunking geral
+      const subChunks = chunkingGeral(bloco.conteudo, filename, "tabela");
+      chunks.push(...subChunks);
+      continue;
+    }
+
+    // ── Bloco de tabela ──
+    const linhas = bloco.conteudo.split("\n").filter((l) => l.trim().length > 0);
+    if (linhas.length === 0) continue;
+
+    // Extrai cabeçalho (primeira linha + separador "| --- |")
+    let cabecalho = "";
+    let linhasDados: string[] = [];
+
+    if (linhas.length >= 2 && /^\|[\s\-:|]+\|/.test(linhas[1])) {
+      cabecalho = linhas[0] + "\n" + linhas[1];
+      linhasDados = linhas.slice(2);
+    } else {
+      linhasDados = linhas;
+    }
+
+    // Se a tabela cabe inteira em um chunk, não subdivide
+    if (linhasDados.length <= TABELA_MAX_LINHAS_POR_CHUNK) {
+      const conteudo = injetarContexto(bloco.conteudo.trim(), nomeDocumento, "Tabela/Matriz");
+
+      chunks.push({
+        conteudo,
+        metadata: {
+          filename,
+          chunkIndex: chunks.length,
+          totalChunks: 0,
+          nomeDocumento,
+          tipoChunking: "tabela",
+          contextoSecao: "Tabela/Matriz",
+        },
+      });
+      continue;
+    }
+
+    // ── Subdivide a tabela replicando o cabeçalho ──
+    for (let i = 0; i < linhasDados.length; i += TABELA_MAX_LINHAS_POR_CHUNK) {
+      const fatia = linhasDados.slice(i, i + TABELA_MAX_LINHAS_POR_CHUNK);
+      const parteNum = Math.floor(i / TABELA_MAX_LINHAS_POR_CHUNK) + 1;
+      const totalPartes = Math.ceil(linhasDados.length / TABELA_MAX_LINHAS_POR_CHUNK);
+      const contexto = `Tabela/Matriz (parte ${parteNum}/${totalPartes})`;
+
+      // Replica cabeçalho no topo de cada sub-chunk
+      const tabelaChunk = cabecalho
+        ? `${cabecalho}\n${fatia.join("\n")}`
+        : fatia.join("\n");
+
+      const conteudo = injetarContexto(tabelaChunk, nomeDocumento, contexto);
+
+      chunks.push({
+        conteudo,
+        metadata: {
+          filename,
+          chunkIndex: chunks.length,
+          totalChunks: 0,
+          nomeDocumento,
+          tipoChunking: "tabela",
+          contextoSecao: contexto,
+        },
+      });
+    }
+  }
+
+  return chunks;
+}
+
+/** Tipos de bloco ao separar tabelas de texto */
+interface BlocoTabela {
+  tipo: "tabela" | "texto";
+  conteudo: string;
+}
+
+/**
+ * Separa o texto em blocos alternados de tabela e texto corrido.
+ * Uma sequência de linhas com pipes ("|") é considerada tabela.
+ */
+function separarBlocosTabela(texto: string): BlocoTabela[] {
+  const linhas = texto.split("\n");
+  const blocos: BlocoTabela[] = [];
+  let blocoAtual: string[] = [];
+  let tipoAtual: "tabela" | "texto" | null = null;
+
+  for (const linha of linhas) {
+    const ehLinhaPipe = /^\s*\|.+\|\s*$/.test(linha);
+    const tipo: "tabela" | "texto" = ehLinhaPipe ? "tabela" : "texto";
+
+    if (tipoAtual !== null && tipo !== tipoAtual) {
+      // Mudou de tipo: salva o bloco anterior
+      const conteudo = blocoAtual.join("\n").trim();
+      if (conteudo.length > 0) {
+        blocos.push({ tipo: tipoAtual, conteudo });
+      }
+      blocoAtual = [];
+    }
+
+    tipoAtual = tipo;
+    blocoAtual.push(linha);
+  }
+
+  // Último bloco
+  if (blocoAtual.length > 0 && tipoAtual !== null) {
+    const conteudo = blocoAtual.join("\n").trim();
+    if (conteudo.length > 0) {
+      blocos.push({ tipo: tipoAtual, conteudo });
+    }
+  }
+
+  return blocos;
+}
+
+// ---------------------------------------------------------------------------
+// 2.4 — Chunking de Texto Geral
+// ---------------------------------------------------------------------------
+
+/**
+ * Divide texto corrido em chunks por fronteiras de parágrafo (\n\n),
+ * com tamanho alvo CHUNK_SIZE_GERAL e overlap CHUNK_OVERLAP_GERAL.
+ *
+ * Usa subdividirBloco() como fallback para parágrafos únicos muito longos.
+ * Cada chunk recebe o prefixo de contexto global.
+ *
+ * @param texto    - Texto sanitizado
+ * @param filename - Nome do arquivo original
+ * @param tipoOverride - Se fornecido, substitui o tipo no metadata
+ */
+function chunkingGeral(
+  texto: string,
+  filename: string,
+  tipoOverride?: "tabela" | "geral"
+): ChunkData[] {
+  const nomeDocumento = gerarNomeDocumento(filename);
+  const chunks: ChunkData[] = [];
+  const tipo = tipoOverride || "geral";
+
+  const blocos = texto.split(/\n{2,}/).filter((b) => b.trim().length > 0);
+
+  if (blocos.length === 0) return [];
+
+  let chunkAtual = "";
+
+  for (const bloco of blocos) {
+    if (
+      chunkAtual.length > 0 &&
+      chunkAtual.length + bloco.length > CHUNK_SIZE_GERAL
+    ) {
+      // Salva o chunk atual, subdividindo se necessário
+      for (const parte of subdividirBloco(chunkAtual, EMBEDDING_MAX_CHARS)) {
+        const conteudo = injetarContexto(parte.trim(), nomeDocumento, "");
+
+        chunks.push({
+          conteudo,
+          metadata: {
+            filename,
+            chunkIndex: chunks.length,
+            totalChunks: 0,
+            nomeDocumento,
+            tipoChunking: tipo,
+            contextoSecao: "",
+          },
+        });
+      }
+
+      // Inicia novo chunk com overlap
+      const overlap = CHUNK_OVERLAP_GERAL > 0
+        ? chunkAtual.slice(-CHUNK_OVERLAP_GERAL)
+        : "";
+      chunkAtual = overlap + (overlap ? "\n\n" : "") + bloco;
+    } else {
+      chunkAtual += (chunkAtual.length > 0 ? "\n\n" : "") + bloco;
+    }
+  }
+
+  // Último chunk
+  if (chunkAtual.trim().length > 0) {
+    for (const parte of subdividirBloco(chunkAtual, EMBEDDING_MAX_CHARS)) {
+      const conteudo = injetarContexto(parte.trim(), nomeDocumento, "");
+
+      chunks.push({
+        conteudo,
+        metadata: {
+          filename,
+          chunkIndex: chunks.length,
+          totalChunks: 0,
+          nomeDocumento,
+          tipoChunking: tipo,
+          contextoSecao: "",
+        },
+      });
+    }
+  }
+
+  return chunks;
+}
+
+// ---------------------------------------------------------------------------
+// 2.5 — Subdivisão de Segurança
 // ---------------------------------------------------------------------------
 
 /**
  * Subdivide um bloco único longo em pedaços de até `maxChars` caracteres,
  * tentando cortar em limites de frase (". ") ou linha ("\n").
  *
- * Necessário quando um parágrafo/seção inteira excede EMBEDDING_MAX_CHARS —
- * situação que ocorre em bibliografias densas ou seções de ementa longas.
+ * Necessário quando um artigo/parágrafo individual excede EMBEDDING_MAX_CHARS.
+ * Situação que ocorre em bibliografias densas ou artigos com muitos incisos.
  */
 function subdividirBloco(texto: string, maxChars: number): string[] {
   if (texto.length <= maxChars) return [texto];
@@ -379,86 +736,60 @@ function subdividirBloco(texto: string, maxChars: number): string[] {
   return partes;
 }
 
+// ---------------------------------------------------------------------------
+// 2.6 — Orquestrador de Chunking (Roteador)
+// ---------------------------------------------------------------------------
+
 /**
- * Divide texto em chunks respeitando fronteiras semânticas.
- * Usa chunking adaptativo: seleciona tamanho/overlap pelo tipo de conteúdo.
- * Garante que nenhum chunk ultrapasse EMBEDDING_MAX_CHARS.
+ * Ponto de entrada do chunking: detecta o tipo de documento e delega
+ * para a estratégia de chunking adequada.
+ *
+ * Após o chunking, preenche o totalChunks em todos os metadados.
  */
 function dividirEmChunks(texto: string, filename: string): ChunkData[] {
-  const tipoConteudo = detectarTipoConteudo(texto, filename);
-  const config = CHUNK_CONFIGS[tipoConteudo] || CHUNK_CONFIGS.default;
-  const { size: chunkSize, overlap: chunkOverlap } = config;
+  const tipoChunking = detectarTipoChunking(texto, filename);
 
-  const blocos = texto.split(/\n{2,}/).filter((b) => b.trim().length > 0);
+  console.log(
+    `🔀 [Roteamento] "${filename}" → estratégia: ${tipoChunking.toUpperCase()}`
+  );
 
-  if (blocos.length === 0) {
-    console.warn(`⚠️ [Chunking] Texto vazio em "${filename}"`);
-    return [];
+  let chunks: ChunkData[];
+
+  switch (tipoChunking) {
+    case "juridico":
+      chunks = chunkingJuridico(texto, filename);
+      break;
+    case "tabela":
+      chunks = chunkingTabela(texto, filename);
+      break;
+    case "geral":
+    default:
+      chunks = chunkingGeral(texto, filename);
+      break;
   }
 
-  const chunks: ChunkData[] = [];
-  let chunkAtual = "";
-
-  for (const bloco of blocos) {
-    if (
-      chunkAtual.length > 0 &&
-      chunkAtual.length + bloco.length > chunkSize
-    ) {
-      // Salva o chunk atual subdividindo se necessário
-      for (const parte of subdividirBloco(chunkAtual, EMBEDDING_MAX_CHARS)) {
-        chunks.push(criarChunk(parte, filename, chunks.length));
-      }
-
-      const overlap = chunkOverlap > 0 ? chunkAtual.slice(-chunkOverlap) : "";
-      chunkAtual = overlap + (overlap ? "\n\n" : "") + bloco;
-    } else {
-      chunkAtual += (chunkAtual.length > 0 ? "\n\n" : "") + bloco;
-    }
-  }
-
-  // Último chunk
-  if (chunkAtual.trim().length > 0) {
-    for (const parte of subdividirBloco(chunkAtual, EMBEDDING_MAX_CHARS)) {
-      chunks.push(criarChunk(parte, filename, chunks.length));
-    }
-  }
-
+  // Preenche o totalChunks em todos os metadados
   for (const chunk of chunks) {
     chunk.metadata.totalChunks = chunks.length;
   }
 
   console.log(
-    `✂️  [Chunking] "${filename}" → ${chunks.length} chunks (tipo: ${tipoConteudo}, alvo: ${chunkSize}, overlap: ${chunkOverlap}, max: ${EMBEDDING_MAX_CHARS})`
+    `✂️  [Chunking] "${filename}" → ${chunks.length} chunks (tipo: ${tipoChunking})`
   );
 
   return chunks;
 }
 
-function criarChunk(
-  conteudo: string,
-  filename: string,
-  index: number
-): ChunkData {
-  return {
-    conteudo: conteudo.trim(),
-    metadata: {
-      filename,
-      chunkIndex: index,
-      totalChunks: 0,
-    },
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Etapa 3 — Vetorização e Gravação
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// ETAPA 3 — VETORIZAÇÃO E GRAVAÇÃO
+// ===========================================================================
 
 /**
  * Trunca o texto para EMBEDDING_MAX_CHARS antes de enviar ao Ollama.
  *
  * Esta é a última linha de defesa: idealmente nunca deve ser atingida se
- * CHUNK_SIZE e subdividirBloco() estiverem corretamente configurados.
- * Ela protege contra casos extremos (ex: um único parágrafo sem quebras).
+ * o chunking e subdividirBloco() estiverem corretamente configurados.
+ * Ela protege contra casos extremos (ex: prefixo de contexto + texto longo).
  */
 function truncarParaEmbedding(texto: string): string {
   if (texto.length <= EMBEDDING_MAX_CHARS) return texto;
@@ -478,8 +809,6 @@ function truncarParaEmbedding(texto: string): string {
  * Processa BATCH_SIZE chunks em paralelo para acelerar a ingestão.
  * A coluna content_tsv é gerada automaticamente pelo PostgreSQL.
  */
-const BATCH_SIZE = 32;
-
 async function vetorizarEGravar(chunks: ChunkData[]): Promise<number> {
   let gravados = 0;
   let errosDimensao = 0;
@@ -563,13 +892,17 @@ async function vetorizarEGravar(chunks: ChunkData[]): Promise<number> {
   return gravados;
 }
 
-// ---------------------------------------------------------------------------
-// Função principal — Orquestra o pipeline de ingestão
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// PIPELINE PRINCIPAL — Orquestra o fluxo completo de ingestão
+// ===========================================================================
 
 /**
- * Processa um documento completo: extrai texto, sanitiza, divide em chunks,
- * gera embeddings e grava no banco.
+ * Processa um documento completo:
+ *   1. Extrai texto (multi-formato)
+ *   2. Sanitiza (cabeçalhos IFMG, OCR, anexos)
+ *   3. Roteia para estratégia de chunking (jurídico | tabela | geral)
+ *   4. Injeta contexto global em cada chunk
+ *   5. Vetoriza (bge-m3) e grava (pgvector)
  */
 export async function processarDocumento(
   buffer: Buffer,
@@ -594,14 +927,14 @@ export async function processarDocumento(
     };
   }
 
-  // Etapa 1.5: Sanitização — remove artefatos de PDF e normaliza o texto
-  // para que a busca semântica funcione tanto por código quanto por nome
+  // Etapa 2: Sanitização — remove cabeçalhos IFMG, artefatos de OCR,
+  // poda anexos, prepara quebras para chunking jurídico
   const texto = sanitizarTexto(textoRaw);
 
-  // Etapa 2: Dividir em chunks (semântico + subdivisão de segurança)
+  // Etapa 3: Chunking semântico adaptativo (com injeção de contexto)
   const chunks = dividirEmChunks(texto, filename);
 
-  // Etapa 3: Vetorizar e gravar (com truncamento de segurança)
+  // Etapa 4: Vetorizar e gravar (com truncamento de segurança)
   const chunksGravados = await vetorizarEGravar(chunks);
 
   const duracao = ((Date.now() - inicio) / 1000).toFixed(1);
@@ -648,9 +981,9 @@ export async function processarDocumento(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Listagem e remoção de documentos
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// LISTAGEM E REMOÇÃO DE DOCUMENTOS
+// ===========================================================================
 
 /**
  * Lista os documentos já processados e gravados no banco.
