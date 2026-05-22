@@ -36,7 +36,7 @@ const RRF_K = 60;
 const RRF_ALPHA = 0.4;
 
 /** Nota de corte (Threshold). Documentos abaixo deste score são ignorados (Lixo Semântico) */
-const MIN_RRF_SCORE = 0.008;
+const MIN_RRF_SCORE = 0.002;
 
 /** Número máximo de trechos a retornar */
 const MAX_RESULTS = 7;
