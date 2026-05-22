@@ -157,6 +157,7 @@ const server = new McpServer({
  * do IFMG Campus Ouro Branco. Vetoriza a query com nomic-embed-text e
  * consulta o PostgreSQL (pgvector) por trechos similares.
  */
+// @ts-expect-error — TS2589: z.enum com 10 valores excede o limite de recursão do TypeScript nos generics do SDK MCP. Runtime funciona normalmente.
 server.registerTool(
   "search_ifmg_knowledge",
   {
@@ -169,15 +170,33 @@ server.registerTool(
       "Exemplo: Em vez de 'Qual a ementa de Cálculo I?', envie apenas 'ementa Cálculo I'. " +
       "Além disso, classifique a intenção da busca no parâmetro 'intent'.",
     inputSchema: {
-      query: z
-        .string()
-        .describe(
-          "Apenas palavras-chave e nomes próprios. PROIBIDO frases completas, pronomes ou conectivos. " +
-          "Exemplo: 'carga horária Trabalho Conclusão Curso'"
-        ),
-      intent: z
-        .enum(["CURSO", "DISCIPLINA", "CONTEUDO", "OUTRAS"])
-        .describe("Intenção da busca: CURSO (regras gerais), DISCIPLINA (carga horária, pré-requisito), CONTEUDO (ementa), OUTRAS."),
+      query: z.string().describe(
+        "Apenas palavras-chave e nomes próprios. PROIBIDO frases completas, pronomes ou conectivos. Exemplo: 'carga horária Trabalho Conclusão Curso'"
+      ),
+      intent: z.enum([
+        "INGRESSO_MATRICULA",
+        "ESTRUTURA_CURSOS",
+        "DISCIPLINA_EMENTA",
+        "AVALIACAO_FREQUENCIA",
+        "ESTAGIO_TCC",
+        "ATIVIDADES_EXTRAS",
+        "ASSISTENCIA_BOLSAS",
+        "INFRA_CAMPUS",
+        "DIREITOS_DEVERES",
+        "OUTRAS"
+      ]).describe(
+        "Classifique a intenção da busca estritamente em uma destas categorias:\n" +
+        "- INGRESSO_MATRICULA: Vestibular, SISU, transferências, trancamento, cancelamento ou renovação de matrícula.\n" +
+        "- ESTRUTURA_CURSOS: Matriz curricular, PPC, duração, e regras gerais diferenciando Graduação (ex: Sistemas de Informação), Tecnólogos e Técnicos.\n" +
+        "- DISCIPLINA_EMENTA: Carga horária específica, pré-requisitos, correquisitos, conteúdo programático e bibliografia.\n" +
+        "- AVALIACAO_FREQUENCIA: Distribuição de pontos, média de aprovação, exames finais, limite de faltas (25%), abono e atestados médicos.\n" +
+        "- ESTAGIO_TCC: Regras de estágio obrigatório/não obrigatório, documentação, orientadores e bancas de Trabalho de Conclusão de Curso.\n" +
+        "- ATIVIDADES_EXTRAS: Horas complementares (AAC), pesquisa, extensão, monitoria e eventos acadêmicos.\n" +
+        "- ASSISTENCIA_BOLSAS: Editais de assistência estudantil, auxílio moradia/transporte/alimentação e bolsas de estudo.\n" +
+        "- INFRA_CAMPUS: Regras de uso da biblioteca, laboratórios, restaurante, setores administrativos e horários de funcionamento.\n" +
+        "- DIREITOS_DEVERES: Regime disciplinar, sanções, advertências, infrações e direitos do corpo discente.\n" +
+        "- OUTRAS: Assuntos que não se encaixam em nenhuma categoria acima."
+      ),
     },
   },
   async ({ query, intent }) => {

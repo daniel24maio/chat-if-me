@@ -250,6 +250,14 @@ VITE_API_URL=http://localhost:3333
 
 ### 4. Rodar em modo desenvolvimento
 
+Você pode iniciar o backend e o frontend simultaneamente a partir da raiz do projeto:
+
+```bash
+npm run dev
+```
+
+Ou, se preferir em terminais separados:
+
 ```bash
 # Terminal 1 — Backend (porta 3333)
 npm run dev:api
@@ -307,7 +315,7 @@ Para rodar em produção (ex: homelab com Nginx/Cloudflare Tunnels), você preci
 
 | Camada | Tecnologia |
 |--------|------------|
-| **Frontend** | React 19, Vite 8, React Router, CSS puro |
+| **Frontend** | React 19, Vite 8, React Router, Tailwind CSS 4 |
 | **Backend** | Express 4, TypeScript 5, tsup |
 | **MCP** | @modelcontextprotocol/sdk (Server + Client) |
 | **Banco de Dados** | PostgreSQL 16 + pgvector (HNSW) + Full-Text Search (unaccent) |

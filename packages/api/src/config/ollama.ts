@@ -20,17 +20,17 @@ const OLLAMA_BASE_URL =
 const EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || "bge-m3";
 
 /** Modelo de geração de texto (LLM) */
-const LLM_MODEL = process.env.OLLAMA_LLM_MODEL || "qwen3.5:2b-q4_K_M";
+const LLM_MODEL = process.env.OLLAMA_LLM_MODEL || "qwen3.5:4b";
 
 /** Modelo para reescrita de queries (pode ser o mesmo ou mais leve) */
-const REWRITE_MODEL = process.env.OLLAMA_REWRITE_MODEL || "qwen3.5:2b-q4_K_M";
+const REWRITE_MODEL = process.env.OLLAMA_REWRITE_MODEL || "qwen3.5:4b";
 
 /**
  * Context window máximo por requisição.
  * Limita a alocação de VRAM do Ollama para suportar mais usuários simultâneos.
- * qwen3.5:2b-q4_K_M suporta até 32768 tokens, mas 4096 é suficiente para RAG.
+ * qwen3.5:2b-q4_K_M suporta até 32768 tokens, mas 8192 é suficiente para RAG.
  */
-const NUM_CTX = Number(process.env.OLLAMA_NUM_CTX) || 4096;
+const NUM_CTX = Number(process.env.OLLAMA_NUM_CTX) || 8192;
 
 // ---------------------------------------------------------------------------
 // Health Check
