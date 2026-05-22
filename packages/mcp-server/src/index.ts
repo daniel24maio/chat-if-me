@@ -39,7 +39,7 @@ const RRF_ALPHA = 0.4;
 const MIN_RRF_SCORE = 0.002;
 
 /** Número máximo de trechos a retornar */
-const MAX_RESULTS = 7;
+const MAX_RESULTS = 12;
 
 // ---------------------------------------------------------------------------
 // PostgreSQL
