@@ -99,9 +99,9 @@ async function verificarDimensaoEmbedding() {
 // src/config/ollama.ts
 var OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
 var EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || "bge-m3";
-var LLM_MODEL = process.env.OLLAMA_LLM_MODEL || "qwen3.5:2b-q4_K_M";
-var REWRITE_MODEL = process.env.OLLAMA_REWRITE_MODEL || "qwen3.5:2b-q4_K_M";
-var NUM_CTX = Number(process.env.OLLAMA_NUM_CTX) || 4096;
+var LLM_MODEL = process.env.OLLAMA_LLM_MODEL || "qwen3.5:4b";
+var REWRITE_MODEL = process.env.OLLAMA_REWRITE_MODEL || "qwen3.5:4b";
+var NUM_CTX = Number(process.env.OLLAMA_NUM_CTX) || 8192;
 async function verificarOllama() {
   try {
     const response = await fetch(`${OLLAMA_BASE_URL}/api/tags`);
@@ -572,35 +572,131 @@ import mammoth from "mammoth";
 import xlsx from "xlsx";
 
 // src/services/sanitization.service.ts
+function limparOCR(texto) {
+  let r = texto;
+  r = r.replace(/\uFEFF/g, "");
+  r = r.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+  r = r.replace(/\uFFFD/g, "");
+  r = r.replace(/\u00AD/g, "");
+  r = r.replace(/[\u200B-\u200D\u2060\uFE0F]/g, "");
+  r = r.replace(/\f/g, "\n");
+  return r;
+}
+function juntarHifenizacao(texto) {
+  return texto.replace(/(\w)-\n([a-záàâãéêíóôõúüç])/gi, (_, antes, depois) => {
+    const prefixos = /(?:pr[eé]|p[oó]s|semi|anti|auto|contra|extra|infra|inter|intra|macro|micro|mini|multi|neo|proto|pseudo|sobre|sub|super|supra|ultra)$/i;
+    if (prefixos.test(antes)) {
+      return `${antes}-${depois}`;
+    }
+    return `${antes}${depois}`;
+  });
+}
+var RE_CABECALHOS = [
+  // Cabeçalho institucional completo (pode aparecer em 1 a 4 linhas)
+  /SERVI[CÇ]O\s+P[UÚ]BLICO\s+FEDERAL/gi,
+  /MINIST[EÉ]RIO\s+DA\s+EDUCA[CÇ][AÃ]O/gi,
+  /INSTITUTO\s+FEDERAL\s+DE\s+EDUCA[CÇ][AÃ]O[\s,]*CI[EÊ]NCIA\s+E\s+TECNOLOGIA\s+DE\s+MINAS\s+GERAIS/gi,
+  /SECRETARIA\s+DE\s+EDUCA[CÇ][AÃ]O\s+PROFISSIONAL\s+E\s+TECNOL[OÓ]GICA/gi,
+  // Variação abreviada: "IFMG - Campus Ouro Branco" ou "IFMG – Campus Ouro Branco"
+  /IFMG\s*[-–—]\s*Campus\s+Ouro\s+Branco/gi,
+  /Campus\s+Ouro\s+Branco/gi,
+  // Endereço institucional (Rua/Av. Afonso Sardinha, nº, bairro, CEP)
+  /(?:Rua|Av\.?|Avenida)\s+Afonso\s+Sardinha[^\n]*/gi,
+  /CEP[\s.:]*\d{2}\.?\d{3}[-.]?\d{3}/gi,
+  // Telefone institucional: (31) 3938-xxxx, 31-3938-xxxx, etc.
+  /(?:\(\d{2}\)\s*|\d{2}[-\s])\d{4}[-.\s]\d{4}/g,
+  // E-mails institucionais do IFMG
+  /[\w.-]+@ifmg\.edu\.br/gi,
+  // URLs institucionais
+  /(?:https?:\/\/)?(?:www\.)?ifmg\.edu\.br[^\s]*/gi,
+  // Rodapés tipo "Página X de Y" ou "X/Y"
+  /P[aá]gina\s+\d+\s+de\s+\d+/gi,
+  /^\s*\d{1,4}\s*\/\s*\d{1,4}\s*$/gm
+];
+function removerCabecalhosRodapes(texto) {
+  let r = texto;
+  for (const regex of RE_CABECALHOS) {
+    regex.lastIndex = 0;
+    r = r.replace(regex, "");
+  }
+  return r;
+}
+function podarAnexos(texto) {
+  const match = texto.match(
+    /^[\t ]*(?:ANEXO|AP[EÊ]NDICE)\s+[IVXLCDM\dA-Z]+/im
+  );
+  if (match && match.index !== void 0) {
+    const textoPodado = texto.slice(0, match.index).trim();
+    const descartado = texto.length - textoPodado.length;
+    console.log(
+      `\u2702\uFE0F  [Sanitiza\xE7\xE3o] Anexo detectado ("${match[0].trim()}"). Descartados ${descartado} chars de formul\xE1rios/anexos.`
+    );
+    return textoPodado;
+  }
+  return texto;
+}
+function prepararChunkingJuridico(texto) {
+  let r = texto;
+  r = r.replace(/([^\n])\n(?!\n)([^\n])/g, (_, antes, depois) => {
+    if (/^(?:Art\.\s|CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o|RESOLU[CÇ])/i.test(depois + r.charAt(0))) {
+      return `${antes}
+
+${depois}`;
+    }
+    return `${antes} ${depois}`;
+  });
+  const marcadores = [
+    /(?<!\n\n)(?=^[\t ]*Art\.\s)/gm,
+    // Art. 1º, Art. 2º, ...
+    /(?<!\n\n)(?=^[\t ]*CAP[IÍ]TULO\s)/gm,
+    // CAPÍTULO I, II, ...
+    /(?<!\n\n)(?=^[\t ]*T[IÍ]TULO\s)/gm,
+    // TÍTULO I, II, ...
+    /(?<!\n\n)(?=^[\t ]*Se[cç][aã]o\s)/gm,
+    // Seção I, Seção II, ...
+    /(?<!\n\n)(?=^[\t ]*RESOLU[CÇ][AÃ]O\s)/gm,
+    // RESOLUÇÃO Nº ...
+    /(?<!\n\n)(?=^[\t ]*DAS?\s+DISPOSI[CÇ][OÕ]ES\s)/gm,
+    // DAS DISPOSIÇÕES ...
+    /(?<!\n\n)(?=^[\t ]*DO\s+REGIME\s)/gm,
+    // DO REGIME ...
+    /(?<!\n\n)(?=^[\t ]*DA\s+ORGANIZA[CÇ][AÃ]O\s)/gm,
+    // DA ORGANIZAÇÃO ...
+    /(?<!\n\n)(?=^[\t ]*DOS?\s+DIREITOS?\s)/gm,
+    // DOS DIREITOS ...
+    /(?<!\n\n)(?=^[\t ]*DOS?\s+DEVERES?\s)/gm
+    // DOS DEVERES ...
+  ];
+  for (const regex of marcadores) {
+    r = r.replace(regex, "\n\n");
+  }
+  return r;
+}
 var RE = {
   // Marcadores de página inseridos pela extração: "--- Página 5 ---"
   marcadorPagina: /---\s*P[aá]gina\s+\d+\s*---/gi,
-  // Pilcrow (¶) e variantes de caracteres de formatação de parágrafo de PDF
+  // Pilcrow (¶) e símbolos de parágrafo PDF
   pilcrow: /[¶§]/g,
-  // Superíndices e subíndices numéricos unicode (notas de rodapé, unidades)
+  // Superíndices e subíndices numéricos unicode (notas de rodapé)
   superSubIndices: /[\u00B9\u00B2\u00B3\u2070-\u2079\u2080-\u2089]/g,
-  // Hifenização de palavras no final de linha: "infor-\nmação" → "informação"
-  hifenQuebraDeLinha: /(\w)-\n(\w)/g,
   // Separadores decorativos de linha: "||", "| |", "___", "---", "==="
   separadoresDecorativos: /^[\s|_\-=]{3,}$/gm,
   // Linhas que são só pipe e espaço (resíduo de tabela sem conteúdo)
   linhasSoPipe: /^\s*\|[\s|]*\|\s*$/gm,
+  // Número de página solto: linha com apenas 1-4 dígitos
+  numeroPaginaSolto: /^\s*\d{1,4}\s*$/gm,
+  // Sequências de pontuação repetida decorativa: ".....", "-----"
+  pontuacaoRepetida: /([.!?=\-_])\1{3,}/g,
+  // Aspas tipográficas → ASCII
+  aspasCurvas: /[\u201C\u201D]/g,
+  aspasSimples: /[\u2018\u2019]/g,
+  travessao: /[\u2013\u2014]/g,
   // Múltiplos espaços e tabs → espaço único
   espacosMultiplos: /[ \t]{2,}/g,
   // Mais de 2 quebras de linha consecutivas → parágrafo duplo
   quebrasDeLinhaTriplas: /\n{3,}/g,
   // Linhas com menos de 3 caracteres não-espaço (ruído puro)
-  linhasRuido: /^.{0,2}\n/gm,
-  // Caracteres de controle não-visíveis (exceto \n e \t)
-  caracteresControle: /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g,
-  // Aspas tipográficas → ASCII
-  aspasCurvas: /[\u201C\u201D]/g,
-  aspasSimples: /[\u2018\u2019]/g,
-  travessao: /[\u2013\u2014]/g,
-  // Sequências de pontuação repetida decorativa: ".....", "-----"
-  pontuacaoRepetida: /([.!?=\-_])\1{3,}/g,
-  // Número de página solto: linha com apenas 1-4 dígitos
-  numeroPaginaSolto: /^\s*\d{1,4}\s*$/gm
+  linhasRuido: /^.{0,2}\n/gm
 };
 function tabelaMarkdownParaTexto(linha) {
   if (!linha.includes("|"))
@@ -617,18 +713,22 @@ function normalizarLinhasTabela(texto) {
 function sanitizarTexto(texto) {
   const tamanhoOriginal = texto.length;
   let r = texto;
-  r = r.replace(RE.hifenQuebraDeLinha, "$1$2");
+  r = limparOCR(r);
+  r = juntarHifenizacao(r);
+  r = removerCabecalhosRodapes(r);
+  r = podarAnexos(r);
   r = r.replace(RE.marcadorPagina, "");
-  r = r.replace(RE.caracteresControle, "");
   r = r.replace(RE.pilcrow, "");
   r = r.replace(RE.superSubIndices, "");
   r = r.replace(RE.separadoresDecorativos, "");
+  r = r.replace(RE.linhasSoPipe, "");
   r = normalizarLinhasTabela(r);
   r = r.replace(RE.numeroPaginaSolto, "");
   r = r.replace(RE.pontuacaoRepetida, "$1");
   r = r.replace(RE.aspasCurvas, '"');
   r = r.replace(RE.aspasSimples, "'");
   r = r.replace(RE.travessao, "-");
+  r = prepararChunkingJuridico(r);
   r = r.replace(RE.espacosMultiplos, " ");
   r = r.replace(RE.linhasRuido, "");
   r = r.replace(RE.quebrasDeLinhaTriplas, "\n\n");
@@ -641,26 +741,12 @@ function sanitizarTexto(texto) {
 }
 
 // src/services/embedding.service.ts
-var CHUNK_CONFIGS = {
-  regulamento: { size: 1024, overlap: 128 },
-  // ~256 tokens — granular para artigos
-  tabela: { size: 8e3, overlap: 0 },
-  // chunk inteiro — não quebrar tabelas
-  default: { size: 2048, overlap: 256 }
-  // ~512 tokens — texto corrido
-};
-function detectarTipoConteudo(texto, filename) {
-  if (/regulament|norma|resolu[çc]|portaria|edital|delibera/i.test(filename)) {
-    return "regulamento";
-  }
-  const pipeCount = (texto.match(/\|/g) || []).length;
-  if (pipeCount > 20 && texto.includes("|")) {
-    return "tabela";
-  }
-  return "default";
-}
 var EMBEDDING_MAX_CHARS = 4e3;
+var CHUNK_SIZE_GERAL = 2048;
+var CHUNK_OVERLAP_GERAL = 256;
+var TABELA_MAX_LINHAS_POR_CHUNK = 30;
 var pdfExtract = new PDFExtract();
+var BATCH_SIZE = 32;
 async function extrairTextoPDF(buffer, filename) {
   console.log(
     `\u{1F4C4} [Extra\xE7\xE3o] Iniciando extra\xE7\xE3o avan\xE7ada de "${filename}"...`
@@ -798,10 +884,219 @@ async function extrairTexto(buffer, filename, mimetype) {
   if (mimetype === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" || mimetype === "application/vnd.ms-excel" || mimetype === "text/csv" || nomeLower.endsWith(".xlsx") || nomeLower.endsWith(".xls") || nomeLower.endsWith(".csv")) {
     return extrairTextoPlanilha(buffer, filename);
   }
-  if (mimetype === "text/plain" || nomeLower.endsWith(".txt")) {
+  if (mimetype === "text/plain" || mimetype === "text/markdown" || nomeLower.endsWith(".txt") || nomeLower.endsWith(".md")) {
     return buffer.toString("utf-8");
   }
   throw new Error(`Formato n\xE3o suportado: ${mimetype}`);
+}
+function gerarNomeDocumento(filename) {
+  return filename.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").replace(/\s{2,}/g, " ").trim();
+}
+function injetarContexto(texto, nomeDocumento, contextoSecao) {
+  const partes = [`Documento: ${nomeDocumento}`];
+  if (contextoSecao) {
+    partes.push(`Contexto: ${contextoSecao}`);
+  }
+  return `[${partes.join(" | ")}]
+
+${texto}`;
+}
+function detectarTipoChunking(texto, filename) {
+  const separadoresTabela = (texto.match(/\|[\s-]+\|/g) || []).length;
+  const linhasComPipe = (texto.match(/^\|.+\|$/gm) || []).length;
+  if (separadoresTabela >= 1 && linhasComPipe >= 5) {
+    return "tabela";
+  }
+  const artigos = (texto.match(/\bArt\.\s+\d+/g) || []).length;
+  const capitulos = (texto.match(/\bCAP[IÍ]TULO\s+[IVXLCDM\d]+/gi) || []).length;
+  if (artigos >= 3 || capitulos >= 2) {
+    return "juridico";
+  }
+  if (/regulament|norma|resolu[çc]|portaria|edital|delibera|estatut|regimento/i.test(filename)) {
+    return "juridico";
+  }
+  return "geral";
+}
+function chunkingJuridico(texto, filename) {
+  const nomeDocumento = gerarNomeDocumento(filename);
+  const chunks = [];
+  const secoes = texto.split(/(?=\n?\n?(?:Art\.\s|CAP[IÍ]TULO\s|T[IÍ]TULO\s|Se[cç][aã]o\s))/i);
+  let contextoAtual = "";
+  for (const secao of secoes) {
+    const secaoTrimmed = secao.trim();
+    if (secaoTrimmed.length === 0)
+      continue;
+    const matchHierarquia = secaoTrimmed.match(
+      /^(CAP[IÍ]TULO\s+[IVXLCDM\d]+[\s\S]*?(?:\n|$))/i
+    );
+    if (matchHierarquia) {
+      contextoAtual = matchHierarquia[1].split("\n")[0].trim();
+    }
+    const matchTitulo = secaoTrimmed.match(
+      /^(T[IÍ]TULO\s+[IVXLCDM\d]+[\s\S]*?(?:\n|$))/i
+    );
+    if (matchTitulo) {
+      contextoAtual = matchTitulo[1].split("\n")[0].trim();
+    }
+    const matchSecao = secaoTrimmed.match(
+      /^(Se[cç][aã]o\s+[IVXLCDM\d]+[\s\S]*?(?:\n|$))/i
+    );
+    if (matchSecao) {
+      contextoAtual = matchSecao[1].split("\n")[0].trim();
+    }
+    const partes = subdividirBloco(secaoTrimmed, EMBEDDING_MAX_CHARS);
+    for (const parte of partes) {
+      if (parte.trim().length === 0)
+        continue;
+      const conteudoComContexto = injetarContexto(parte, nomeDocumento, contextoAtual);
+      chunks.push({
+        conteudo: conteudoComContexto,
+        metadata: {
+          filename,
+          chunkIndex: chunks.length,
+          totalChunks: 0,
+          // preenchido depois
+          nomeDocumento,
+          tipoChunking: "juridico",
+          contextoSecao: contextoAtual
+        }
+      });
+    }
+  }
+  return chunks;
+}
+function chunkingTabela(texto, filename) {
+  const nomeDocumento = gerarNomeDocumento(filename);
+  const chunks = [];
+  const blocos = separarBlocosTabela(texto);
+  for (const bloco of blocos) {
+    if (bloco.tipo === "texto") {
+      const subChunks = chunkingGeral(bloco.conteudo, filename, "tabela");
+      chunks.push(...subChunks);
+      continue;
+    }
+    const linhas = bloco.conteudo.split("\n").filter((l) => l.trim().length > 0);
+    if (linhas.length === 0)
+      continue;
+    let cabecalho = "";
+    let linhasDados = [];
+    if (linhas.length >= 2 && /^\|[\s\-:|]+\|/.test(linhas[1])) {
+      cabecalho = linhas[0] + "\n" + linhas[1];
+      linhasDados = linhas.slice(2);
+    } else {
+      linhasDados = linhas;
+    }
+    if (linhasDados.length <= TABELA_MAX_LINHAS_POR_CHUNK) {
+      const conteudo = injetarContexto(bloco.conteudo.trim(), nomeDocumento, "Tabela/Matriz");
+      chunks.push({
+        conteudo,
+        metadata: {
+          filename,
+          chunkIndex: chunks.length,
+          totalChunks: 0,
+          nomeDocumento,
+          tipoChunking: "tabela",
+          contextoSecao: "Tabela/Matriz"
+        }
+      });
+      continue;
+    }
+    for (let i = 0; i < linhasDados.length; i += TABELA_MAX_LINHAS_POR_CHUNK) {
+      const fatia = linhasDados.slice(i, i + TABELA_MAX_LINHAS_POR_CHUNK);
+      const parteNum = Math.floor(i / TABELA_MAX_LINHAS_POR_CHUNK) + 1;
+      const totalPartes = Math.ceil(linhasDados.length / TABELA_MAX_LINHAS_POR_CHUNK);
+      const contexto = `Tabela/Matriz (parte ${parteNum}/${totalPartes})`;
+      const tabelaChunk = cabecalho ? `${cabecalho}
+${fatia.join("\n")}` : fatia.join("\n");
+      const conteudo = injetarContexto(tabelaChunk, nomeDocumento, contexto);
+      chunks.push({
+        conteudo,
+        metadata: {
+          filename,
+          chunkIndex: chunks.length,
+          totalChunks: 0,
+          nomeDocumento,
+          tipoChunking: "tabela",
+          contextoSecao: contexto
+        }
+      });
+    }
+  }
+  return chunks;
+}
+function separarBlocosTabela(texto) {
+  const linhas = texto.split("\n");
+  const blocos = [];
+  let blocoAtual = [];
+  let tipoAtual = null;
+  for (const linha of linhas) {
+    const ehLinhaPipe = /^\s*\|.+\|\s*$/.test(linha);
+    const tipo = ehLinhaPipe ? "tabela" : "texto";
+    if (tipoAtual !== null && tipo !== tipoAtual) {
+      const conteudo = blocoAtual.join("\n").trim();
+      if (conteudo.length > 0) {
+        blocos.push({ tipo: tipoAtual, conteudo });
+      }
+      blocoAtual = [];
+    }
+    tipoAtual = tipo;
+    blocoAtual.push(linha);
+  }
+  if (blocoAtual.length > 0 && tipoAtual !== null) {
+    const conteudo = blocoAtual.join("\n").trim();
+    if (conteudo.length > 0) {
+      blocos.push({ tipo: tipoAtual, conteudo });
+    }
+  }
+  return blocos;
+}
+function chunkingGeral(texto, filename, tipoOverride) {
+  const nomeDocumento = gerarNomeDocumento(filename);
+  const chunks = [];
+  const tipo = tipoOverride || "geral";
+  const blocos = texto.split(/\n{2,}/).filter((b) => b.trim().length > 0);
+  if (blocos.length === 0)
+    return [];
+  let chunkAtual = "";
+  for (const bloco of blocos) {
+    if (chunkAtual.length > 0 && chunkAtual.length + bloco.length > CHUNK_SIZE_GERAL) {
+      for (const parte of subdividirBloco(chunkAtual, EMBEDDING_MAX_CHARS)) {
+        const conteudo = injetarContexto(parte.trim(), nomeDocumento, "");
+        chunks.push({
+          conteudo,
+          metadata: {
+            filename,
+            chunkIndex: chunks.length,
+            totalChunks: 0,
+            nomeDocumento,
+            tipoChunking: tipo,
+            contextoSecao: ""
+          }
+        });
+      }
+      const overlap = CHUNK_OVERLAP_GERAL > 0 ? chunkAtual.slice(-CHUNK_OVERLAP_GERAL) : "";
+      chunkAtual = overlap + (overlap ? "\n\n" : "") + bloco;
+    } else {
+      chunkAtual += (chunkAtual.length > 0 ? "\n\n" : "") + bloco;
+    }
+  }
+  if (chunkAtual.trim().length > 0) {
+    for (const parte of subdividirBloco(chunkAtual, EMBEDDING_MAX_CHARS)) {
+      const conteudo = injetarContexto(parte.trim(), nomeDocumento, "");
+      chunks.push({
+        conteudo,
+        metadata: {
+          filename,
+          chunkIndex: chunks.length,
+          totalChunks: 0,
+          nomeDocumento,
+          tipoChunking: tipo,
+          contextoSecao: ""
+        }
+      });
+    }
+  }
+  return chunks;
 }
 function subdividirBloco(texto, maxChars) {
   if (texto.length <= maxChars)
@@ -826,49 +1121,30 @@ function subdividirBloco(texto, maxChars) {
   return partes;
 }
 function dividirEmChunks(texto, filename) {
-  const tipoConteudo = detectarTipoConteudo(texto, filename);
-  const config = CHUNK_CONFIGS[tipoConteudo] || CHUNK_CONFIGS.default;
-  const { size: chunkSize, overlap: chunkOverlap } = config;
-  const blocos = texto.split(/\n{2,}/).filter((b) => b.trim().length > 0);
-  if (blocos.length === 0) {
-    console.warn(`\u26A0\uFE0F [Chunking] Texto vazio em "${filename}"`);
-    return [];
-  }
-  const chunks = [];
-  let chunkAtual = "";
-  for (const bloco of blocos) {
-    if (chunkAtual.length > 0 && chunkAtual.length + bloco.length > chunkSize) {
-      for (const parte of subdividirBloco(chunkAtual, EMBEDDING_MAX_CHARS)) {
-        chunks.push(criarChunk(parte, filename, chunks.length));
-      }
-      const overlap = chunkOverlap > 0 ? chunkAtual.slice(-chunkOverlap) : "";
-      chunkAtual = overlap + (overlap ? "\n\n" : "") + bloco;
-    } else {
-      chunkAtual += (chunkAtual.length > 0 ? "\n\n" : "") + bloco;
-    }
-  }
-  if (chunkAtual.trim().length > 0) {
-    for (const parte of subdividirBloco(chunkAtual, EMBEDDING_MAX_CHARS)) {
-      chunks.push(criarChunk(parte, filename, chunks.length));
-    }
+  const tipoChunking = detectarTipoChunking(texto, filename);
+  console.log(
+    `\u{1F500} [Roteamento] "${filename}" \u2192 estrat\xE9gia: ${tipoChunking.toUpperCase()}`
+  );
+  let chunks;
+  switch (tipoChunking) {
+    case "juridico":
+      chunks = chunkingJuridico(texto, filename);
+      break;
+    case "tabela":
+      chunks = chunkingTabela(texto, filename);
+      break;
+    case "geral":
+    default:
+      chunks = chunkingGeral(texto, filename);
+      break;
   }
   for (const chunk of chunks) {
     chunk.metadata.totalChunks = chunks.length;
   }
   console.log(
-    `\u2702\uFE0F  [Chunking] "${filename}" \u2192 ${chunks.length} chunks (tipo: ${tipoConteudo}, alvo: ${chunkSize}, overlap: ${chunkOverlap}, max: ${EMBEDDING_MAX_CHARS})`
+    `\u2702\uFE0F  [Chunking] "${filename}" \u2192 ${chunks.length} chunks (tipo: ${tipoChunking})`
   );
   return chunks;
-}
-function criarChunk(conteudo, filename, index) {
-  return {
-    conteudo: conteudo.trim(),
-    metadata: {
-      filename,
-      chunkIndex: index,
-      totalChunks: 0
-    }
-  };
 }
 function truncarParaEmbedding(texto) {
   if (texto.length <= EMBEDDING_MAX_CHARS)
@@ -879,7 +1155,6 @@ function truncarParaEmbedding(texto) {
   const corte = texto.lastIndexOf(". ", EMBEDDING_MAX_CHARS);
   return corte > EMBEDDING_MAX_CHARS * 0.5 ? texto.slice(0, corte + 1).trim() : texto.slice(0, EMBEDDING_MAX_CHARS).trim();
 }
-var BATCH_SIZE = 32;
 async function vetorizarEGravar(chunks) {
   let gravados = 0;
   let errosDimensao = 0;
@@ -1049,6 +1324,8 @@ var TIPOS_ACEITOS = [
   // .csv
   "text/plain",
   // .txt
+  "text/markdown",
+  // .md
   "image/jpeg",
   // .jpg, .jpeg
   "image/png"
@@ -1065,7 +1342,7 @@ async function uploadDocumento(req, res) {
     }
     if (!TIPOS_ACEITOS.includes(arquivo.mimetype)) {
       res.status(400).json({
-        erro: `Tipo de arquivo n\xE3o suportado: ${arquivo.mimetype}. Aceitos: PDF, Word, Excel, CSV, TXT, Imagens.`
+        erro: `Tipo de arquivo n\xE3o suportado: ${arquivo.mimetype}. Aceitos: PDF, Word, Excel, CSV, TXT, MD, Imagens.`
       });
       return;
     }
@@ -1123,7 +1400,7 @@ async function deletarDocumento(req, res) {
 }
 
 // src/routes/embedding.routes.ts
-var EXTENSOES_ACEITAS = /\.(pdf|docx?|xlsx?|csv|txt|jpe?g|png)$/i;
+var EXTENSOES_ACEITAS = /\.(pdf|docx?|xlsx?|csv|txt|md|jpe?g|png)$/i;
 var MIMES_ACEITOS = /* @__PURE__ */ new Set([
   "application/pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -1132,6 +1409,7 @@ var MIMES_ACEITOS = /* @__PURE__ */ new Set([
   "application/vnd.ms-excel",
   "text/csv",
   "text/plain",
+  "text/markdown",
   "image/jpeg",
   "image/png"
 ]);
@@ -1165,7 +1443,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { fileURLToPath } from "url";
 import { dirname, resolve } from "path";
 var OLLAMA_BASE_URL2 = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
-var LLM_MODEL2 = process.env.OLLAMA_LLM_MODEL || "qwen3.5:2b-q4_K_M";
+var LLM_MODEL2 = process.env.OLLAMA_LLM_MODEL || "qwen3.5:4b";
 var NUM_CTX2 = Number(process.env.OLLAMA_NUM_CTX) || 4096;
 var AGENT_SYSTEM_PROMPT = `Voc\xEA \xE9 o assistente virtual oficial do IFMG Campus Ouro Branco.
 
