@@ -36,7 +36,7 @@ const ChatInterface: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
-      text: 'Olá! 👋 Bem-vindo ao chatIFme — assistente virtual do campus IFMG Ouro Branco.',
+      text: 'Olá! 👋 Bem-vindo ao Chat Assistente Virtual IFMG — assistente virtual do campus IFMG Ouro Branco.',
       sender: 'ai',
       timestamp: new Date(),
     },
@@ -255,8 +255,8 @@ const ChatInterface: React.FC = () => {
         <div className="logo-container">
           <img src={theme === 'dark' ? logoDark : logoLight} alt="Logo IFMG Campus Ouro Branco" className="logo-img" />
           <div className="header-text">
-            <h1>chatIFme</h1>
-            <span className="campus-badge">Campus Ouro Branco — Sistemas de Informação</span>
+            <h1>Chat Assistente Virtual IFMG</h1>
+            <span className="campus-badge">Campus Ouro Branco</span>
           </div>
         </div>
         {/* Controles do header: toggle modo + toggle tema */}

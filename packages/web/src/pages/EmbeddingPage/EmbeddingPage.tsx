@@ -223,7 +223,7 @@ const EmbeddingPage: React.FC = () => {
         <div className="embedding-header-left">
           <img src={theme === 'dark' ? logoDark : logoLight} alt="Logo IFMG Campus Ouro Branco" className="logo-img" />
           <div className="embedding-header-text">
-            <h1>chatIFme</h1>
+            <h1>Chat Assistente Virtual IFMG</h1>
             <span className="admin-badge">Administração — Ingestão de Documentos</span>
           </div>
         </div>

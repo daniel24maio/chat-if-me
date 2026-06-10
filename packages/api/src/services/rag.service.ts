@@ -47,7 +47,7 @@ import {
  * Contém o dicionário de siglas acadêmicas do IFMG e regras para
  * formalizar a linguagem sem alterar o sentido da pergunta.
  */
-const REWRITE_SYSTEM_PROMPT = `Você é um assistente de pré-processamento de consultas para um sistema de busca de documentos acadêmicos do IFMG (Instituto Federal de Minas Gerais), Campus Ouro Branco, curso de Sistemas de Informação.
+const REWRITE_SYSTEM_PROMPT = `Você é um assistente de pré-processamento de consultas para um sistema de busca de documentos acadêmicos do IFMG (Instituto Federal de Minas Gerais), Campus Ouro Branco.
 
 Sua tarefa: reescrever a pergunta do usuário para melhorar a busca semântica em documentos acadêmicos.
 
