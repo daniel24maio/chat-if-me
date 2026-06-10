@@ -8,8 +8,9 @@ COPY package*.json ./
 COPY packages/api/package.json packages/api/
 COPY packages/mcp-server/package.json packages/mcp-server/
 
-# 🚨 MUDANÇA CRÍTICA: Forçando o NPM a baixar os binários opcionais do LiteParse para Linux
-RUN npm ci --include=optional
+# 🚨 MUDANÇA CRÍTICA: Em vez de 'npm ci', usamos 'npm install' forçando
+# a arquitetura linux e o processador x64, garantindo que o binário em Rust desça!
+RUN npm install --os=linux --cpu=x64 --include=optional
 
 # Copia o código fonte
 COPY packages/api packages/api
