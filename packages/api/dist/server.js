@@ -853,7 +853,8 @@ async function gerarEmbeddingOllama(texto) {
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     body: JSON.stringify({
       model: EMBED_MODEL,
-      prompt: texto
+      prompt: texto,
+      keep_alive: "24h"
     })
   });
   if (!response.ok) {
@@ -879,9 +880,11 @@ async function reescreverComLLM(systemPrompt, pergunta) {
         { role: "user", content: pergunta }
       ],
       stream: false,
+      keep_alive: "24h",
       options: {
         temperature: 0,
-        num_ctx: NUM_CTX
+        num_ctx: NUM_CTX,
+        num_predict: 100
       }
     })
   });
@@ -909,6 +912,7 @@ async function streamRespostaOllama(mensagens, res, fontes) {
       model: LLM_MODEL,
       messages: mensagensSeguras,
       stream: true,
+      keep_alive: "24h",
       options: { num_ctx: NUM_CTX }
     })
   });
@@ -26711,7 +26715,12 @@ ${"\u2500".repeat(50)}`);
       messages,
       tools: ollamaTools,
       stream: false,
-      options: { num_ctx: NUM_CTX2 }
+      keep_alive: "24h",
+      options: {
+        num_ctx: NUM_CTX2,
+        temperature: 0,
+        num_predict: 120
+      }
     })
   });
   if (!firstResponse.ok) {
@@ -26814,6 +26823,7 @@ ${"\u2500".repeat(50)}`);
       model: LLM_MODEL2,
       messages,
       stream: true,
+      keep_alive: "24h",
       options: { num_ctx: NUM_CTX2 }
     })
   });

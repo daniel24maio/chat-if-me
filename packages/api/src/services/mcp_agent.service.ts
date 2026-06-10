@@ -24,10 +24,10 @@ const OLLAMA_BASE_URL =
 const LLM_MODEL = process.env.OLLAMA_LLM_MODEL || "qwen3.5:4b";
 
 /** Context window máximo por requisição (economia de VRAM) */
-const NUM_CTX = Number(process.env.OLLAMA_NUM_CTX) || 8192;
+const NUM_CTX = Number(process.env.OLLAMA_NUM_CTX) || 2048;
 
 /** Timeout global de segurança para as chamadas do Ollama (3 minutos) */
-const FETCH_TIMEOUT_MS = 180000;
+const FETCH_TIMEOUT_MS = 380000;
 
 /** System Prompt do agente — instrui o LLM a usar ferramentas e formatar corretamente */
 const AGENT_SYSTEM_PROMPT = `Você é o assistente virtual oficial do IFMG Campus Ouro Branco.
@@ -211,7 +211,12 @@ export async function processarPerguntaAgente(
       messages,
       tools: ollamaTools,
       stream: false,
-      options: { num_ctx: NUM_CTX },
+      keep_alive: "24h",
+      options: {
+        num_ctx: NUM_CTX,
+        temperature: 0,
+        num_predict: 120,
+      },
     }),
   });
 
@@ -345,6 +350,7 @@ export async function processarPerguntaAgente(
       model: LLM_MODEL,
       messages,
       stream: true,
+      keep_alive: "24h",
       options: { num_ctx: NUM_CTX },
     }),
   });

@@ -101,6 +101,7 @@ export async function gerarEmbeddingOllama(texto: string): Promise<number[]> {
     body: JSON.stringify({
       model: EMBED_MODEL,
       prompt: texto,
+      keep_alive: "24h",
     }),
   });
 
@@ -134,6 +135,7 @@ export async function gerarRespostaOllama(mensagens: OllamaChatMessage[]): Promi
       model: LLM_MODEL,
       messages: mensagensSeguras,
       stream: false,
+      keep_alive: "24h",
       options: { num_ctx: NUM_CTX },
     }),
   });
@@ -170,9 +172,11 @@ export async function reescreverComLLM(systemPrompt: string, pergunta: string): 
         { role: "user", content: pergunta },
       ],
       stream: false,
+      keep_alive: "24h",
       options: {
         temperature: 0,
         num_ctx: NUM_CTX,
+        num_predict: 100,
       },
     }),
   });
@@ -213,6 +217,7 @@ export async function streamRespostaOllama(
       model: LLM_MODEL,
       messages: mensagensSeguras,
       stream: true,
+      keep_alive: "24h",
       options: { num_ctx: NUM_CTX },
     }),
   });

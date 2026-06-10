@@ -36,7 +36,7 @@ const RRF_K = 60;
 const RRF_ALPHA = 0.4;
 
 /** Nota de corte (Threshold). Documentos abaixo deste score são ignorados (Lixo Semântico) */
-const MIN_RRF_SCORE = 0.02;
+const MIN_RRF_SCORE = 0.002;
 
 /** Número máximo de trechos a retornar */
 const MAX_RESULTS = 10;
@@ -59,7 +59,11 @@ async function gerarEmbedding(texto: string): Promise<number[]> {
   const response = await fetch(`${OLLAMA_BASE_URL}/api/embeddings`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: EMBED_MODEL, prompt: texto }),
+    body: JSON.stringify({
+      model: EMBED_MODEL,
+      prompt: texto,
+      keep_alive: "1h",
+    }),
   });
 
   if (!response.ok) {
