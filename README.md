@@ -217,7 +217,7 @@ npm install
 docker compose up -d
 ```
 
-Isso cria containers para PostgreSQL 16 (com pgvector) e Redis 7, executando o `init.sql` automaticamente na primeira subida.
+Isso cria containers para PostgreSQL 16 (com pgvector) e Redis 7, executando automaticamente os scripts de inicialização (tabela base, busca híbrida FTS e adequação de dimensões) na primeira subida.
 
 ### 3. Configurar variáveis de ambiente
 
@@ -237,6 +237,7 @@ OLLAMA_BASE_URL=http://192.168.31.50:11434
 OLLAMA_EMBED_MODEL=bge-m3
 OLLAMA_LLM_MODEL=qwen3.5:4b
 OLLAMA_REWRITE_MODEL=qwen3.5:4b
+OLLAMA_NUM_CTX=8192
 REDIS_URL=redis://localhost:6379
 ```
 
@@ -293,10 +294,23 @@ Para rodar em produção (ex: homelab com Nginx/Cloudflare Tunnels), você preci
 - `ADMIN_API_KEY`: Chave de autenticação para rotas admin
 - `DATABASE_URL`: String de conexão do PostgreSQL
 - `OLLAMA_BASE_URL`: URL do servidor Ollama no seu homelab
+- `OLLAMA_NUM_CTX`: Limite da janela de contexto para a GPU (ex: 8192)
 - `REDIS_URL`: URL do servidor Redis
 
 **Frontend (`chatifme-frontend`):**
 - `VITE_API_URL`: URL pública da sua API (injetada no momento do **build** do container via argumento).
+
+### 🛠️ Build Manual com Docker
+
+Caso deseje compilar as imagens Docker localmente sem passar pelo CI/CD:
+
+```bash
+# Build do Backend
+docker build -t chatifme-backend -f Dockerfile.backend .
+
+# Build do Frontend (substitua a URL pela URL pública da sua API se necessário)
+docker build --build-arg VITE_API_URL=http://localhost:3333 -t chatifme-frontend -f Dockerfile.frontend .
+```
 
 ---
 
