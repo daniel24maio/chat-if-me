@@ -24,7 +24,10 @@ const OLLAMA_BASE_URL =
 const LLM_MODEL = process.env.OLLAMA_LLM_MODEL || "qwen3.5:4b";
 
 /** Context window máximo por requisição (economia de VRAM) */
-const NUM_CTX = Number(process.env.OLLAMA_NUM_CTX) || 4096;
+const NUM_CTX = Number(process.env.OLLAMA_NUM_CTX) || 8192;
+
+/** Timeout global de segurança para as chamadas do Ollama (3 minutos) */
+const FETCH_TIMEOUT_MS = 180000;
 
 /** System Prompt do agente — instrui o LLM a usar ferramentas e formatar corretamente */
 const AGENT_SYSTEM_PROMPT = `Você é o assistente virtual oficial do IFMG Campus Ouro Branco.
@@ -202,6 +205,7 @@ export async function processarPerguntaAgente(
   const firstResponse = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     body: JSON.stringify({
       model: LLM_MODEL,
       messages,
@@ -280,6 +284,7 @@ export async function processarPerguntaAgente(
         // Adiciona o resultado da ferramenta ao histórico
         messages.push({
           role: "tool",
+          tool_name: name,
           content: resultText,
         });
       } catch (error) {
@@ -289,6 +294,7 @@ export async function processarPerguntaAgente(
 
         messages.push({
           role: "tool",
+          tool_name: name,
           content: `Erro ao buscar documentos: ${msg}`,
         });
       }
@@ -334,6 +340,7 @@ export async function processarPerguntaAgente(
   const streamResponse = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     body: JSON.stringify({
       model: LLM_MODEL,
       messages,
