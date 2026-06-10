@@ -62,7 +62,7 @@ async function gerarEmbedding(texto: string): Promise<number[]> {
     body: JSON.stringify({
       model: EMBED_MODEL,
       prompt: texto,
-      keep_alive: "1h",
+      keep_alive: "24h",
     }),
   });
 
@@ -175,14 +175,14 @@ server.registerTool(
       "Além disso, classifique a intenção da busca no parâmetro 'intent'.",
     inputSchema: {
       query: z.string().describe(
-        "Apenas palavras-chave e nomes próprios, sempre expandindo siglas acadêmicas (ex: TCC -> Trabalho de Conclusão de Curso, PPC -> Projeto Pedagógico). PROIBIDO frases completas, pronomes ou conectivos. Exemplo: 'carga horária Trabalho Conclusão Curso'"
+        "Apenas palavras-chave e nomes próprios. PROIBIDO frases completas, pronomes ou conectivos. Exemplo: 'carga horária Trabalho Conclusão Curso'"
       ),
       intent: z.enum([
         "INGRESSO_MATRICULA",
         "ESTRUTURA_CURSOS",
         "DISCIPLINA_EMENTA",
         "AVALIACAO_FREQUENCIA",
-        "TCC",
+        "ESTAGIO_TCC",
         "ATIVIDADES_EXTRAS",
         "ASSISTENCIA_BOLSAS",
         "INFRA_CAMPUS",
@@ -194,7 +194,7 @@ server.registerTool(
         "- ESTRUTURA_CURSOS: Matriz curricular, PPC, duração, e regras gerais diferenciando Graduação (ex: Sistemas de Informação), Tecnólogos e Técnicos.\n" +
         "- DISCIPLINA_EMENTA: Carga horária específica, pré-requisitos, correquisitos, conteúdo programático e bibliografia.\n" +
         "- AVALIACAO_FREQUENCIA: Distribuição de pontos, média de aprovação, exames finais, limite de faltas (25%), abono e atestados médicos.\n" +
-        "- TCC: Regras, documentação, orientadores e bancas de Trabalho de Conclusão de Curso.\n" +
+        "- ESTAGIO_TCC: Regras de estágio obrigatório/não obrigatório, documentação, orientadores e bancas de Trabalho de Conclusão de Curso.\n" +
         "- ATIVIDADES_EXTRAS: Horas complementares (AAC), pesquisa, extensão, monitoria e eventos acadêmicos.\n" +
         "- ASSISTENCIA_BOLSAS: Editais de assistência estudantil, auxílio moradia/transporte/alimentação e bolsas de estudo.\n" +
         "- INFRA_CAMPUS: Regras de uso da biblioteca, laboratórios, restaurante, setores administrativos e horários de funcionamento.\n" +
