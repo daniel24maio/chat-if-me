@@ -1,5 +1,6 @@
 # Estágio 1: Build
-FROM node:20-alpine AS builder
+# 🚨 MUDANÇA CRÍTICA: Trocando 'alpine' por 'slim' (Debian glibc) para suportar binários nativos em Rust
+FROM node:20-slim AS builder
 WORKDIR /app
 
 # Copia configurações do workspace
@@ -7,8 +8,8 @@ COPY package*.json ./
 COPY packages/api/package.json packages/api/
 COPY packages/mcp-server/package.json packages/mcp-server/
 
-# Instala TODAS as dependências
-RUN npm ci
+# 🚨 MUDANÇA CRÍTICA: Forçando o NPM a baixar os binários opcionais do LiteParse para Linux
+RUN npm ci --include=optional
 
 # Copia o código fonte
 COPY packages/api packages/api
@@ -20,8 +21,14 @@ RUN npm --workspace=packages/api run build
 
 
 # Estágio 2: Produção (Imagem mais leve)
-FROM node:20-alpine
+# 🚨 A imagem final também precisa ser 'slim' para rodar o binário compilado
+FROM node:20-slim
 WORKDIR /app
+
+# Instala dependências de sistema que o LiteParse/Tesseract podem precisar (opcional, mas recomendado)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY package*.json ./
 COPY --from=builder /app/node_modules ./node_modules
@@ -30,11 +37,8 @@ COPY --from=builder /app/packages/api/package.json ./packages/api/
 COPY --from=builder /app/packages/mcp-server/dist ./packages/mcp-server/dist
 COPY --from=builder /app/packages/mcp-server/package.json ./packages/mcp-server/
 
-# A porta que o seu Express usa (ajuste se for 3000)
+# A porta que o seu Express usa
 EXPOSE 3333
 
-# A variável de ambiente que define a URL do servidor (agora interno)
-#ENV API_BASE_URL=http://localhost:3333
-
-# O comando para iniciar a API (que, por sua vez, vai iniciar o MCP como subprocesso)
+# O comando para iniciar a API
 CMD ["node", "packages/api/dist/server.js"]
