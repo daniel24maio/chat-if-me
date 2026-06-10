@@ -234,6 +234,7 @@ export async function streamRespostaOllama(
   const reader = ollamaResponse.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let gerouTokens = false;
 
   try {
     while (true) {
@@ -255,6 +256,7 @@ export async function streamRespostaOllama(
           };
 
           if (chunk.message?.content) {
+            gerouTokens = true;
             res.write(`data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`);
           }
 
@@ -271,6 +273,7 @@ export async function streamRespostaOllama(
       try {
         const chunk = JSON.parse(buffer.trim()) as { message?: { content: string } };
         if (chunk.message?.content) {
+          gerouTokens = true;
           res.write(`data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`);
         }
       } catch {
@@ -279,6 +282,15 @@ export async function streamRespostaOllama(
     }
   } finally {
     reader.releaseLock();
+  }
+
+  // Se nenhum token foi gerado, envia um fallback amigável
+  if (!gerouTokens) {
+    console.warn("⚠️ [Ollama] Resposta vazia no streaming. Enviando fallback.");
+    const fallbackMsg = "Não encontrei essa informação nos documentos disponíveis. Recomendo consultar a coordenação do curso ou acessar o portal do IFMG.";
+    res.write(
+      `data: ${JSON.stringify({ type: "token", content: fallbackMsg })}\n\n`
+    );
   }
 
   res.write(`data: [DONE]\n\n`);

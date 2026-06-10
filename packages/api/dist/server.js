@@ -26608,8 +26608,8 @@ import { fileURLToPath } from "url";
 import { dirname, resolve as resolve2 } from "path";
 var OLLAMA_BASE_URL2 = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
 var LLM_MODEL2 = process.env.OLLAMA_LLM_MODEL || "qwen3.5:4b";
-var NUM_CTX2 = Number(process.env.OLLAMA_NUM_CTX) || 8192;
-var FETCH_TIMEOUT_MS2 = 18e4;
+var NUM_CTX2 = Number(process.env.OLLAMA_NUM_CTX) || 2048;
+var FETCH_TIMEOUT_MS2 = 38e4;
 var AGENT_SYSTEM_PROMPT = `Voc\xEA \xE9 o assistente virtual oficial do IFMG Campus Ouro Branco.
 
 Voc\xEA tem acesso a uma ferramenta de busca nos documentos oficiais do curso. USE ESTA FERRAMENTA para responder perguntas sobre:
@@ -26719,7 +26719,7 @@ ${"\u2500".repeat(50)}`);
       options: {
         num_ctx: NUM_CTX2,
         temperature: 0,
-        num_predict: 120
+        num_predict: 512
       }
     })
   });

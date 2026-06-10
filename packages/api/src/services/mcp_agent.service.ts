@@ -215,7 +215,7 @@ export async function processarPerguntaAgente(
       options: {
         num_ctx: NUM_CTX,
         temperature: 0,
-        num_predict: 120,
+        num_predict: 512,
       },
     }),
   });
@@ -370,6 +370,7 @@ export async function processarPerguntaAgente(
   const reader = streamResponse.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let gerouTokens = false;
 
   try {
     while (true) {
@@ -388,6 +389,7 @@ export async function processarPerguntaAgente(
           const chunk = JSON.parse(trimmed) as OllamaChatResponse;
 
           if (chunk.message?.content) {
+            gerouTokens = true;
             res.write(
               `data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`
             );
@@ -407,6 +409,7 @@ export async function processarPerguntaAgente(
       try {
         const chunk = JSON.parse(buffer.trim()) as OllamaChatResponse;
         if (chunk.message?.content) {
+          gerouTokens = true;
           res.write(
             `data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`
           );
@@ -417,6 +420,15 @@ export async function processarPerguntaAgente(
     }
   } finally {
     reader.releaseLock();
+  }
+
+  // Se nenhum token foi gerado, envia um fallback amigável
+  if (!gerouTokens) {
+    console.warn("⚠️ [Agente] Resposta vazia no streaming. Enviando fallback.");
+    const fallbackMsg = "Não encontrei essa informação nos documentos disponíveis. Recomendo consultar a coordenação do curso ou acessar o portal do IFMG.";
+    res.write(
+      `data: ${JSON.stringify({ type: "token", content: fallbackMsg })}\n\n`
+    );
   }
 
   // Sinaliza fim do stream
