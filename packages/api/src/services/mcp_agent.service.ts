@@ -350,15 +350,24 @@ export async function processarPerguntaAgente(
   // ── Passo 3: Segunda chamada ao Ollama com streaming ──
   console.log("🌊 [Agente] Passo 3: Gerando resposta final com streaming...");
 
+  // Adiciona um lembrete de diretivas no final do histórico para evitar que modelos menores esqueçam as regras de idioma e síntese
+  const messagesFinal = [
+    ...messages,
+    {
+      role: "system",
+      content: "DIRETIVA OBRIGATÓRIA: Responda EXCLUSIVAMENTE em Português do Brasil (pt-BR). Baseie-se apenas nos dados retornados pela ferramenta acima e ignore trechos de outras disciplinas não relacionadas.",
+    }
+  ];
+
   const streamResponse = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     body: JSON.stringify({
       model: LLM_MODEL,
-      messages,
+      messages: messagesFinal,
       stream: true,
-      keep_alive: "24h",
+      keep_alive: "1h",
       options: { num_ctx: NUM_CTX },
     }),
   });
