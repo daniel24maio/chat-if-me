@@ -59,10 +59,10 @@ O LLM decide **autonomamente** se precisa buscar nos documentos (via Tool Callin
 
 | Componente | VRAM |
 |---|---|
-| qwen3.5:2b-q4_K_M (geração + reescrita) | ~1.9 GiB |
+| qwen3.5:4b (geração + reescrita) | ~3.0 GiB |
 | bge-m3 (embeddings 1024d) | ~1.2 GiB |
-| **Total** | **~3.1 GiB (19%)** |
-| **Livre (de 16 GiB)** | **~12.8 GiB** |
+| **Total** | **~4.2 GiB (26%)** |
+| **Livre (de 16 GiB)** | **~11.8 GiB** |
 
 > Otimizado para GPUs com 16 GiB de VRAM. Suporta ~10 usuários simultâneos.
 
@@ -82,7 +82,7 @@ O LLM decide **autonomamente** se precisa buscar nos documentos (via Tool Callin
 
 ### Ingestão de Documentos (Admin)
 - 📄 Upload de PDF, Word (.docx), Planilhas/Excel (.xlsx, .csv), Markdown (.md), Imagens e TXT via drag-and-drop (`/embedding`)
-- 📊 **Extração e Conversão**: Reconstrução de layout de tabelas via PDF e conversão nativa de planilhas para `Markdown Tables`.
+- 📊 **Extração e Conversão**: Extração de PDFs preservando a estrutura semântica/markdown gerada por IA espacial via `@llamaindex/liteparse` e conversão nativa de planilhas para `Markdown Tables`.
 - 🧹 **Serviço de Sanitização Dedicado**: Remoção de cabeçalhos institucionais do IFMG, poda de anexos/formulários, limpeza de OCR e preparação de quebras jurídicas.
 - 👁️ **OCR Nativo**: Leitura automática de imagens e PDFs escaneados via `tesseract.js`
 - ✂️ **Chunking Semântico Adaptativo** — roteamento automático por tipo de conteúdo:
@@ -124,8 +124,8 @@ O LLM decide **autonomamente** se precisa buscar nos documentos (via Tool Callin
 | **Connection Pooling** | Pool PostgreSQL com max=20 conexões, timeout de 5s |
 
 ### Limitações Conhecidas
-- Context window limitado a 4096 tokens por requisição (configurável via `OLLAMA_NUM_CTX`)
-- Modelo de geração é `qwen3.5:2b` (2B parâmetros) — menor qualidade que modelos maiores
+- Context window limitado a 8192 tokens por requisição por padrão (configurável via `OLLAMA_NUM_CTX`)
+- Modelo de geração padrão é `qwen3.5:4b` (4B parâmetros) — melhor qualidade de geração e aderência a instruções
 - Sem autenticação de usuários finais (sistema acadêmico aberto)
 
 ---
@@ -148,6 +148,7 @@ chat-if-me/
 │   ├── .env.example            # Template de configuração
 │   ├── init.sql                # Schema do banco (pgvector HNSW + FTS)
 │   ├── migrate_bge_m3.sql      # Migração 768d → 1024d (deploys existentes)
+│   ├── migrate_hybrid.sql      # Migração para habilitar busca híbrida (deploys existentes)
 │   └── src/
 │       ├── server.ts           # Entry point — Express + health check + MCP init
 │       ├── config/
@@ -199,7 +200,7 @@ chat-if-me/
 ```bash
 # No servidor onde o Ollama está rodando:
 ollama pull bge-m3              # Embeddings (1024 dimensões, multilíngue)
-ollama pull qwen3.5:2b-q4_K_M  # Geração de respostas (~1.9 GiB VRAM)
+ollama pull qwen3.5:4b          # Geração de respostas e reescrita
 ```
 
 ### 1. Clonar e instalar dependências
@@ -321,8 +322,8 @@ Para rodar em produção (ex: homelab com Nginx/Cloudflare Tunnels), você preci
 | **MCP** | @modelcontextprotocol/sdk (Server + Client) |
 | **Banco de Dados** | PostgreSQL 16 + pgvector (HNSW) + Full-Text Search (unaccent) |
 | **Cache / Fila** | Redis 7 + BullMQ (semáforo de concorrência) |
-| **IA / LLM** | Ollama (bge-m3 embeddings + qwen3.5:2b-q4_K_M) |
-| **Ingestão/Upload** | Multer (memória) + pdf.js-extract + tesseract.js + mammoth + xlsx |
+| **IA / LLM** | Ollama (bge-m3 embeddings + qwen3.5:4b) |
+| **Ingestão/Upload** | Multer (memória) + @llamaindex/liteparse + tesseract.js + mammoth + xlsx + @langchain/textsplitters |
 | **Streaming** | Server-Sent Events (SSE) |
 | **Segurança** | express-rate-limit, CORS restrito, admin API key |
 | **Containerização** | Docker Compose (PostgreSQL + Redis) |
