@@ -5,16 +5,15 @@
  * e a reutilização entre os serviços de embedding e RAG.
  *
  * Variáveis de ambiente necessárias:
- *   OLLAMA_BASE_URL    — URL base do Ollama (ex: http://192.168.31.50:11434)
- *   OLLAMA_EMBED_MODEL — Modelo de embeddings (ex: bge-m3, 1024 dimensões)
- *   OLLAMA_LLM_MODEL   — Modelo de geração (ex: qwen3.5:2b-q4_K_M)
+ * OLLAMA_BASE_URL    — URL base do Ollama (ex: http://192.168.31.50:11434)
+ * OLLAMA_EMBED_MODEL — Modelo de embeddings (ex: bge-m3, 1024 dimensões)
+ * OLLAMA_LLM_MODEL   — Modelo de geração (ex: qwen3.5:2b-q4_K_M)
  */
 
 import type { Response } from "express";
 
 /** URL base do Ollama — configurável via .env */
-const OLLAMA_BASE_URL =
-  process.env.OLLAMA_BASE_URL || "http://localhost:11434";
+const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
 
 /** Modelo de embeddings — 1024 dimensões para bge-m3 (multilíngue) */
 const EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || "bge-m3";
@@ -28,21 +27,54 @@ const REWRITE_MODEL = process.env.OLLAMA_REWRITE_MODEL || "qwen3.5:4b";
 /**
  * Context window máximo por requisição.
  * Limita a alocação de VRAM do Ollama para suportar mais usuários simultâneos.
- * qwen3.5:4b suporta até 8192 tokens, mas 8192 é suficiente para RAG.
  */
 const NUM_CTX = Number(process.env.OLLAMA_NUM_CTX) || 8192;
+
+/**
+ * Timeout global de segurança para as chamadas do Ollama.
+ * Impede o erro UND_ERR_HEADERS_TIMEOUT liberando a thread do Node.js
+ * caso a GPU demore muito tempo a processar o prompt.
+ */
+const FETCH_TIMEOUT_MS = 180000; // 3 minutos
+
+// ---------------------------------------------------------------------------
+// Utilitários de Contexto
+// ---------------------------------------------------------------------------
+
+export interface OllamaChatMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+/**
+ * Poda o histórico de conversas preservando as diretivas do sistema.
+ * * Previne o "Context Bloat" e o erro de Timeout garantindo que a GPU não seja
+ * asfixiada com histórico irrelevante, mantendo SEMPRE o System Prompt intacto.
+ */
+function podarHistorico(mensagens: OllamaChatMessage[], maxInteracoes: number = 4): OllamaChatMessage[] {
+  // Se o array já for pequeno, não faz nada
+  if (mensagens.length <= maxInteracoes + 1) return mensagens;
+
+  // Separa o system prompt (geralmente a primeira mensagem) do resto
+  const systemPrompt = mensagens.find(m => m.role === "system");
+  const outrasMensagens = mensagens.filter(m => m.role !== "system");
+
+  // Pega apenas as interações mais recentes
+  const mensagensRecentes = outrasMensagens.slice(-maxInteracoes);
+
+  // Remonta o array garantindo que o Agente não esqueça as suas regras vitais
+  return systemPrompt ? [systemPrompt, ...mensagensRecentes] : mensagensRecentes;
+}
 
 // ---------------------------------------------------------------------------
 // Health Check
 // ---------------------------------------------------------------------------
 
-/**
- * Verifica se o servidor Ollama está acessível.
- * Chamada na inicialização do servidor.
- */
 export async function verificarOllama(): Promise<void> {
   try {
-    const response = await fetch(`${OLLAMA_BASE_URL}/api/tags`);
+    const response = await fetch(`${OLLAMA_BASE_URL}/api/tags`, {
+      signal: AbortSignal.timeout(10000) // Timeout rápido de 10s para health check
+    });
     if (!response.ok) throw new Error(`Status ${response.status}`);
 
     const data = (await response.json()) as { models?: { name: string }[] };
@@ -51,9 +83,7 @@ export async function verificarOllama(): Promise<void> {
     console.log(`   Modelos disponíveis: ${modelos.join(", ") || "nenhum"}`);
   } catch (error) {
     console.error(`❌ [Ollama] Servidor inacessível em ${OLLAMA_BASE_URL}`);
-    console.error(
-      "   Verifique se o Ollama está rodando e a variável OLLAMA_BASE_URL"
-    );
+    console.error("   Verifique se o Ollama está rodando e a variável OLLAMA_BASE_URL");
   }
 }
 
@@ -61,21 +91,13 @@ export async function verificarOllama(): Promise<void> {
 // Embeddings
 // ---------------------------------------------------------------------------
 
-/**
- * Gera o vetor de embedding para um texto usando o Ollama.
- *
- * @param texto - Texto a ser vetorizado
- * @returns Vetor numérico (array de floats) com a dimensão do modelo
- * @throws Error se o Ollama estiver offline ou o modelo não estiver disponível
- */
-export async function gerarEmbeddingOllama(
-  texto: string
-): Promise<number[]> {
+export async function gerarEmbeddingOllama(texto: string): Promise<number[]> {
   const url = `${OLLAMA_BASE_URL}/api/embeddings`;
 
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     body: JSON.stringify({
       model: EMBED_MODEL,
       prompt: texto,
@@ -84,50 +106,33 @@ export async function gerarEmbeddingOllama(
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(
-      `[Ollama Embedding] Erro ${response.status}: ${errorText}`
-    );
+    throw new Error(`[Ollama Embedding] Erro ${response.status}: ${errorText}`);
   }
 
   const data = (await response.json()) as { embedding: number[] };
 
   if (!data.embedding || !Array.isArray(data.embedding)) {
-    throw new Error(
-      "[Ollama Embedding] Resposta inválida — campo 'embedding' ausente"
-    );
+    throw new Error("[Ollama Embedding] Resposta inválida — campo 'embedding' ausente");
   }
 
   return data.embedding;
 }
 
 // ---------------------------------------------------------------------------
-// Geração de Texto (LLM) — Modo sem streaming (mantido para compatibilidade)
+// Geração de Texto (LLM) — Modo sem streaming
 // ---------------------------------------------------------------------------
 
-/** Estrutura de mensagem para a API de chat do Ollama */
-export interface OllamaChatMessage {
-  role: "system" | "user" | "assistant";
-  content: string;
-}
-
-/**
- * Gera uma resposta textual usando o LLM via Ollama (sem streaming).
- * Mantida para usos onde não se precisa de streaming (ex: testes).
- *
- * @param mensagens - Array de mensagens no formato chat (system prompt + user)
- * @returns Texto da resposta gerada pelo modelo
- */
-export async function gerarRespostaOllama(
-  mensagens: OllamaChatMessage[]
-): Promise<string> {
+export async function gerarRespostaOllama(mensagens: OllamaChatMessage[]): Promise<string> {
   const url = `${OLLAMA_BASE_URL}/api/chat`;
+  const mensagensSeguras = podarHistorico(mensagens);
 
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     body: JSON.stringify({
       model: LLM_MODEL,
-      messages: mensagens,
+      messages: mensagensSeguras,
       stream: false,
       options: { num_ctx: NUM_CTX },
     }),
@@ -135,19 +140,13 @@ export async function gerarRespostaOllama(
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(
-      `[Ollama LLM] Erro ${response.status}: ${errorText}`
-    );
+    throw new Error(`[Ollama LLM] Erro ${response.status}: ${errorText}`);
   }
 
-  const data = (await response.json()) as {
-    message?: { content: string };
-  };
+  const data = (await response.json()) as { message?: { content: string } };
 
   if (!data.message?.content) {
-    throw new Error(
-      "[Ollama LLM] Resposta inválida — campo 'message.content' ausente"
-    );
+    throw new Error("[Ollama LLM] Resposta inválida — campo 'message.content' ausente");
   }
 
   return data.message.content;
@@ -157,26 +156,13 @@ export async function gerarRespostaOllama(
 // Reescrita de Query (Query Rewriting)
 // ---------------------------------------------------------------------------
 
-/**
- * Reescreve uma pergunta usando um LLM para melhorar a busca semântica.
- *
- * Utiliza temperature=0 para máximo determinismo — a reescrita não deve
- * ser criativa, apenas expandir siglas e formalizar a linguagem.
- *
- * @param systemPrompt - Instruções de como reescrever (com dicionário de siglas)
- * @param pergunta     - Pergunta original do aluno
- * @returns Pergunta reescrita e expandida
- * @throws Error se o Ollama estiver offline
- */
-export async function reescreverComLLM(
-  systemPrompt: string,
-  pergunta: string
-): Promise<string> {
+export async function reescreverComLLM(systemPrompt: string, pergunta: string): Promise<string> {
   const url = `${OLLAMA_BASE_URL}/api/chat`;
 
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     body: JSON.stringify({
       model: REWRITE_MODEL,
       messages: [
@@ -185,7 +171,7 @@ export async function reescreverComLLM(
       ],
       stream: false,
       options: {
-        temperature: 0, // Determinístico — sem criatividade na reescrita
+        temperature: 0,
         num_ctx: NUM_CTX,
       },
     }),
@@ -193,19 +179,13 @@ export async function reescreverComLLM(
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(
-      `[Ollama Rewrite] Erro ${response.status}: ${errorText}`
-    );
+    throw new Error(`[Ollama Rewrite] Erro ${response.status}: ${errorText}`);
   }
 
-  const data = (await response.json()) as {
-    message?: { content: string };
-  };
+  const data = (await response.json()) as { message?: { content: string } };
 
   if (!data.message?.content) {
-    throw new Error(
-      "[Ollama Rewrite] Resposta inválida — campo 'message.content' ausente"
-    );
+    throw new Error("[Ollama Rewrite] Resposta inválida — campo 'message.content' ausente");
   }
 
   return data.message.content.trim();
@@ -215,37 +195,23 @@ export async function reescreverComLLM(
 // Geração de Texto (LLM) — Modo STREAMING (SSE)
 // ---------------------------------------------------------------------------
 
-/**
- * Faz o streaming da resposta do LLM via Ollama diretamente para o cliente.
- *
- * Fluxo:
- *   1. Envia a requisição ao Ollama com stream: true
- *   2. Lê cada chunk NDJSON que chega do homelab
- *   3. Extrai o campo "message.content" de cada chunk
- *   4. Encaminha cada token para o Response do Express como SSE (data: ...)
- *   5. Envia "data: [DONE]" ao final para o frontend fechar a conexão
- *
- * @param mensagens - Array de mensagens (system prompt + user)
- * @param res       - Objeto Response do Express (já configurado com headers SSE)
- * @param fontes    - Fontes dos documentos recuperados (enviadas no primeiro evento)
- */
 export async function streamRespostaOllama(
   mensagens: OllamaChatMessage[],
   res: Response,
   fontes: string[]
 ): Promise<void> {
   const url = `${OLLAMA_BASE_URL}/api/chat`;
+  const mensagensSeguras = podarHistorico(mensagens);
 
-  // Envia as fontes como primeiro evento SSE para o frontend exibir
   res.write(`data: ${JSON.stringify({ type: "fontes", fontes })}\n\n`);
 
-  // Requisição ao Ollama com streaming habilitado
   const ollamaResponse = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     body: JSON.stringify({
       model: LLM_MODEL,
-      messages: mensagens,
+      messages: mensagensSeguras,
       stream: true,
       options: { num_ctx: NUM_CTX },
     }),
@@ -253,16 +219,13 @@ export async function streamRespostaOllama(
 
   if (!ollamaResponse.ok) {
     const errorText = await ollamaResponse.text();
-    throw new Error(
-      `[Ollama LLM Stream] Erro ${ollamaResponse.status}: ${errorText}`
-    );
+    throw new Error(`[Ollama LLM Stream] Erro ${ollamaResponse.status}: ${errorText}`);
   }
 
   if (!ollamaResponse.body) {
     throw new Error("[Ollama LLM Stream] Corpo da resposta vazio");
   }
 
-  // Lê o stream NDJSON do Ollama e encaminha cada token ao cliente
   const reader = ollamaResponse.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -272,12 +235,8 @@ export async function streamRespostaOllama(
       const { done, value } = await reader.read();
       if (done) break;
 
-      // Acumula dados no buffer (chunks podem vir parciais)
       buffer += decoder.decode(value, { stream: true });
-
-      // Processa cada linha NDJSON completa no buffer
       const lines = buffer.split("\n");
-      // A última "linha" pode estar incompleta, mantém no buffer
       buffer = lines.pop() || "";
 
       for (const line of lines) {
@@ -290,34 +249,24 @@ export async function streamRespostaOllama(
             done?: boolean;
           };
 
-          // Extrai o token de texto e envia via SSE
           if (chunk.message?.content) {
-            res.write(
-              `data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`
-            );
+            res.write(`data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`);
           }
 
-          // Quando o Ollama sinaliza que terminou
           if (chunk.done) {
             console.log("🤖 [Stream] Geração concluída pelo Ollama");
           }
         } catch {
-          // Ignora linhas que não são JSON válido (pode ser lixo do buffer)
+          // Ignora linhas inválidas
         }
       }
     }
 
-    // Processa resto do buffer se houver
     if (buffer.trim()) {
       try {
-        const chunk = JSON.parse(buffer.trim()) as {
-          message?: { content: string };
-          done?: boolean;
-        };
+        const chunk = JSON.parse(buffer.trim()) as { message?: { content: string } };
         if (chunk.message?.content) {
-          res.write(
-            `data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`
-          );
+          res.write(`data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`);
         }
       } catch {
         // Ignora
@@ -327,6 +276,5 @@ export async function streamRespostaOllama(
     reader.releaseLock();
   }
 
-  // Sinaliza fim do stream para o frontend
   res.write(`data: [DONE]\n\n`);
 }

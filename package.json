@@ -11,6 +11,8 @@
     "dev:api": "npm --prefix packages/api run dev"
   },
   "dependencies": {
+    "@langchain/textsplitters": "^1.0.1",
+    "@llamaindex/liteparse": "^2.0.7",
     "mammoth": "^1.12.0",
     "xlsx": "^0.18.5"
   }
