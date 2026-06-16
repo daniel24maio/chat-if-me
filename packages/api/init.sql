@@ -1,5 +1,5 @@
 -- ==========================================================================
--- Inicialização do banco de dados para o chatIFme
+-- Inicialização do banco de dados para o Chat Assistente Virtual IFMG
 -- Habilita pgvector, FTS com unaccent e cria a tabela de documentos.
 --
 -- Executar manualmente no PostgreSQL:

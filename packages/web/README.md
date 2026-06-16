@@ -1,4 +1,4 @@
-# chatIFme — Frontend Web 🎓💻
+# Chat Assistente Virtual IFMG — Frontend Web 🎓💻
 
 **Interface Web responsiva e dinâmica do assistente virtual acadêmico do IFMG Campus Ouro Branco.**
 

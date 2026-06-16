@@ -1,4 +1,4 @@
-# chatIFme 🎓🤖
+# Chat Assistente Virtual IFMG 🎓🤖
 
 **Assistente virtual inteligente do curso de Sistemas de Informação — IFMG Campus Ouro Branco.**
 

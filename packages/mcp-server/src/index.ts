@@ -4,7 +4,7 @@ import { z } from "zod";
 import pg from "pg";
 
 /**
- * Servidor MCP — chatIFme Knowledge Server
+ * Servidor MCP — Chat Assistente Virtual IFMG Knowledge Server
  *
  * Expõe o banco de dados PostgreSQL (pgvector) como uma ferramenta MCP
  * que pode ser invocada por qualquer cliente MCP (ex: o agente no Express).
