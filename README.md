@@ -42,16 +42,46 @@ Sistema **Agentic RAG** (Retrieval-Augmented Generation com agentes autônomos) 
 ### Duas abordagens de RAG (comparáveis no TCC)
 
 #### 📚 RAG Clássico (`/api/chat`)
+
 ```
 Pergunta → Query Rewriting → Busca Híbrida (pgvector + FTS via RRF) → LLM Streaming (SSE)
 ```
-Pipeline determinístico: toda pergunta passa por todas as etapas.
+
+Pipeline determinístico onde toda consulta segue um fluxo linear e estruturado em 5 etapas principais:
+
+1. **Etapa 0 — Query Rewriting & Roteamento de Intenção:**
+   - A pergunta original do aluno é processada por um LLM leve (utilizando o prompt de sistema `REWRITE_SYSTEM_PROMPT`).
+   - O LLM realiza a expansão automática de siglas acadêmicas do IFMG (como `TCC`, `PPC`, `CR`, `IRA`, `AC`, `DP`, etc.) e converte termos coloquiais em linguagem formal/acadêmica, alinhando a busca com o vocabulário oficial dos documentos.
+   - Adiciona uma **Tag de Intenção** à consulta: `[CURSO]`, `[DISCIPLINA]`, `[CONTEUDO]` ou `[OUTRAS]`.
+   - Se o processo falhar, o sistema aplica um fallback automático utilizando a pergunta original do aluno.
+
+2. **Etapa 1 — Vetorização (Embeddings):**
+   - A pergunta reescrita e expandida é convertida em um vetor numérico denso de **1024 dimensões** utilizando o modelo `bge-m3` via Ollama.
+
+3. **Etapa 2 — Busca Híbrida com Reciprocal Rank Fusion (RRF):**
+   - Para maximizar a precisão tanto em consultas conceituais (semânticas) quanto em buscas por termos exatos (léxicas), o sistema realiza duas buscas concorrentes no PostgreSQL:
+     - **Busca Vetorial (Semântica):** Usa a extensão `pgvector` com o operador de similaridade de cosseno (`<=>`), otimizado por índices HNSW.
+     - **Busca Lexical (FTS):** Usa o mecanismo de busca textual do PostgreSQL com indexação `tsvector` + filtro `portuguese_unaccent` e ordenação por relevância usando `ts_rank_cd`.
+   - **RRF (Reciprocal Rank Fusion):** Combina os resultados de ambas as buscas aplicando a fórmula matemática:
+     $$Score_{RRF} = \alpha \times \frac{1}{k + rank_{sem\hat{a}ntico}} + (1 - \alpha) \times \frac{1}{k + rank_{lexical}}$$
+     Configurado com $k = 60$ (constante de suavização) e $\alpha = 0.5$ (equilíbrio idêntico entre busca semântica e lexical). Os 5 melhores trechos resultantes são passados como contexto.
+
+4. **Etapa 3 — Montagem do Prompt RAG & Diretivas Anti-Alucinação:**
+   - O sistema constrói o prompt final de sistema inserindo os trechos de documentos retornados na busca híbrida e a tag de intenção classificada.
+   - Aplica regras estritas de segurança (*guardrails*): o LLM é instruído a responder exclusivamente com base no contexto, não inventar informações acadêmicas, citar as fontes (arquivos de origem) e responder obrigatoriamente em português do Brasil (`pt-BR`).
+   - A pergunta final submetida ao chat é a **pergunta original** enviada pelo usuário, enquanto o contexto e a tag de intenção derivam da versão reescrita, preservando a naturalidade da conversa.
+
+5. **Etapa 4 — LLM Streaming (SSE) & Métricas de Desempenho:**
+   - Realiza o streaming da resposta gerada pelo LLM token a token para o frontend via Server-Sent Events (SSE).
+   - No encerramento da transmissão, envia um objeto com as métricas detalhadas de latência de cada fase em milissegundos (`rewrite`, `embedding`, `retrieval`, `generation` e `total`).
 
 #### 🤖 Agentic RAG com MCP (`/api/agent`)
+
 ```
 Pergunta → Ollama (com tools[]) → tool_calls? → MCP callTool → LLM Streaming (SSE)
 ```
-O LLM decide **autonomamente** se precisa buscar nos documentos (via Tool Calling).
+
+O LLM decide **autonomamente** se precisa buscar nos documentos (via Tool Calling) utilizando o protocolo MCP.
 
 ---
 
