@@ -81,7 +81,30 @@ Pipeline determinístico onde toda consulta segue um fluxo linear e estruturado 
 Pergunta → Ollama (com tools[]) → tool_calls? → MCP callTool → LLM Streaming (SSE)
 ```
 
-O LLM decide **autonomamente** se precisa buscar nos documentos (via Tool Calling) utilizando o protocolo MCP.
+> [!WARNING]
+> **Status de Desempenho:** Os resultados desta abordagem de RAG Agêntico no momento **não estão totalmente satisfatórios**. Por utilizar localmente o modelo `qwen3.5:4b`, a capacidade cognitiva de Tool Calling de múltiplos passos e o respeito a instruções sob janelas de contexto saturadas são limitados, gerando falhas eventuais na chamada das ferramentas, estouro de contexto e descumprimento de formatação. O RAG Clássico se mostra muito mais consistente no cenário atual.
+
+Nessa arquitetura agêntica baseada no protocolo MCP (**Model Context Protocol**), o fluxo funciona em 4 etapas principais:
+
+1. **Inicialização do MCP Client & Server (Subprocesso Stdio):**
+   - Na subida do servidor Express, o backend inicializa o `mcpClient` e estabelece um canal de comunicação (`StdioClientTransport`) com o servidor MCP (`packages/mcp-server/dist/index.js`), que é executado como um subprocesso em background do Node.js.
+   - O client executa `listTools()` para descobrir dinamicamente as ferramentas exportadas pelo servidor e as traduz para a especificação de *Function Calling* (`tools[]`) esperada pela API de Chat do Ollama.
+
+2. **Passo 1 — Primeira Chamada (Decisão e Tool Calling):**
+   - O Express envia a pergunta original do aluno para o Ollama com a lista de ferramentas declaradas (sem streaming).
+   - O LLM analisa o prompt e decide de forma autônoma se precisa executar uma busca nos documentos. 
+     - Para saudações e interações simples, ele gera uma resposta direta e encerra o pipeline.
+     - Para perguntas acadêmicas, ele gera um objeto `tool_calls` solicitando a invocação da ferramenta `search_ifmg_knowledge`. Ele deve obrigatoriamente preencher dois parâmetros: `query` (termos chaves/nomes próprios limpos e com siglas expandidas) e `intent` (uma das 10 categorias de intenção acadêmica).
+
+3. **Passo 2 — Execução da Tool via Servidor MCP:**
+   - O backend captura a requisição de Tool Calling do Ollama e executa a ferramenta localmente via protocolo chamando `mcpClient.callTool`.
+   - Dentro do MCP Server, é executada uma busca híbrida no PostgreSQL associando `pgvector` HNSW (similaridade de cosseno com peso $\alpha = 0.4$) e Full-Text Search com `tsvector` + `portuguese_unaccent`.
+   - **Filtro de Lixo Semântico:** Diferente do RAG clássico, o servidor MCP aplica uma nota de corte estrita **`MIN_RRF_SCORE = 0.002`** para descartar trechos irrelevantes de baixo ranking, retornando até 10 resultados para o agente.
+
+4. **Passo 3 — Segunda Chamada & Geração Final:**
+   - O backend anexa os trechos retornados pela busca ao histórico de mensagens na conversa com a role `tool` e envia o histórico completo de volta ao Ollama.
+   - É injetado um prompt de sistema final para reforçar as regras do idioma e a proibição de responder com base em conhecimento externo.
+   - O Ollama processa as mensagens sob uma janela de contexto restrita a **2048 tokens** (`num_ctx: 2048`) para economizar VRAM e gera a resposta em streaming SSE direta para o frontend.
 
 ---
 
