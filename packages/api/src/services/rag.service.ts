@@ -167,12 +167,12 @@ const RRF_ALPHA = 0.5;
  *
  * @param embedding  - Vetor da pergunta (para busca semântica)
  * @param queryTexto - Texto da pergunta (para Full-Text Search)
- * @param limite     - Número máximo de resultados (default: 5)
+ * @param limite     - Número máximo de resultados (default: 3)
  */
 async function buscarHibrido(
   embedding: number[],
   queryTexto: string,
-  limite: number = 5
+  limite: number = 3
 ): Promise<DocumentoRecuperado[]> {
   console.log(
     `🔍 [RAG] Busca híbrida: vetorial (α=${RRF_ALPHA}) + FTS (1-α=${1 - RRF_ALPHA}), k=${RRF_K}`

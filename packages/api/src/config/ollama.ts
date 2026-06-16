@@ -145,10 +145,15 @@ export async function gerarRespostaOllama(mensagens: OllamaChatMessage[]): Promi
     throw new Error(`[Ollama LLM] Erro ${response.status}: ${errorText}`);
   }
 
-  const data = (await response.json()) as { message?: { content: string } };
+  const data = (await response.json()) as { message?: { content: string }; error?: string };
 
-  if (!data.message?.content) {
-    throw new Error("[Ollama LLM] Resposta inválida — campo 'message.content' ausente");
+  if (data.error) {
+    throw new Error(`[Ollama LLM] Erro do Ollama: ${data.error}`);
+  }
+
+  if (!data.message || typeof data.message.content !== "string") {
+    console.error("❌ [Ollama LLM] Resposta inválida:", JSON.stringify(data));
+    throw new Error("[Ollama LLM] Resposta inválida — campo 'message.content' ausente ou inválido");
   }
 
   return data.message.content;
@@ -186,10 +191,15 @@ export async function reescreverComLLM(systemPrompt: string, pergunta: string): 
     throw new Error(`[Ollama Rewrite] Erro ${response.status}: ${errorText}`);
   }
 
-  const data = (await response.json()) as { message?: { content: string } };
+  const data = (await response.json()) as { message?: { content: string }; error?: string };
 
-  if (!data.message?.content) {
-    throw new Error("[Ollama Rewrite] Resposta inválida — campo 'message.content' ausente");
+  if (data.error) {
+    throw new Error(`[Ollama Rewrite] Erro do Ollama: ${data.error}`);
+  }
+
+  if (!data.message || typeof data.message.content !== "string") {
+    console.error("❌ [Ollama Rewrite] Resposta inválida:", JSON.stringify(data));
+    throw new Error("[Ollama Rewrite] Resposta inválida — campo 'message.content' ausente ou inválido");
   }
 
   return data.message.content.trim();
@@ -252,8 +262,13 @@ export async function streamRespostaOllama(
         try {
           const chunk = JSON.parse(trimmed) as {
             message?: { content: string };
+            error?: string;
             done?: boolean;
           };
+
+          if (chunk.error) {
+            console.error("❌ [Ollama LLM Stream] Erro retornado no chunk:", chunk.error);
+          }
 
           if (chunk.message?.content) {
             gerouTokens = true;
