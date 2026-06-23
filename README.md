@@ -106,6 +106,130 @@ Nessa arquitetura agêntica baseada no protocolo MCP (**Model Context Protocol**
    - É injetado um prompt de sistema final para reforçar as regras do idioma e a proibição de responder com base em conhecimento externo.
    - O Ollama processa as mensagens sob uma janela de contexto restrita a **2048 tokens** (`num_ctx: 2048`) para economizar VRAM e gera a resposta em streaming SSE direta para o frontend.
 
+### 🗄️ Modelagem do Banco de Dados
+
+A persistência de dados e a busca híbrida são viabilizadas pelo PostgreSQL com a extensão `pgvector`. A estrutura física da tabela principal e de seus índices está modelada da seguinte forma:
+
+```sql
+CREATE TABLE IF NOT EXISTS documents (
+  id SERIAL PRIMARY KEY,
+  content TEXT NOT NULL,                     -- Conteúdo bruto do chunk
+  metadata JSONB NOT NULL DEFAULT '{}',      -- Metadados (arquivo, página, tipo de chunking)
+  embedding vector(1024) NOT NULL,           -- Vetor denso (bge-m3: 1024 dimensões)
+  content_tsv tsvector GENERATED ALWAYS AS ( -- Vetor esparso de FTS unaccent
+    to_tsvector('portuguese_unaccent', content)
+  ) STORED,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+```
+
+#### Estrutura de Índices Físicos
+Para garantir buscas rápidas em tempo real (< 100ms) sob cargas de dados acadêmicos:
+1. **Índice HNSW (`idx_documents_embedding`):** Configurado com similaridade de cosseno (`vector_cosine_ops`) e parâmetros `m = 16` e `ef_construction = 200`. O HNSW (Hierarchical Navigable Small World) foi preferido em relação ao IVFFlat por oferecer maior precisão e latência reduzida para coleções de dados dinâmicos de médio porte.
+2. **Índice GIN FTS (`idx_documents_fts`):** Construído sobre a coluna calculada `content_tsv` para acelerar pesquisas de palavras-chave exatas.
+3. **Índice GIN JSONB (`idx_documents_metadata`):** Indexa o campo `metadata` para permitir filtros instantâneos por nome de arquivo ou tipo de documento.
+
+---
+
+### 📝 Engenharia de Prompts (Prompt Engineering)
+
+O comportamento dos modelos de linguagem locais é guiado por três prompts de sistema principais, detalhados a seguir:
+
+#### 1. Query Rewriting (`REWRITE_SYSTEM_PROMPT`)
+Utilizado para expandir siglas acadêmicas do IFMG e categorizar a intenção do usuário antes de realizar a busca híbrida:
+```text
+Você é um assistente de pré-processamento de consultas para um sistema de busca de documentos acadêmicos do IFMG (Instituto Federal de Minas Gerais), Campus Ouro Branco.
+
+Sua tarefa: reescrever a pergunta do usuário para melhorar a busca semântica em documentos acadêmicos.
+
+REGRAS:
+1. Classifique a intenção da pergunta e inicie a resposta com uma Tag de Intenção:
+   - [CURSO]: Dúvidas sobre o projeto pedagógico, regras gerais, estágios, TCC.
+   - [DISCIPLINA]: Dúvidas sobre nomes de matérias, códigos, carga horária, pré-requisitos.
+   - [CONTEUDO]: Dúvidas específicas sobre a ementa ou tópicos ensinados dentro de uma disciplina.
+   - [OUTRAS]: Dúvidas administrativas, infraestrutura do campus, portarias, calendário.
+2. Expanda TODAS as siglas acadêmicas:
+   - TCC → Trabalho de Conclusão de Curso
+   - PPC → Projeto Pedagógico do Curso
+   - CR → Coeficiente de Rendimento
+   - ENADE → Exame Nacional de Desempenho de Estudantes
+   - TI → Tecnologia da Informação
+   - SI → Sistemas de Informação
+   - IFMG → Instituto Federal de Minas Gerais
+   - NDE → Núcleo Docente Estruturante
+   - CEAD → Centro de Educação Aberta e a Distância
+   - IRA → Índice de Rendimento Acadêmico
+   - AC → Atividades Complementares
+   - DP → Dependência (disciplina em dependência)
+3. Transforme linguagem coloquial em linguagem formal/acadêmica.
+4. Adicione contexto implícito quando cabível (ex: "reprovar" → "critérios de reprovação").
+5. Mantenha o sentido original da pergunta.
+6. Responda APENAS com a Tag de Intenção seguida da pergunta reescrita, sem aspas. Exemplo: "[DISCIPLINA] qual é a carga horária de cálculo 1?"
+```
+
+#### 2. Prompt do RAG Clássico
+Montado dinamicamente incluindo os trechos de documentos retornados na busca híbrida e a tag de intenção classificada:
+```text
+Você é o assistente virtual oficial do IFMG Campus Ouro Branco.
+
+Sua função é responder dúvidas dos alunos sobre regulamentos, PPC (Projeto Pedagógico do Curso), grade curricular, normas acadêmicas e informações do campus.
+
+INTENÇÃO DA PERGUNTA: [{intencao}] (Foque a sua resposta no contexto dessa intenção).
+
+CONTEXTO (trechos dos documentos oficiais do curso):
+{contexto}
+
+REGRAS OBRIGATÓRIAS (siga rigorosamente):
+1. Use EXCLUSIVAMENTE as informações do CONTEXTO acima.
+2. NÃO invente, suponha ou complemente com conhecimento externo.
+3. Se a resposta não estiver nos trechos, diga: "Não encontrei essa informação nos documentos disponíveis. Recomendo consultar a coordenação do curso ou acessar o portal do IFMG."
+4. Cite a fonte (nome do documento) quando possível.
+
+DIRETIVAS OBRIGATÓRIAS DE IDIOMA E FORMATAÇÃO:
+- REGRA ABSOLUTA: Você deve responder EXCLUSIVAMENTE em Português do Brasil (pt-BR). Traduza qualquer termo do contexto que esteja em inglês. É proibido responder em inglês ou qualquer outro idioma.
+- Seja direto, cordial e acadêmico.
+- Use '### ' para subtítulos.
+- Use bullet points ('* ') para listar disciplinas, cargas horárias ou tópicos.
+- Use **negrito** para destacar termos e números importantes.
+```
+
+#### 3. Prompt do Agente MCP (`AGENT_SYSTEM_PROMPT`)
+Injeta instruções de tool calling para guiar o agente na busca de conhecimento usando o protocolo MCP:
+```text
+Você é o assistente virtual oficial do IFMG Campus Ouro Branco.
+
+Você tem acesso a uma ferramenta de busca nos documentos oficiais (cursos, PPC, regulamentos, portarias, ementas). USE ESTA FERRAMENTA para responder perguntas sobre regulamentos acadêmicos, PPC, grade curricular, TCC, estágio, atividades complementares e normas gerais do campus.
+
+REGRAS OBRIGATÓRIAS:
+1. SEMPRE use a ferramenta search_ifmg_knowledge antes de responder perguntas acadêmicas ou sobre normas do campus.
+2. Ao gerar o parâmetro 'query' na ferramenta de busca:
+   - Extraia APENAS palavras-chave principais e nomes próprios (proibido usar frases completas, pronomes ou conectivos).
+   - SEMPRE EXPANDA SIGLAS acadêmicas (ex: TCC -> Trabalho de Conclusão de Curso, PPC -> Projeto Pedagógico do Curso, AC -> Atividades Complementares, IRA -> Índice de Rendimento Acadêmico).
+3. Ao gerar o parâmetro 'intent', classifique a intenção estritamente em uma destas 10 categorias:
+   - INGRESSO_MATRICULA: Vestibular, SISU, transferências, trancamento, renovação de matrícula.
+   - ESTRUTURA_CURSOS: Matriz curricular, PPC, duração de cursos, regras gerais dos cursos do campus.
+   - DISCIPLINA_EMENTA: Carga horária específica, pré-requisitos, conteúdo programático, ementas, bibliografia.
+   - AVALIACAO_FREQUENCIA: Pontuação, provas, aprovação, limite de faltas (25%), abono/atestados.
+   - TCC: Regras, documentação, orientadores e bancas de Trabalho de Conclusão de Curso.
+   - ATIVIDADES_EXTRAS: Horas complementares (AAC), pesquisa, extensão, monitoria.
+   - ASSISTENCIA_BOLSAS: Assistência estudantil, auxílios (moradia, transporte), bolsas de estudo.
+   - INFRA_CAMPUS: Biblioteca, laboratórios, restaurante, horários de funcionamento, setores administrativos.
+   - DIREITOS_DEVERES: Regime disciplinar, deveres dos alunos, penalidades, direitos discentes.
+   - OUTRAS: Para qualquer outro assunto acadêmico ou geral.
+4. Use EXCLUSIVAMENTE as informações retornadas pela ferramenta. Não invente ou complemente com conhecimento externo.
+5. Filtre estritamente os resultados: IGNORE e não cite disciplinas, ementas, ou dados secundários contidos nos trechos de contexto que não sejam o foco direto da dúvida do usuário.
+6. Se a ferramenta não retornar resultados relevantes, diga: "Não encontrei essa informação nos documentos disponíveis. Recomendo consultar a coordenação do seu curso ou o setor correspondente do IFMG."
+7. Cite a fonte (nome do documento) quando possível.
+8. Para saudações simples (olá, bom dia), responda diretamente sem usar a ferramenta.
+
+DIRETIVAS DE IDIOMA E FORMATAÇÃO:
+- REGRA ABSOLUTA: Responda EXCLUSIVAMENTE em Português do Brasil (pt-BR).
+- Seja direto, cordial e acadêmico.
+- Use '### ' para subtítulos.
+- Use bullet points ('* ') para listas.
+- Use **negrito** para destacar termos importantes.
+```
+
 ---
 
 ## 📊 Distribuição de VRAM
@@ -136,7 +260,15 @@ Nessa arquitetura agêntica baseada no protocolo MCP (**Model Context Protocol**
 ### Ingestão de Documentos (Admin)
 - 📄 Upload de PDF, Word (.docx), Planilhas/Excel (.xlsx, .csv), Markdown (.md), Imagens e TXT via drag-and-drop (`/embedding`)
 - 📊 **Extração e Conversão**: Extração de PDFs preservando a estrutura semântica/markdown gerada por IA espacial via `@llamaindex/liteparse` e conversão nativa de planilhas para `Markdown Tables`.
-- 🧹 **Serviço de Sanitização Dedicado**: Remoção de cabeçalhos institucionais do IFMG, poda de anexos/formulários, limpeza de OCR e preparação de quebras jurídicas.
+- 🧹 **Serviço de Sanitização Dedicado**: Limpeza e normalização do texto bruto extraído (implementado em `sanitization.service.ts`), executado em 8 etapas sequenciais:
+  1. **Limpeza de OCR**: Remoção de caracteres de controle inválidos, marcação de ordem de byte (BOM) e artefatos de OCR do Tesseract.
+  2. **Reconstituição Hifenizada**: Junção inteligente de palavras que foram cortadas com hífen na transição de linhas de PDFs.
+  3. **Remoção de Elementos Institucionais**: Filtros baseados em expressões regulares para descartar termos repetitivos como "SERVIÇO PÚBLICO FEDERAL", "MINISTÉRIO DA EDUCAÇÃO", "IFMG Campus Ouro Branco", além de e-mails, endereços e telefones institucionais.
+  4. **Poda de Anexos**: Truncamento automático do arquivo ao encontrar expressões de início de anexos ou apêndices (ex: `ANEXO I` no início de linhas), eliminando trechos de formulários em branco que causariam ruído na busca.
+  5. **Conversão de Tabelas Markdown**: Normalização de tabelas com pipes (`|`) para linhas de texto corrido, garantindo que códigos e nomes de disciplinas fiquem no mesmo espaço semântico contíguo.
+  6. **Limpeza Estrutural**: Remoção de pilcrows (`¶`, `§`), números de página isolados e pontuações repetidas (decorativas).
+  7. **Preparação para Chunking Jurídico**: Eliminação de quebras simples de linha que cortam frases ao meio e inserção de quebras duplas (`\n\n`) antes de marcadores de seções (`Art.`, `CAPÍTULO`, `Seção`).
+  8. **Normalização Final**: Consolidação de múltiplos espaços em branco e remoção de linhas vazias ou muito curtas (ruído).
 - 👁️ **OCR Nativo**: Leitura automática de imagens e PDFs escaneados via `tesseract.js`
 - ✂️ **Chunking Semântico Adaptativo** — roteamento automático por tipo de conteúdo:
   - **Jurídico**: Quebra por `Art.` / `CAPÍTULO` / `TÍTULO` / `Seção` — preserva artigo + incisos + parágrafos como unidade atômica
@@ -153,7 +285,10 @@ Nessa arquitetura agêntica baseada no protocolo MCP (**Model Context Protocol**
 - 🤖 **Agentic RAG (MCP)** — LLM decide autonomamente quando buscar via Tool Calling (agora com suporte à classificação de intenção no prompt).
 - 🔀 **Busca Híbrida (RRF)** — combina busca semântica (`pgvector` HNSW) com busca léxica por palavras-chave (`tsvector` + `portuguese_unaccent`) usando Reciprocal Rank Fusion.
 - 🔐 **Segurança**: Rate limiting (20 req/min chat, 5 req/min upload), autenticação admin via `X-API-Key`, validação de MIME/extensão no upload, CORS restrito.
-- 🚦 **Controle de Concorrência**: Semáforo BullMQ para serializar requests ao Ollama e evitar OOM na GPU.
+- 🚦 **Controle de Concorrência (Semáforo de VRAM)**: Mecanismo de controle de concorrência ativa (implementado em `queue.service.ts`) para limitar o número de inferências paralelas enviadas à GPU local:
+  - **Funcionamento**: Utiliza uma lógica de semáforo de *acquire/release* encapsulada na função `comControleDeConcorrencia()`.
+  - **Limite Concorrente**: Parametrizado por `OLLAMA_MAX_CONCURRENT` (padrão = 2). Se o limite for atingido, novas conexões SSE entram em uma fila de espera em memória com timeout estrito de 120 segundos.
+  - **Evita OOM (Out of Memory)**: Garante estabilidade física da GPU em servidores locais ou homelabs, prevenindo crashes do daemon do Ollama sob múltiplos acessos simultâneos de alunos.
 - 🛡️ System Prompt rigoroso anti-alucinação focado na intenção detectada.
 - 💚 Health check expandido (`/api/health`) com status de DB, Ollama, Redis, fila e memória.
 - ⏱️ Métricas de timing por etapa do pipeline RAG enviadas via SSE.
