@@ -189,7 +189,7 @@ const ChatInterface: React.FC = () => {
                   timestamp: new Date(),
                 },
                 {
-                  id: Date.now().toString(),
+                  id: 'expiration',
                   text: '⏰ Sua sessão anterior expirou por inatividade. Uma nova conversa foi iniciada.',
                   sender: 'ai',
                   timestamp: new Date(),
@@ -291,14 +291,14 @@ const ChatInterface: React.FC = () => {
 
     // Tenta obter a pergunta correspondente (mensagem anterior no histórico)
     const msgIdx = messages.findIndex((m) => m.id === messageId);
-    let pergunta = '';
-    let resposta = '';
+    let question = '';
+    let response = '';
 
     if (msgIdx !== -1) {
-      resposta = messages[msgIdx].text;
+      response = messages[msgIdx].text;
       const prevMsg = messages[msgIdx - 1];
       if (prevMsg && prevMsg.sender === 'user') {
-        pergunta = prevMsg.text;
+        question = prevMsg.text;
       }
     }
 
@@ -310,8 +310,8 @@ const ChatInterface: React.FC = () => {
           sessionId,
           messageId,
           feedback: feedbackType,
-          pergunta,
-          resposta,
+          question,
+          response,
         }),
       });
     } catch (error) {
@@ -362,25 +362,27 @@ const ChatInterface: React.FC = () => {
             </div>
 
             {/* Meta-informações da resposta (Feedback e Fontes) */}
-            {msg.sender === 'ai' && !msg.isStreaming && (
+            {msg.sender === 'ai' && !msg.isStreaming && (msg.id !== '1' && msg.id !== 'expiration' || (msg.fontes && msg.fontes.length > 0)) && (
               <div className="message-meta">
-                <div className="message-feedback">
-                  <span className="feedback-question">Esta resposta foi útil?</span>
-                  <button
-                    onClick={() => handleFeedback(msg.id, 'up')}
-                    className={`feedback-btn feedback-up ${msg.feedback === 'up' ? 'active' : ''}`}
-                    title="Ajudou"
-                  >
-                    👍
-                  </button>
-                  <button
-                    onClick={() => handleFeedback(msg.id, 'down')}
-                    className={`feedback-btn feedback-down ${msg.feedback === 'down' ? 'active-down' : ''}`}
-                    title="Não ajudou"
-                  >
-                    👎
-                  </button>
-                </div>
+                {msg.id !== '1' && msg.id !== 'expiration' && (
+                  <div className="message-feedback">
+                    <span className="feedback-question">Esta resposta foi útil?</span>
+                    <button
+                      onClick={() => handleFeedback(msg.id, 'up')}
+                      className={`feedback-btn feedback-up ${msg.feedback === 'up' ? 'active' : ''}`}
+                      title="Ajudou"
+                    >
+                      👍
+                    </button>
+                    <button
+                      onClick={() => handleFeedback(msg.id, 'down')}
+                      className={`feedback-btn feedback-down ${msg.feedback === 'down' ? 'active-down' : ''}`}
+                      title="Não ajudou"
+                    >
+                      👎
+                    </button>
+                  </div>
+                )}
 
                 {msg.fontes && msg.fontes.length > 0 && (
                   <div className="message-fontes-inline">

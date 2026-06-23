@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { enviarPergunta, registrarFeedback } from "../controllers/chat.controller.js";
+import { enviarPergunta, registerFeedback } from "../controllers/chat.controller.js";
 
 /**
  * Rotas do módulo de chat.
@@ -23,6 +23,6 @@ chatRouter.post("/", enviarPergunta);
  * POST /api/chat/feedback
  * Registra o feedback (👍 ou 👎) para uma resposta do assistente.
  */
-chatRouter.post("/feedback", registrarFeedback);
+chatRouter.post("/feedback", registerFeedback);
 
 export { chatRouter };

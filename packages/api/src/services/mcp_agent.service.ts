@@ -10,8 +10,8 @@ import {
   resolverReferencias,
 } from "./memory.service.js";
 import {
-  detectarBypassSaudacao,
-  SAUDACAO_SYSTEM_PROMPT,
+  detectGreetingBypass,
+  GREETING_SYSTEM_PROMPT,
 } from "./fast_path.util.js";
 import { streamRespostaOllama, type OllamaChatMessage } from "../config/ollama.js";
 
@@ -231,19 +231,19 @@ export async function processarPerguntaAgente(
   res.write(`data: ${JSON.stringify({ type: "status", status: "Analisando pergunta..." })}\n\n`);
 
   // 1. Verificação local fast-path para saudações
-  if (detectarBypassSaudacao(perguntaContextualizada)) {
+  if (detectGreetingBypass(perguntaContextualizada)) {
     console.log(`🚀 [Agente] Fast-path ativado: saudação detectada localmente.`);
     res.write(`data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}\n\n`);
 
     const mensagens: OllamaChatMessage[] = [
-      { role: "system", content: SAUDACAO_SYSTEM_PROMPT },
+      { role: "system", content: GREETING_SYSTEM_PROMPT },
       { role: "user", content: pergunta },
     ];
 
     await streamRespostaOllama(mensagens, res, []);
 
     if (session) {
-      updateSession(session.sessionId, pergunta, "", "");
+      updateSession(session.sessionId, pergunta, "GREETING", "");
     }
 
     const duracao = ((Date.now() - inicio) / 1000).toFixed(1);

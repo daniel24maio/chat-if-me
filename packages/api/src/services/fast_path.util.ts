@@ -7,10 +7,10 @@
 /**
  * Classifica localmente se uma pergunta é uma saudação ou pedido de ajuda geral.
  *
- * @param pergunta Pergunta original ou contextualizada
+ * @param question Pergunta original ou contextualizada
  */
-export function detectarBypassSaudacao(pergunta: string): boolean {
-  const perguntaLimpa = pergunta
+export function detectGreetingBypass(question: string): boolean {
+  const cleanedQuestion = question
     .trim()
     .toLowerCase()
     .normalize("NFD")
@@ -18,16 +18,16 @@ export function detectarBypassSaudacao(pergunta: string): boolean {
     .replace(/[^\w\s]/gi, ""); // Remove pontuação
 
   // Saudações básicas de uma palavra ou expressões fixas comuns
-  const saudacoesEstritas = [
+  const strictGreetings = [
     "ola", "oi", "bom dia", "boa tarde", "boa noite", "ola ola", "oi oi", 
     "eae", "e ai", "hello", "hi", "hey", "ola assistente"
   ];
-  if (saudacoesEstritas.includes(perguntaLimpa)) {
+  if (strictGreetings.includes(cleanedQuestion)) {
     return true;
   }
 
   // Perguntas sobre funções, capacidades ou identidade do robô
-  const padroesFuncionalidade = [
+  const functionalityPatterns = [
     /como (voce )?pode me ajudar/i,
     /qual (e )?sua funcao/i,
     /o que (voce )?pode fazer/i,
@@ -40,8 +40,8 @@ export function detectarBypassSaudacao(pergunta: string): boolean {
     /como funciona/i
   ];
 
-  for (const regex of padroesFuncionalidade) {
-    if (regex.test(perguntaLimpa)) {
+  for (const regex of functionalityPatterns) {
+    if (regex.test(cleanedQuestion)) {
       return true;
     }
   }
@@ -53,7 +53,7 @@ export function detectarBypassSaudacao(pergunta: string): boolean {
  * Prompt do sistema especializado em saudações e apresentação.
  * É usado como System Prompt quando o pipeline pula a busca de documentos.
  */
-export const SAUDACAO_SYSTEM_PROMPT = `Você é o assistente virtual oficial do IFMG Campus Ouro Branco.
+export const GREETING_SYSTEM_PROMPT = `Você é o assistente virtual oficial do IFMG Campus Ouro Branco.
 Responda de forma amigável à saudação do usuário ou explique suas funções.
 Seja cordial, educado e explique sucintamente que você ajuda os alunos com informações acadêmicas, regulamentos do curso, Projeto Pedagógico do Curso (PPC), grade curricular e normas do campus.
 Diga que o usuário pode fazer perguntas sobre esses tópicos.

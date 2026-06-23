@@ -113,14 +113,14 @@ export async function enviarPergunta(
  * Registra o feedback do usuário sobre a resposta gerada pelo assistente.
  *
  * Endpoint: POST /api/chat/feedback
- * Body esperado: { "sessionId": "string", "messageId": "string", "feedback": "up" | "down", "pergunta": "string", "resposta": "string" }
+ * Body esperado: { "sessionId": "string", "messageId": "string", "feedback": "up" | "down", "question": "string", "response": "string" }
  */
-export async function registrarFeedback(
+export async function registerFeedback(
   req: Request,
   res: Response
 ): Promise<void> {
   try {
-    const { sessionId, messageId, feedback, pergunta, resposta } = req.body;
+    const { sessionId, messageId, feedback, question, response } = req.body;
 
     // Validação básica do feedback
     if (!feedback || (feedback !== "up" && feedback !== "down")) {
@@ -134,8 +134,8 @@ export async function registrarFeedback(
     console.log(`   Sessão: ${sessionId || "N/A"}`);
     console.log(`   ID Mensagem: ${messageId || "N/A"}`);
     console.log(`   Voto: ${feedback === "up" ? "👍 Útil" : "👎 Não Útil"}`);
-    if (pergunta) console.log(`   Pergunta: "${pergunta}"`);
-    if (resposta) console.log(`   Resposta: "${resposta.substring(0, 150)}..."`);
+    if (question) console.log(`   Pergunta: "${question}"`);
+    if (response) console.log(`   Resposta: "${response.substring(0, 150)}..."`);
     console.log(`${"─".repeat(40)}`);
 
     res.status(200).json({ sucesso: true });

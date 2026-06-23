@@ -14,8 +14,8 @@ import {
   resolverReferencias,
 } from "./memory.service.js";
 import {
-  detectarBypassSaudacao,
-  SAUDACAO_SYSTEM_PROMPT,
+  detectGreetingBypass,
+  GREETING_SYSTEM_PROMPT,
 } from "./fast_path.util.js";
 
 /**
@@ -66,7 +66,7 @@ REGRAS:
    - [CURSO]: Dúvidas sobre o projeto pedagógico, regras gerais, estágios, TCC.
    - [DISCIPLINA]: Dúvidas sobre nomes de matérias, códigos, carga horária, pré-requisitos.
    - [CONTEUDO]: Dúvidas específicas sobre a ementa ou tópicos ensinados dentro de uma disciplina.
-   - [SAUDACAO]: Cumprimentos, saudações gerais (ex: "Olá", "bom dia") ou perguntas gerais sobre quem é o assistente/o que ele faz.
+   - [GREETING]: Cumprimentos, saudações gerais (ex: "Olá", "bom dia") ou perguntas gerais sobre quem é o assistente/o que ele faz.
    - [OUTRAS]: Dúvidas administrativas, infraestrutura do campus, portarias, calendário.
 2. Expanda TODAS as siglas acadêmicas:
    - TCC → Trabalho de Conclusão de Curso
@@ -356,12 +356,12 @@ export async function processarPerguntaStream(
   const inicio = Date.now();
 
   // 1. Verificação local fast-path para saudações
-  if (detectarBypassSaudacao(perguntaContextualizada)) {
+  if (detectGreetingBypass(perguntaContextualizada)) {
     console.log(`🚀 [RAG] Fast-path ativado: saudação detectada localmente.`);
     res.write(`data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}\n\n`);
 
     const mensagens = [
-      { role: "system", content: SAUDACAO_SYSTEM_PROMPT },
+      { role: "system", content: GREETING_SYSTEM_PROMPT },
       { role: "user", content: pergunta },
     ] as OllamaChatMessage[];
 
@@ -373,7 +373,7 @@ export async function processarPerguntaStream(
     res.write(`data: ${JSON.stringify({ type: "metrics", timings: { rewrite: 0, embedding: 0, retrieval: 0, generation: generationMs, total: totalMs } })}\n\n`);
 
     if (session) {
-      updateSession(session.sessionId, pergunta, "SAUDACAO", "");
+      updateSession(session.sessionId, pergunta, "GREETING", "");
     }
 
     console.log(`⏱️  [RAG] Fast-path concluído em ${(totalMs / 1000).toFixed(1)}s (sem busca)\n`);
@@ -386,12 +386,12 @@ export async function processarPerguntaStream(
   const rewriteMs = Date.now() - t0;
 
   // 2. Verificação pós-reescrita para saudações classificadas pelo LLM
-  if (intencao === "SAUDACAO" || intencao === "SAUDAÇÃO") {
-    console.log(`🚀 [RAG] Fast-path ativado: reescrevedor classificou como SAUDACAO.`);
+  if (intencao === "GREETING") {
+    console.log(`🚀 [RAG] Fast-path ativado: reescrevedor classificou como GREETING.`);
     res.write(`data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}\n\n`);
 
     const mensagens = [
-      { role: "system", content: SAUDACAO_SYSTEM_PROMPT },
+      { role: "system", content: GREETING_SYSTEM_PROMPT },
       { role: "user", content: pergunta },
     ] as OllamaChatMessage[];
 
@@ -403,7 +403,7 @@ export async function processarPerguntaStream(
     res.write(`data: ${JSON.stringify({ type: "metrics", timings: { rewrite: rewriteMs, embedding: 0, retrieval: 0, generation: generationMs, total: totalMs } })}\n\n`);
 
     if (session) {
-      updateSession(session.sessionId, pergunta, "SAUDACAO", "");
+      updateSession(session.sessionId, pergunta, "GREETING", "");
     }
 
     console.log(`⏱️  [RAG] Fast-path LLM concluído em ${(totalMs / 1000).toFixed(1)}s (sem busca)\n`);
