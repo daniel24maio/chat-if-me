@@ -250,8 +250,12 @@ DIRETIVAS DE IDIOMA E FORMATAÇÃO:
 ### Chat (Frontend)
 - 💬 Interface de chat com identidade visual IFMG (verde `#2F9E41` / vermelho `#CD191E`)
 - ⚡ **Streaming de respostas** via Server-Sent Events (SSE) — token a token
+- 🧠 **Memória de Sessão em RAM** — Mantém o contexto de diálogo e resolve pronomes/referências anafóricas entre perguntas seguidas.
+- ⏰ **Notificação de Inatividade** — Encerramento automático de contexto com aviso de tela após 5 minutos de inatividade e reset automático.
+- 💬 **Status Dinâmicos em Tempo Real** — Exibe o status dinâmico do pipeline ("Analisando pergunta...", "Buscando nos documentos...", "Preparando resposta...") na bolha de digitação.
+- 👍/👎 **Feedback de Respostas** — Botões interativos de feedback integrados com o servidor (ocultados na mensagem inicial e avisos do sistema).
 - 📚 Exibição das fontes documentais utilizadas na resposta
-- ⏱️ Métricas de timing por etapa do pipeline (rewrite, embedding, retrieval, generation)
+- ⏱️ Métricas de timing por etapa do pipeline RAG (rewrite, embedding, retrieval, generation)
 - 🌙 Dark mode automático (segue preferência do sistema)
 - 📱 Layout responsivo (mobile e desktop)
 - 🔄 Auto-scroll suave durante streaming
@@ -281,9 +285,12 @@ DIRETIVAS DE IDIOMA E FORMATAÇÃO:
 - 🗑️ Exclusão de documentos e de todos os seus fragmentos associados
 
 ### Backend (API)
+- 🧠 **Memória Conversacional em RAM** — Serviço estruturado com `Map` e expiração de TTL a cada 5 minutos, monitorado por garbage collector de ciclo de 30s. Possui proteção de limite de 100 sessões ativas (evicção LRU) e suporte à resolução de pronomes.
+- 🚀 **Otimização de Saudações (Fast-Path Bypass)** — Dupla camada de detecção (Local Regex + LLM intent `[GREETING]`) que intercepta saudações/ajuda e responde instantaneamente sem acionar busca vetorial ou gerar embeddings (latência mínima e economia de VRAM).
 - 🔄 **Query Rewriting & Roteamento de Intenção** — reescrita com expansão de siglas e extração da Tag de Intenção (`[CURSO]`, `[DISCIPLINA]`, etc) para guiar o contexto.
 - 🤖 **Agentic RAG (MCP)** — LLM decide autonomamente quando buscar via Tool Calling (agora com suporte à classificação de intenção no prompt).
 - 🔀 **Busca Híbrida (RRF)** — combina busca semântica (`pgvector` HNSW) com busca léxica por palavras-chave (`tsvector` + `portuguese_unaccent`) usando Reciprocal Rank Fusion.
+- 📊 **Métricas e Logs de Feedback** — Endpoint `/api/chat/feedback` estruturado em inglês para captação dos votos em console log no backend.
 - 🔐 **Segurança**: Rate limiting (20 req/min chat, 5 req/min upload), autenticação admin via `X-API-Key`, validação de MIME/extensão no upload, CORS restrito.
 - 🚦 **Controle de Concorrência (Semáforo de VRAM)**: Mecanismo de controle de concorrência ativa (implementado em `queue.service.ts`) para limitar o número de inferências paralelas enviadas à GPU local:
   - **Funcionamento**: Utiliza uma lógica de semáforo de *acquire/release* encapsulada na função `comControleDeConcorrencia()`.
@@ -508,10 +515,11 @@ docker build --build-arg VITE_API_URL=http://localhost:3333 -t chatifme-frontend
 |--------|------|-----------|------|
 | `POST` | `/api/chat` | Pergunta via RAG clássico (streaming SSE) | — |
 | `POST` | `/api/agent` | Pergunta via Agente MCP (Tool Calling + SSE) | — |
+| `POST` | `/api/chat/feedback` | Registra feedback 👍/👎 do usuário sobre a resposta da IA | — |
 | `POST` | `/api/embedding/upload` | Upload de documento para ingestão | `X-API-Key` |
 | `GET` | `/api/embedding/documentos` | Lista documentos processados | `X-API-Key` |
 | `DELETE`| `/api/embedding/documentos/:filename`| Remove documento e seus chunks | `X-API-Key` |
-| `GET` | `/api/health` | Health check expandido (DB, Ollama, Redis, fila, memória) | — |
+| `GET` | `/api/health` | Health check expandido (DB, Ollama, Redis, fila, memória, sessões) | — |
 
 ---
 
