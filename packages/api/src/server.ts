@@ -14,6 +14,10 @@ import {
   inicializarMCPClient,
   encerrarMCPClient,
 } from "./services/mcp_agent.service.js";
+import {
+  getSessionStats,
+  limparTodasSessoes,
+} from "./services/memory.service.js";
 
 /**
  * Arquivo principal de inicialização do servidor.
@@ -117,6 +121,7 @@ app.get("/api/health", async (_req, res) => {
       redis: redisOk,
     },
     queue: queueStatus,
+    sessions: getSessionStats(),
     memory: {
       rss: `${(process.memoryUsage().rss / 1024 / 1024).toFixed(1)} MB`,
       heapUsed: `${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1)} MB`,
@@ -166,10 +171,12 @@ server.on("error", (err: NodeJS.ErrnoException) => {
 
 // Cleanup: encerra o MCP Client quando o processo termina
 process.on("SIGINT", async () => {
+  limparTodasSessoes();
   await encerrarMCPClient();
   process.exit(0);
 });
 process.on("SIGTERM", async () => {
+  limparTodasSessoes();
   await encerrarMCPClient();
   process.exit(0);
 });

@@ -7,6 +7,8 @@
 export interface ChatRequestBody {
   /** Pergunta do aluno sobre regulamentos ou PPC */
   pergunta: string;
+  /** Identificador da sessão (UUID gerado pelo frontend) para memória conversacional */
+  sessionId?: string;
 }
 
 /** Resposta devolvida pela API ao frontend */

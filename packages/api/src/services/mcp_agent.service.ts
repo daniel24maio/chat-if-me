@@ -3,6 +3,12 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import {
+  isSessionExpired,
+  getOrCreateSession,
+  updateSession,
+  resolverReferencias,
+} from "./memory.service.js";
 
 /**
  * Serviço do Agente MCP — Agentic RAG.
@@ -187,7 +193,8 @@ export async function encerrarMCPClient(): Promise<void> {
  */
 export async function processarPerguntaAgente(
   pergunta: string,
-  res: Response
+  res: Response,
+  sessionId?: string
 ): Promise<void> {
   if (!mcpClient) {
     throw new Error("[Agente] MCP Client não inicializado");
@@ -195,14 +202,31 @@ export async function processarPerguntaAgente(
 
   console.log(`\n${"─".repeat(50)}`);
   console.log(`🤖 [Agente] Nova pergunta: "${pergunta}"`);
+  if (sessionId) console.log(`🧠 [Agente] Sessão: ${sessionId.substring(0, 8)}...`);
   console.log(`${"─".repeat(50)}`);
+
+  // ── Verificação de sessão expirada ──
+  if (sessionId && isSessionExpired(sessionId)) {
+    console.log(`⏰ [Agente] Sessão expirada: ${sessionId.substring(0, 8)}...`);
+    res.write(`data: ${JSON.stringify({ type: "session_expired" })}\n\n`);
+    res.write(`data: [DONE]\n\n`);
+    return;
+  }
+
+  // ── Recuperar ou criar sessão ──
+  const session = sessionId ? getOrCreateSession(sessionId) : null;
+
+  // ── Resolver referências anafóricas usando a memória ──
+  const perguntaContextualizada = session
+    ? resolverReferencias(pergunta, session)
+    : pergunta;
 
   const inicio = Date.now();
 
   // Monta as mensagens iniciais
   const messages: Array<Record<string, unknown>> = [
     { role: "system", content: AGENT_SYSTEM_PROMPT },
-    { role: "user", content: pergunta },
+    { role: "user", content: perguntaContextualizada },
   ];
 
   // ── Passo 1: Primeira chamada ao Ollama (com tools, sem streaming) ──
@@ -343,6 +367,12 @@ export async function processarPerguntaAgente(
       console.log(
         `⏱️  [Agente] Pipeline concluído em ${duracao}s (sem ferramentas)\n`
       );
+
+      // Atualizar memória com a resposta direta
+      if (session) {
+        updateSession(session.sessionId, pergunta, "", assistantMessage.content);
+      }
+
       return;
     }
   }
@@ -452,5 +482,11 @@ export async function processarPerguntaAgente(
   res.write(`data: [DONE]\n\n`);
 
   const duracao = ((Date.now() - inicio) / 1000).toFixed(1);
+
+  // ── Atualizar memória da sessão ──
+  if (session) {
+    updateSession(session.sessionId, pergunta, "", "");
+  }
+
   console.log(`⏱️  [Agente] Pipeline streaming concluído em ${duracao}s\n`);
 }

@@ -35,7 +35,7 @@ export async function enviarPergunta(
   res: Response
 ): Promise<void> {
   try {
-    const { pergunta } = req.body;
+    const { pergunta, sessionId } = req.body;
 
     // Validação: campo obrigatório
     if (!pergunta || typeof pergunta !== "string") {
@@ -81,7 +81,7 @@ export async function enviarPergunta(
     // Delega o processamento ao serviço RAG com streaming
     // Controlado pelo semáforo de concorrência para evitar OOM na GPU
     await comControleDeConcorrencia(async () => {
-      await processarPerguntaStream(perguntaTrimmed, res);
+      await processarPerguntaStream(perguntaTrimmed, res, sessionId);
     });
 
     // Encerra a conexão SSE após o stream completo

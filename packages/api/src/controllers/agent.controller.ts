@@ -23,7 +23,7 @@ export async function enviarPerguntaAgente(
   res: Response
 ): Promise<void> {
   try {
-    const { pergunta } = req.body;
+    const { pergunta, sessionId } = req.body;
 
     // Validação: campo obrigatório
     if (!pergunta || typeof pergunta !== "string") {
@@ -65,7 +65,7 @@ export async function enviarPerguntaAgente(
 
     // Delega ao agente MCP com controle de concorrência
     await comControleDeConcorrencia(async () => {
-      await processarPerguntaAgente(perguntaTrimmed, res);
+      await processarPerguntaAgente(perguntaTrimmed, res, sessionId);
     });
 
     res.end();

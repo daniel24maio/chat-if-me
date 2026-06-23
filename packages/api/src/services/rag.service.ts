@@ -7,6 +7,12 @@ import {
   reescreverComLLM,
   type OllamaChatMessage,
 } from "../config/ollama.js";
+import {
+  isSessionExpired,
+  getOrCreateSession,
+  updateSession,
+  resolverReferencias,
+} from "./memory.service.js";
 
 /**
  * Serviço RAG (Retrieval-Augmented Generation) com Streaming.
@@ -172,7 +178,7 @@ const RRF_ALPHA = 0.5;
 async function buscarHibrido(
   embedding: number[],
   queryTexto: string,
-  limite: number = 3
+  limite: number = 5
 ): Promise<DocumentoRecuperado[]> {
   console.log(
     `🔍 [RAG] Busca híbrida: vetorial (α=${RRF_ALPHA}) + FTS (1-α=${1 - RRF_ALPHA}), k=${RRF_K}`
@@ -316,17 +322,35 @@ DIRETIVAS OBRIGATÓRIAS DE IDIOMA E FORMATAÇÃO:
  */
 export async function processarPerguntaStream(
   pergunta: string,
-  res: Response
+  res: Response,
+  sessionId?: string
 ): Promise<void> {
   console.log(`\n${"─".repeat(50)}`);
   console.log(`📨 [RAG] Nova pergunta (stream): "${pergunta}"`);
+  if (sessionId) console.log(`🧠 [RAG] Sessão: ${sessionId.substring(0, 8)}...`);
   console.log(`${"─".repeat(50)}`);
+
+  // ── Verificação de sessão expirada ──
+  if (sessionId && isSessionExpired(sessionId)) {
+    console.log(`⏰ [RAG] Sessão expirada: ${sessionId.substring(0, 8)}...`);
+    res.write(`data: ${JSON.stringify({ type: "session_expired" })}\n\n`);
+    res.write(`data: [DONE]\n\n`);
+    return;
+  }
+
+  // ── Recuperar ou criar sessão ──
+  const session = sessionId ? getOrCreateSession(sessionId) : null;
+
+  // ── Resolver referências anafóricas usando a memória ──
+  const perguntaContextualizada = session
+    ? resolverReferencias(pergunta, session)
+    : pergunta;
 
   const inicio = Date.now();
 
-  // Etapa 0: Reescrever a pergunta para melhorar a busca semântica
+  // Etapa 0: Reescrever a pergunta (com pronomes já resolvidos) para melhorar a busca semântica
   const t0 = Date.now();
-  const { intencao, perguntaReescrita } = await reescreverPergunta(pergunta);
+  const { intencao, perguntaReescrita } = await reescreverPergunta(perguntaContextualizada);
   const rewriteMs = Date.now() - t0;
 
   // Etapa 1: Vetorizar a pergunta REESCRITA (não a original)
@@ -370,6 +394,12 @@ export async function processarPerguntaStream(
   };
 
   res.write(`data: ${JSON.stringify({ type: "metrics", timings })}\n\n`);
+
+  // ── Atualizar memória da sessão ──
+  if (session) {
+    updateSession(session.sessionId, pergunta, intencao, "");
+    session.lastDocuments = documentos;
+  }
 
   console.log(
     `⏱️  [RAG] Pipeline concluído em ${(totalMs / 1000).toFixed(1)}s ` +

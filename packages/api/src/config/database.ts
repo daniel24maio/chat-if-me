@@ -18,8 +18,8 @@ const EMBEDDING_DIM_ESPERADA = 1024;
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   max: 20,                        // Máximo de conexões simultâneas
-  idleTimeoutMillis: 30_000,      // Fecha conexões ociosas após 30s
-  connectionTimeoutMillis: 5_000, // Timeout para obter conexão do pool
+  idleTimeoutMillis: 120_000,      // Fecha conexões ociosas após 120s
+  connectionTimeoutMillis: 60_000, // Timeout para obter conexão do pool
 });
 
 /**

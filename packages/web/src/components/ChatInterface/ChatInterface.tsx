@@ -44,6 +44,8 @@ const ChatInterface: React.FC = () => {
   const [isStreaming, setIsStreaming] = useState(false);
   /** Modo agente (MCP) ou RAG clássico */
   const [useAgent, setUseAgent] = useState(false);
+  /** Identificador da sessão — enviado ao backend para memória conversacional */
+  const [sessionId, setSessionId] = useState(() => crypto.randomUUID());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   /** Ref para abortar o stream se o usuário enviar outra pergunta */
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -72,7 +74,7 @@ const ChatInterface: React.FC = () => {
       const response = await fetch(`${API_URL}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pergunta }),
+        body: JSON.stringify({ pergunta, sessionId }),
         signal: controller.signal,
       });
 
@@ -168,6 +170,25 @@ const ChatInterface: React.FC = () => {
               );
               setIsStreaming(false);
               return;
+            } else if (event.type === 'session_expired') {
+              // Sessão expirada — notificar e reiniciar conversa
+              setMessages([
+                {
+                  id: '1',
+                  text: 'Olá! 👋 Bem-vindo ao Chat Assistente Virtual IFMG — assistente virtual do campus IFMG Ouro Branco.',
+                  sender: 'ai',
+                  timestamp: new Date(),
+                },
+                {
+                  id: Date.now().toString(),
+                  text: '⏰ Sua sessão anterior expirou por inatividade. Uma nova conversa foi iniciada.',
+                  sender: 'ai',
+                  timestamp: new Date(),
+                },
+              ]);
+              setSessionId(crypto.randomUUID());
+              setIsStreaming(false);
+              return;
             }
           } catch {
             // Ignora linhas não-JSON
@@ -205,7 +226,7 @@ const ChatInterface: React.FC = () => {
     } finally {
       abortControllerRef.current = null;
     }
-  }, [useAgent]);
+  }, [useAgent, sessionId]);
 
   /**
    * Envia a mensagem do usuário e inicia o stream da resposta.

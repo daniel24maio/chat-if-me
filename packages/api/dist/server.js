@@ -731,9 +731,9 @@ var pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   max: 20,
   // Máximo de conexões simultâneas
-  idleTimeoutMillis: 3e4,
-  // Fecha conexões ociosas após 30s
-  connectionTimeoutMillis: 5e3
+  idleTimeoutMillis: 12e4,
+  // Fecha conexões ociosas após 120s
+  connectionTimeoutMillis: 6e4
   // Timeout para obter conexão do pool
 });
 async function testarConexaoDB() {
@@ -990,6 +990,267 @@ async function streamRespostaOllama(mensagens, res, fontes) {
 `);
 }
 
+// src/services/memory.service.ts
+var SESSION_TTL_MS = 5 * 60 * 1e3;
+var CLEANUP_INTERVAL_MS = 30 * 1e3;
+var MAX_SESSIONS = 100;
+var MAX_MESSAGES_PER_SESSION = 10;
+var sessions = /* @__PURE__ */ new Map();
+var expiredSessions = /* @__PURE__ */ new Map();
+var cleanupInterval = setInterval(() => {
+  const agora = Date.now();
+  let removidas = 0;
+  for (const [id, ctx] of sessions) {
+    if (agora - ctx.lastAccessedAt > SESSION_TTL_MS) {
+      sessions.delete(id);
+      expiredSessions.set(id, agora);
+      removidas++;
+      console.log(
+        `\u{1F9F9} [Mem\xF3ria] Sess\xE3o expirada e removida: ${id.substring(0, 8)}... (${ctx.messages.length} msgs, ${Math.round((agora - ctx.createdAt) / 1e3)}s de vida)`
+      );
+    }
+  }
+  for (const [id, expiredAt] of expiredSessions) {
+    if (agora - expiredAt > 10 * 60 * 1e3) {
+      expiredSessions.delete(id);
+    }
+  }
+  if (removidas > 0) {
+    console.log(
+      `\u{1F9F9} [Mem\xF3ria] ${removidas} sess\xE3o(\xF5es) removida(s). Ativas: ${sessions.size}`
+    );
+  }
+}, CLEANUP_INTERVAL_MS);
+cleanupInterval.unref();
+function isSessionExpired(sessionId) {
+  if (sessions.has(sessionId)) {
+    return false;
+  }
+  return expiredSessions.has(sessionId);
+}
+function getOrCreateSession(sessionId) {
+  const existente = sessions.get(sessionId);
+  if (existente) {
+    existente.lastAccessedAt = Date.now();
+    return existente;
+  }
+  if (sessions.size >= MAX_SESSIONS) {
+    let oldestId = "";
+    let oldestTime = Infinity;
+    for (const [id, ctx] of sessions) {
+      if (ctx.lastAccessedAt < oldestTime) {
+        oldestTime = ctx.lastAccessedAt;
+        oldestId = id;
+      }
+    }
+    if (oldestId) {
+      sessions.delete(oldestId);
+      console.log(
+        `\u{1F9F9} [Mem\xF3ria] Sess\xE3o evicta (LRU) para liberar espa\xE7o: ${oldestId.substring(0, 8)}...`
+      );
+    }
+  }
+  const novaSessao = {
+    sessionId,
+    messages: [],
+    entities: {
+      disciplinas: [],
+      periodos: [],
+      temas: [],
+      ultimoAssunto: ""
+    },
+    lastIntent: "",
+    lastDocuments: [],
+    createdAt: Date.now(),
+    lastAccessedAt: Date.now()
+  };
+  sessions.set(sessionId, novaSessao);
+  console.log(
+    `\u{1F9E0} [Mem\xF3ria] Nova sess\xE3o criada: ${sessionId.substring(0, 8)}... (total ativas: ${sessions.size})`
+  );
+  return novaSessao;
+}
+function updateSession(sessionId, pergunta, intent, resposta) {
+  const session = sessions.get(sessionId);
+  if (!session)
+    return;
+  session.messages.push({
+    role: "user",
+    content: pergunta,
+    timestamp: Date.now()
+  });
+  if (resposta) {
+    session.messages.push({
+      role: "assistant",
+      content: resposta,
+      timestamp: Date.now()
+    });
+  }
+  if (session.messages.length > MAX_MESSAGES_PER_SESSION) {
+    session.messages = session.messages.slice(-MAX_MESSAGES_PER_SESSION);
+  }
+  session.lastIntent = intent;
+  extrairEntidades(pergunta, session.entities);
+  session.lastAccessedAt = Date.now();
+}
+function resolverReferencias(pergunta, session) {
+  const { entities, messages } = session;
+  if (messages.length === 0)
+    return pergunta;
+  let perguntaResolvida = pergunta;
+  if (entities.disciplinas.length > 0) {
+    const ultimaDisciplina = entities.disciplinas[entities.disciplinas.length - 1];
+    perguntaResolvida = perguntaResolvida.replace(
+      /\b(d?essa|nessa|desta|dela)\b/gi,
+      `de ${ultimaDisciplina}`
+    );
+  }
+  if (entities.periodos.length > 0) {
+    const ultimoPeriodo = entities.periodos[entities.periodos.length - 1];
+    perguntaResolvida = perguntaResolvida.replace(
+      /\b(d?esse|nesse|deste|dele)\b/gi,
+      `do ${ultimoPeriodo}\xBA per\xEDodo`
+    );
+  } else if (entities.ultimoAssunto) {
+    perguntaResolvida = perguntaResolvida.replace(
+      /\b(d?esse|nesse|deste|dele)\b/gi,
+      `de ${entities.ultimoAssunto}`
+    );
+  }
+  if (/^(e\s|e\s+sobre\s|também\s)/i.test(perguntaResolvida) && entities.ultimoAssunto) {
+    perguntaResolvida = `${perguntaResolvida} (contexto: ${entities.ultimoAssunto})`;
+  }
+  if (perguntaResolvida !== pergunta) {
+    console.log(
+      `\u{1F517} [Mem\xF3ria] Pronomes resolvidos:
+   Original:  "${pergunta}"
+   Resolvida: "${perguntaResolvida}"`
+    );
+  }
+  return perguntaResolvida;
+}
+function getSessionStats() {
+  let totalMessages = 0;
+  for (const session of sessions.values()) {
+    totalMessages += session.messages.length;
+  }
+  return {
+    active: sessions.size,
+    maxSessions: MAX_SESSIONS,
+    ttlMinutes: SESSION_TTL_MS / 6e4,
+    memoryEstimateKB: Math.round((totalMessages * 100 + sessions.size * 500) / 1024)
+  };
+}
+function limparTodasSessoes() {
+  const total = sessions.size;
+  sessions.clear();
+  expiredSessions.clear();
+  console.log(`\u{1F9F9} [Mem\xF3ria] Todas as ${total} sess\xE3o(\xF5es) removidas (shutdown).`);
+}
+function extrairEntidades(texto, entities) {
+  const textoLower = texto.toLowerCase();
+  const periodoNumerico = texto.match(/(\d+)[ºª°]?\s*per[ií]odo/i);
+  if (periodoNumerico) {
+    const num = Number(periodoNumerico[1]);
+    if (!entities.periodos.includes(num)) {
+      entities.periodos.push(num);
+    }
+  }
+  const periodosExtenso = {
+    primeiro: 1,
+    segundo: 2,
+    terceiro: 3,
+    quarto: 4,
+    quinto: 5,
+    sexto: 6,
+    s\u00E9timo: 7,
+    oitavo: 8,
+    nono: 9,
+    d\u00E9cimo: 10
+  };
+  for (const [nome, num] of Object.entries(periodosExtenso)) {
+    if (textoLower.includes(`${nome} per\xEDodo`) && !entities.periodos.includes(num)) {
+      entities.periodos.push(num);
+    }
+  }
+  const disciplinas = [
+    "C\xE1lculo",
+    "C\xE1lculo 1",
+    "C\xE1lculo 2",
+    "C\xE1lculo 3",
+    "\xC1lgebra Linear",
+    "Geometria Anal\xEDtica",
+    "Algoritmos",
+    "Algoritmos e Programa\xE7\xE3o",
+    "Estrutura de Dados",
+    "Estruturas de Dados",
+    "Banco de Dados",
+    "Bancos de Dados",
+    "Engenharia de Software",
+    "Sistemas Operacionais",
+    "Redes de Computadores",
+    "Intelig\xEAncia Artificial",
+    "Compiladores",
+    "Programa\xE7\xE3o Orientada a Objetos",
+    "Arquitetura de Computadores",
+    "Matem\xE1tica Discreta",
+    "Probabilidade e Estat\xEDstica",
+    "F\xEDsica",
+    "F\xEDsica 1",
+    "F\xEDsica 2",
+    "L\xF3gica",
+    "Teoria da Computa\xE7\xE3o",
+    "Intera\xE7\xE3o Humano-Computador",
+    "Trabalho de Conclus\xE3o de Curso",
+    "TCC",
+    "Est\xE1gio Supervisionado",
+    "Projeto Integrador"
+  ];
+  for (const disciplina of disciplinas) {
+    if (textoLower.includes(disciplina.toLowerCase())) {
+      if (!entities.disciplinas.includes(disciplina)) {
+        entities.disciplinas.push(disciplina);
+      }
+    }
+  }
+  const temas = {
+    "pr\xE9-requisito": "pr\xE9-requisitos",
+    "prerequisito": "pr\xE9-requisitos",
+    "carga hor\xE1ria": "carga hor\xE1ria",
+    "ementa": "ementa",
+    "matr\xEDcula": "matr\xEDcula",
+    "trancamento": "trancamento",
+    "reprova\xE7\xE3o": "reprova\xE7\xE3o",
+    "reprovar": "reprova\xE7\xE3o",
+    "aprova\xE7\xE3o": "aprova\xE7\xE3o",
+    "aprovar": "aprova\xE7\xE3o",
+    "frequ\xEAncia": "frequ\xEAncia",
+    "falta": "frequ\xEAncia",
+    "est\xE1gio": "est\xE1gio",
+    "atividades complementares": "atividades complementares",
+    "horas complementares": "atividades complementares",
+    "bolsa": "bolsas",
+    "aux\xEDlio": "assist\xEAncia estudantil",
+    "biblioteca": "biblioteca",
+    "laborat\xF3rio": "laborat\xF3rio",
+    "disciplina": "disciplinas",
+    "grade curricular": "grade curricular",
+    "matriz curricular": "grade curricular"
+  };
+  for (const [termo, tema] of Object.entries(temas)) {
+    if (textoLower.includes(termo) && !entities.temas.includes(tema)) {
+      entities.temas.push(tema);
+    }
+  }
+  if (entities.disciplinas.length > 0) {
+    entities.ultimoAssunto = entities.disciplinas[entities.disciplinas.length - 1];
+  } else if (entities.periodos.length > 0) {
+    entities.ultimoAssunto = `${entities.periodos[entities.periodos.length - 1]}\xBA per\xEDodo`;
+  } else if (entities.temas.length > 0) {
+    entities.ultimoAssunto = entities.temas[entities.temas.length - 1];
+  }
+}
+
 // src/services/rag.service.ts
 var REWRITE_SYSTEM_PROMPT = `Voc\xEA \xE9 um assistente de pr\xE9-processamento de consultas para um sistema de busca de documentos acad\xEAmicos do IFMG (Instituto Federal de Minas Gerais), Campus Ouro Branco.
 
@@ -1053,7 +1314,7 @@ async function gerarEmbedding(texto) {
 }
 var RRF_K = 60;
 var RRF_ALPHA = 0.5;
-async function buscarHibrido(embedding, queryTexto, limite = 3) {
+async function buscarHibrido(embedding, queryTexto, limite = 5) {
   console.log(
     `\u{1F50D} [RAG] Busca h\xEDbrida: vetorial (\u03B1=${RRF_ALPHA}) + FTS (1-\u03B1=${1 - RRF_ALPHA}), k=${RRF_K}`
   );
@@ -1142,14 +1403,28 @@ DIRETIVAS OBRIGAT\xD3RIAS DE IDIOMA E FORMATA\xC7\xC3O:
     { role: "user", content: pergunta }
   ];
 }
-async function processarPerguntaStream(pergunta, res) {
+async function processarPerguntaStream(pergunta, res, sessionId) {
   console.log(`
 ${"\u2500".repeat(50)}`);
   console.log(`\u{1F4E8} [RAG] Nova pergunta (stream): "${pergunta}"`);
+  if (sessionId)
+    console.log(`\u{1F9E0} [RAG] Sess\xE3o: ${sessionId.substring(0, 8)}...`);
   console.log(`${"\u2500".repeat(50)}`);
+  if (sessionId && isSessionExpired(sessionId)) {
+    console.log(`\u23F0 [RAG] Sess\xE3o expirada: ${sessionId.substring(0, 8)}...`);
+    res.write(`data: ${JSON.stringify({ type: "session_expired" })}
+
+`);
+    res.write(`data: [DONE]
+
+`);
+    return;
+  }
+  const session = sessionId ? getOrCreateSession(sessionId) : null;
+  const perguntaContextualizada = session ? resolverReferencias(pergunta, session) : pergunta;
   const inicio = Date.now();
   const t0 = Date.now();
-  const { intencao, perguntaReescrita } = await reescreverPergunta(pergunta);
+  const { intencao, perguntaReescrita } = await reescreverPergunta(perguntaContextualizada);
   const rewriteMs = Date.now() - t0;
   const t1 = Date.now();
   const embedding = await gerarEmbedding(perguntaReescrita);
@@ -1178,6 +1453,10 @@ ${"\u2500".repeat(50)}`);
   res.write(`data: ${JSON.stringify({ type: "metrics", timings })}
 
 `);
+  if (session) {
+    updateSession(session.sessionId, pergunta, intencao, "");
+    session.lastDocuments = documentos;
+  }
   console.log(
     `\u23F1\uFE0F  [RAG] Pipeline conclu\xEDdo em ${(totalMs / 1e3).toFixed(1)}s (rewrite: ${rewriteMs}ms, embed: ${embedMs}ms, retrieval: ${retrievalMs}ms, gen: ${generationMs}ms)
 `
@@ -1244,7 +1523,7 @@ async function comControleDeConcorrencia(fn) {
 // src/controllers/chat.controller.ts
 async function enviarPergunta(req, res) {
   try {
-    const { pergunta } = req.body;
+    const { pergunta, sessionId } = req.body;
     if (!pergunta || typeof pergunta !== "string") {
       res.status(400).json({
         erro: "O campo 'pergunta' \xE9 obrigat\xF3rio e deve ser uma string."
@@ -1275,7 +1554,7 @@ async function enviarPergunta(req, res) {
       console.log("\u{1F50C} [SSE] Cliente desconectou durante o stream");
     });
     await comControleDeConcorrencia(async () => {
-      await processarPerguntaStream(perguntaTrimmed, res);
+      await processarPerguntaStream(perguntaTrimmed, res, sessionId);
     });
     res.end();
   } catch (error) {
@@ -26717,18 +26996,32 @@ async function encerrarMCPClient() {
     console.log("\u{1F50C} [MCP Client] Desconectado");
   }
 }
-async function processarPerguntaAgente(pergunta, res) {
+async function processarPerguntaAgente(pergunta, res, sessionId) {
   if (!mcpClient) {
     throw new Error("[Agente] MCP Client n\xE3o inicializado");
   }
   console.log(`
 ${"\u2500".repeat(50)}`);
   console.log(`\u{1F916} [Agente] Nova pergunta: "${pergunta}"`);
+  if (sessionId)
+    console.log(`\u{1F9E0} [Agente] Sess\xE3o: ${sessionId.substring(0, 8)}...`);
   console.log(`${"\u2500".repeat(50)}`);
+  if (sessionId && isSessionExpired(sessionId)) {
+    console.log(`\u23F0 [Agente] Sess\xE3o expirada: ${sessionId.substring(0, 8)}...`);
+    res.write(`data: ${JSON.stringify({ type: "session_expired" })}
+
+`);
+    res.write(`data: [DONE]
+
+`);
+    return;
+  }
+  const session = sessionId ? getOrCreateSession(sessionId) : null;
+  const perguntaContextualizada = session ? resolverReferencias(pergunta, session) : pergunta;
   const inicio = Date.now();
   const messages = [
     { role: "system", content: AGENT_SYSTEM_PROMPT },
-    { role: "user", content: pergunta }
+    { role: "user", content: perguntaContextualizada }
   ];
   console.log(
     `\u{1F9E0} [Agente] Passo 1: Enviando ao Ollama com ${ollamaTools.length} ferramenta(s)...`
@@ -26838,6 +27131,9 @@ ${"\u2500".repeat(50)}`);
         `\u23F1\uFE0F  [Agente] Pipeline conclu\xEDdo em ${duracao2}s (sem ferramentas)
 `
       );
+      if (session) {
+        updateSession(session.sessionId, pergunta, "", assistantMessage.content);
+      }
       return;
     }
   }
@@ -26933,6 +27229,9 @@ ${"\u2500".repeat(50)}`);
 
 `);
   const duracao = ((Date.now() - inicio) / 1e3).toFixed(1);
+  if (session) {
+    updateSession(session.sessionId, pergunta, "", "");
+  }
   console.log(`\u23F1\uFE0F  [Agente] Pipeline streaming conclu\xEDdo em ${duracao}s
 `);
 }
@@ -26940,7 +27239,7 @@ ${"\u2500".repeat(50)}`);
 // src/controllers/agent.controller.ts
 async function enviarPerguntaAgente(req, res) {
   try {
-    const { pergunta } = req.body;
+    const { pergunta, sessionId } = req.body;
     if (!pergunta || typeof pergunta !== "string") {
       res.status(400).json({
         erro: "O campo 'pergunta' \xE9 obrigat\xF3rio e deve ser uma string."
@@ -26970,7 +27269,7 @@ async function enviarPerguntaAgente(req, res) {
       console.log("\u{1F50C} [SSE Agent] Cliente desconectou");
     });
     await comControleDeConcorrencia(async () => {
-      await processarPerguntaAgente(perguntaTrimmed, res);
+      await processarPerguntaAgente(perguntaTrimmed, res, sessionId);
     });
     res.end();
   } catch (error) {
@@ -27112,6 +27411,7 @@ app.get("/api/health", async (_req, res) => {
       redis: redisOk
     },
     queue: queueStatus,
+    sessions: getSessionStats(),
     memory: {
       rss: `${(process.memoryUsage().rss / 1024 / 1024).toFixed(1)} MB`,
       heapUsed: `${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1)} MB`
@@ -27151,10 +27451,12 @@ server.on("error", (err) => {
   throw err;
 });
 process.on("SIGINT", async () => {
+  limparTodasSessoes();
   await encerrarMCPClient();
   process.exit(0);
 });
 process.on("SIGTERM", async () => {
+  limparTodasSessoes();
   await encerrarMCPClient();
   process.exit(0);
 });
