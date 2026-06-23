@@ -30,7 +30,7 @@ const OLLAMA_BASE_URL =
 const LLM_MODEL = process.env.OLLAMA_LLM_MODEL || "qwen3.5:4b";
 
 /** Context window máximo por requisição (economia de VRAM) */
-const NUM_CTX = Number(process.env.OLLAMA_NUM_CTX) || 2048;
+const NUM_CTX = Number(process.env.OLLAMA_NUM_CTX) || 8192;
 
 /** Timeout global de segurança para as chamadas do Ollama (3 minutos) */
 const FETCH_TIMEOUT_MS = 380000;
@@ -385,7 +385,7 @@ export async function processarPerguntaAgente(
     ...messages,
     {
       role: "system",
-      content: "DIRETIVA OBRIGATÓRIA: Responda EXCLUSIVAMENTE em Português do Brasil (pt-BR). Baseie-se apenas nos dados retornados pela ferramenta acima e ignore trechos de outras disciplinas não relacionadas.",
+      content: "DIRETIVA FINAL OBRIGATÓRIA: Sua resposta deve ser baseada EXCLUSIVAMENTE nos trechos de documentos retornados pela ferramenta acima. NÃO se apresente, NÃO liste suas capacidades. Responda diretamente a pergunta do usuário usando os dados dos documentos. Responda em Português do Brasil (pt-BR). Ignore trechos de outras disciplinas não relacionadas à pergunta.",
     }
   ];
 

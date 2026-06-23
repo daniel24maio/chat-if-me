@@ -26906,7 +26906,7 @@ import { fileURLToPath } from "url";
 import { dirname, resolve as resolve2 } from "path";
 var OLLAMA_BASE_URL2 = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
 var LLM_MODEL2 = process.env.OLLAMA_LLM_MODEL || "qwen3.5:4b";
-var NUM_CTX2 = Number(process.env.OLLAMA_NUM_CTX) || 2048;
+var NUM_CTX2 = Number(process.env.OLLAMA_NUM_CTX) || 8192;
 var FETCH_TIMEOUT_MS2 = 38e4;
 var AGENT_SYSTEM_PROMPT = `Voc\xEA \xE9 o assistente virtual oficial do IFMG Campus Ouro Branco.
 
@@ -27142,7 +27142,7 @@ ${"\u2500".repeat(50)}`);
     ...messages,
     {
       role: "system",
-      content: "DIRETIVA OBRIGAT\xD3RIA: Responda EXCLUSIVAMENTE em Portugu\xEAs do Brasil (pt-BR). Baseie-se apenas nos dados retornados pela ferramenta acima e ignore trechos de outras disciplinas n\xE3o relacionadas."
+      content: "DIRETIVA FINAL OBRIGAT\xD3RIA: Sua resposta deve ser baseada EXCLUSIVAMENTE nos trechos de documentos retornados pela ferramenta acima. N\xC3O se apresente, N\xC3O liste suas capacidades. Responda diretamente a pergunta do usu\xE1rio usando os dados dos documentos. Responda em Portugu\xEAs do Brasil (pt-BR). Ignore trechos de outras disciplinas n\xE3o relacionadas \xE0 pergunta."
     }
   ];
   const streamResponse = await fetch(`${OLLAMA_BASE_URL2}/api/chat`, {
