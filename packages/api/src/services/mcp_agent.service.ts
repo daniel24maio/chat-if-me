@@ -9,6 +9,11 @@ import {
   updateSession,
   resolverReferencias,
 } from "./memory.service.js";
+import {
+  detectarBypassSaudacao,
+  SAUDACAO_SYSTEM_PROMPT,
+} from "./fast_path.util.js";
+import { streamRespostaOllama, type OllamaChatMessage } from "../config/ollama.js";
 
 /**
  * Serviço do Agente MCP — Agentic RAG.
@@ -223,6 +228,29 @@ export async function processarPerguntaAgente(
 
   const inicio = Date.now();
 
+  res.write(`data: ${JSON.stringify({ type: "status", status: "Analisando pergunta..." })}\n\n`);
+
+  // 1. Verificação local fast-path para saudações
+  if (detectarBypassSaudacao(perguntaContextualizada)) {
+    console.log(`🚀 [Agente] Fast-path ativado: saudação detectada localmente.`);
+    res.write(`data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}\n\n`);
+
+    const mensagens: OllamaChatMessage[] = [
+      { role: "system", content: SAUDACAO_SYSTEM_PROMPT },
+      { role: "user", content: pergunta },
+    ];
+
+    await streamRespostaOllama(mensagens, res, []);
+
+    if (session) {
+      updateSession(session.sessionId, pergunta, "", "");
+    }
+
+    const duracao = ((Date.now() - inicio) / 1000).toFixed(1);
+    console.log(`⏱️  [Agente] Fast-path concluído em ${duracao}s (sem busca/ferramentas)\n`);
+    return;
+  }
+
   // Monta as mensagens iniciais
   const messages: Array<Record<string, unknown>> = [
     { role: "system", content: AGENT_SYSTEM_PROMPT },
@@ -233,6 +261,8 @@ export async function processarPerguntaAgente(
   console.log(
     `🧠 [Agente] Passo 1: Enviando ao Ollama com ${ollamaTools.length} ferramenta(s)...`
   );
+
+  res.write(`data: ${JSON.stringify({ type: "status", status: "Analisando intenção..." })}\n\n`);
 
   const firstResponse = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
     method: "POST",
@@ -282,6 +312,8 @@ export async function processarPerguntaAgente(
 
     // Executa cada tool call via MCP
     const fontes: string[] = [];
+
+    res.write(`data: ${JSON.stringify({ type: "status", status: "Buscando nos documentos..." })}\n\n`);
 
     for (const toolCall of assistantMessage.tool_calls) {
       const { name, arguments: args } = toolCall.function;
@@ -344,6 +376,8 @@ export async function processarPerguntaAgente(
     console.log(
       "💬 [Agente] Passo 2: Sem tool_calls — resposta direta"
     );
+
+    res.write(`data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}\n\n`);
 
     // Adiciona a mensagem do assistente ao histórico
     messages.push({

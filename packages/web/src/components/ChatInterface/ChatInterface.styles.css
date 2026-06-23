@@ -448,13 +448,71 @@
 }
 
 /* ==========================================================================
-   Fontes dos documentos (exibidas após a resposta)
+   Meta-informações da resposta (Feedback e Fontes)
    ========================================================================== */
 
-.message-fontes {
+.message-meta {
   margin-top: 0.6rem;
   padding-top: 0.5rem;
   border-top: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.message-feedback {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.feedback-question {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-right: 0.2rem;
+}
+
+.feedback-btn {
+  background: var(--bg-body);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  padding: 0.15rem 0.45rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+}
+
+.feedback-btn:hover {
+  background-color: var(--primary-light);
+  border-color: var(--ifmg-verde);
+  transform: translateY(-1px);
+}
+
+.feedback-btn.active {
+  background-color: var(--ifmg-verde);
+  border-color: var(--ifmg-verde);
+  color: white;
+}
+
+.feedback-btn.active-down {
+  background-color: var(--ifmg-vermelho);
+  border-color: var(--ifmg-vermelho);
+  color: white;
+}
+
+.feedback-btn.active:hover {
+  background-color: var(--ifmg-verde-escuro);
+}
+
+.feedback-btn.active-down:hover {
+  background-color: var(--ifmg-vermelho-escuro);
+}
+
+.message-fontes-inline {
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;

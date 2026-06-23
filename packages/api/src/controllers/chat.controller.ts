@@ -108,3 +108,41 @@ export async function enviarPergunta(
     }
   }
 }
+
+/**
+ * Registra o feedback do usuário sobre a resposta gerada pelo assistente.
+ *
+ * Endpoint: POST /api/chat/feedback
+ * Body esperado: { "sessionId": "string", "messageId": "string", "feedback": "up" | "down", "pergunta": "string", "resposta": "string" }
+ */
+export async function registrarFeedback(
+  req: Request,
+  res: Response
+): Promise<void> {
+  try {
+    const { sessionId, messageId, feedback, pergunta, resposta } = req.body;
+
+    // Validação básica do feedback
+    if (!feedback || (feedback !== "up" && feedback !== "down")) {
+      res.status(400).json({
+        erro: "O campo 'feedback' é obrigatório e deve ser 'up' ou 'down'.",
+      });
+      return;
+    }
+
+    console.log(`\n📢 [FEEDBACK RECEBIDO]`);
+    console.log(`   Sessão: ${sessionId || "N/A"}`);
+    console.log(`   ID Mensagem: ${messageId || "N/A"}`);
+    console.log(`   Voto: ${feedback === "up" ? "👍 Útil" : "👎 Não Útil"}`);
+    if (pergunta) console.log(`   Pergunta: "${pergunta}"`);
+    if (resposta) console.log(`   Resposta: "${resposta.substring(0, 150)}..."`);
+    console.log(`${"─".repeat(40)}`);
+
+    res.status(200).json({ sucesso: true });
+  } catch (error) {
+    console.error("[ChatController] Erro ao registrar feedback:", error);
+    res.status(500).json({
+      erro: "Ocorreu um erro interno ao registrar o feedback.",
+    });
+  }
+}

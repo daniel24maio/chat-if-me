@@ -21,6 +21,8 @@ interface Message {
   fontes?: string[];
   /** Indica se a mensagem está sendo gerada por streaming */
   isStreaming?: boolean;
+  /** Feedback do usuário para a resposta da IA */
+  feedback?: 'up' | 'down';
 }
 
 /**
@@ -46,6 +48,8 @@ const ChatInterface: React.FC = () => {
   const [useAgent, setUseAgent] = useState(false);
   /** Identificador da sessão — enviado ao backend para memória conversacional */
   const [sessionId, setSessionId] = useState(() => crypto.randomUUID());
+  /** Status do pipeline exibido no frontend durante o carregamento */
+  const [statusMessage, setStatusMessage] = useState('Analisando pergunta...');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   /** Ref para abortar o stream se o usuário enviar outra pergunta */
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -68,6 +72,7 @@ const ChatInterface: React.FC = () => {
     // Cria AbortController para permitir cancelamento
     const controller = new AbortController();
     abortControllerRef.current = controller;
+    setStatusMessage('Analisando pergunta...');
 
     try {
       const endpoint = useAgent ? '/api/agent' : '/api/chat';
@@ -132,14 +137,18 @@ const ChatInterface: React.FC = () => {
 
           // Parse do evento JSON
           try {
-            const event = JSON.parse(payload) as {
-              type: string;
-              content?: string;
-              fontes?: string[];
-              mensagem?: string;
-            };
+             const event = JSON.parse(payload) as {
+               type: string;
+               content?: string;
+               fontes?: string[];
+               mensagem?: string;
+               status?: string;
+             };
 
-            if (event.type === 'token' && event.content) {
+             if (event.type === 'status' && event.status) {
+               // Atualiza a mensagem de status exibida no frontend
+               setStatusMessage(event.status);
+             } else if (event.type === 'token' && event.content) {
               // Acumula token no texto da mensagem (atualização progressiva)
               setMessages((prev) =>
                 prev.map((m) =>
@@ -269,6 +278,47 @@ const ChatInterface: React.FC = () => {
     processarStream(currentInput, aiMsgId);
   };
 
+  /**
+   * Envia o feedback da resposta (👍 ou 👎) ao backend.
+   */
+  const handleFeedback = async (messageId: string, feedbackType: 'up' | 'down') => {
+    // Atualiza estado local da mensagem
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === messageId ? { ...m, feedback: feedbackType } : m
+      )
+    );
+
+    // Tenta obter a pergunta correspondente (mensagem anterior no histórico)
+    const msgIdx = messages.findIndex((m) => m.id === messageId);
+    let pergunta = '';
+    let resposta = '';
+
+    if (msgIdx !== -1) {
+      resposta = messages[msgIdx].text;
+      const prevMsg = messages[msgIdx - 1];
+      if (prevMsg && prevMsg.sender === 'user') {
+        pergunta = prevMsg.text;
+      }
+    }
+
+    try {
+      await fetch(`${API_URL}/api/chat/feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId,
+          messageId,
+          feedback: feedbackType,
+          pergunta,
+          resposta,
+        }),
+      });
+    } catch (error) {
+      console.error('[Feedback] Erro ao registrar voto:', error);
+    }
+  };
+
   return (
     <div className="chat-interface">
       {/* Cabeçalho com identidade visual IFMG Campus Ouro Branco */}
@@ -311,13 +361,35 @@ const ChatInterface: React.FC = () => {
               {msg.isStreaming && <span className="streaming-cursor">█</span>}
             </div>
 
-            {/* Exibe fontes dos documentos quando disponíveis */}
-            {msg.fontes && msg.fontes.length > 0 && !msg.isStreaming && (
-              <div className="message-fontes">
-                <span className="fontes-label">📚 Fontes:</span>
-                {msg.fontes.map((fonte, i) => (
-                  <span key={i} className="fonte-tag">{fonte}</span>
-                ))}
+            {/* Meta-informações da resposta (Feedback e Fontes) */}
+            {msg.sender === 'ai' && !msg.isStreaming && (
+              <div className="message-meta">
+                <div className="message-feedback">
+                  <span className="feedback-question">Esta resposta foi útil?</span>
+                  <button
+                    onClick={() => handleFeedback(msg.id, 'up')}
+                    className={`feedback-btn feedback-up ${msg.feedback === 'up' ? 'active' : ''}`}
+                    title="Ajudou"
+                  >
+                    👍
+                  </button>
+                  <button
+                    onClick={() => handleFeedback(msg.id, 'down')}
+                    className={`feedback-btn feedback-down ${msg.feedback === 'down' ? 'active-down' : ''}`}
+                    title="Não ajudou"
+                  >
+                    👎
+                  </button>
+                </div>
+
+                {msg.fontes && msg.fontes.length > 0 && (
+                  <div className="message-fontes-inline">
+                    <span className="fontes-label">📚 Fontes:</span>
+                    {msg.fontes.map((fonte, i) => (
+                      <span key={i} className="fonte-tag">{fonte}</span>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
@@ -333,7 +405,7 @@ const ChatInterface: React.FC = () => {
             <span className="searching-dot" />
             <span className="searching-dot" />
             <span className="searching-dot" />
-            <span className="searching-text">Buscando nos documentos...</span>
+            <span className="searching-text">{statusMessage}</span>
           </div>
         )}
 

@@ -1251,6 +1251,52 @@ function extrairEntidades(texto, entities) {
   }
 }
 
+// src/services/fast_path.util.ts
+function detectarBypassSaudacao(pergunta) {
+  const perguntaLimpa = pergunta.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\w\s]/gi, "");
+  const saudacoesEstritas = [
+    "ola",
+    "oi",
+    "bom dia",
+    "boa tarde",
+    "boa noite",
+    "ola ola",
+    "oi oi",
+    "eae",
+    "e ai",
+    "hello",
+    "hi",
+    "hey",
+    "ola assistente"
+  ];
+  if (saudacoesEstritas.includes(perguntaLimpa)) {
+    return true;
+  }
+  const padroesFuncionalidade = [
+    /como (voce )?pode me ajudar/i,
+    /qual (e )?sua funcao/i,
+    /o que (voce )?pode fazer/i,
+    /o que (voce )?faz/i,
+    /quem e voce/i,
+    /quais (sao suas )?capacidades/i,
+    /me ajude/i,
+    /^ajuda$/i,
+    /^help$/i,
+    /como funciona/i
+  ];
+  for (const regex2 of padroesFuncionalidade) {
+    if (regex2.test(perguntaLimpa)) {
+      return true;
+    }
+  }
+  return false;
+}
+var SAUDACAO_SYSTEM_PROMPT = `Voc\xEA \xE9 o assistente virtual oficial do IFMG Campus Ouro Branco.
+Responda de forma amig\xE1vel \xE0 sauda\xE7\xE3o do usu\xE1rio ou explique suas fun\xE7\xF5es.
+Seja cordial, educado e explique sucintamente que voc\xEA ajuda os alunos com informa\xE7\xF5es acad\xEAmicas, regulamentos do curso, Projeto Pedag\xF3gico do Curso (PPC), grade curricular e normas do campus.
+Diga que o usu\xE1rio pode fazer perguntas sobre esses t\xF3picos.
+Responda obrigatoriamente em Portugu\xEAs do Brasil (pt-BR).`;
+
 // src/services/rag.service.ts
 var REWRITE_SYSTEM_PROMPT = `Voc\xEA \xE9 um assistente de pr\xE9-processamento de consultas para um sistema de busca de documentos acad\xEAmicos do IFMG (Instituto Federal de Minas Gerais), Campus Ouro Branco.
 
@@ -1261,6 +1307,7 @@ REGRAS:
    - [CURSO]: D\xFAvidas sobre o projeto pedag\xF3gico, regras gerais, est\xE1gios, TCC.
    - [DISCIPLINA]: D\xFAvidas sobre nomes de mat\xE9rias, c\xF3digos, carga hor\xE1ria, pr\xE9-requisitos.
    - [CONTEUDO]: D\xFAvidas espec\xEDficas sobre a ementa ou t\xF3picos ensinados dentro de uma disciplina.
+   - [SAUDACAO]: Cumprimentos, sauda\xE7\xF5es gerais (ex: "Ol\xE1", "bom dia") ou perguntas gerais sobre quem \xE9 o assistente/o que ele faz.
    - [OUTRAS]: D\xFAvidas administrativas, infraestrutura do campus, portarias, calend\xE1rio.
 2. Expanda TODAS as siglas acad\xEAmicas:
    - TCC \u2192 Trabalho de Conclus\xE3o de Curso
@@ -1422,10 +1469,62 @@ ${"\u2500".repeat(50)}`);
   }
   const session = sessionId ? getOrCreateSession(sessionId) : null;
   const perguntaContextualizada = session ? resolverReferencias(pergunta, session) : pergunta;
+  res.write(`data: ${JSON.stringify({ type: "status", status: "Analisando pergunta..." })}
+
+`);
   const inicio = Date.now();
+  if (detectarBypassSaudacao(perguntaContextualizada)) {
+    console.log(`\u{1F680} [RAG] Fast-path ativado: sauda\xE7\xE3o detectada localmente.`);
+    res.write(`data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}
+
+`);
+    const mensagens2 = [
+      { role: "system", content: SAUDACAO_SYSTEM_PROMPT },
+      { role: "user", content: pergunta }
+    ];
+    const t32 = Date.now();
+    await streamRespostaOllama(mensagens2, res, []);
+    const generationMs2 = Date.now() - t32;
+    const totalMs2 = Date.now() - inicio;
+    res.write(`data: ${JSON.stringify({ type: "metrics", timings: { rewrite: 0, embedding: 0, retrieval: 0, generation: generationMs2, total: totalMs2 } })}
+
+`);
+    if (session) {
+      updateSession(session.sessionId, pergunta, "SAUDACAO", "");
+    }
+    console.log(`\u23F1\uFE0F  [RAG] Fast-path conclu\xEDdo em ${(totalMs2 / 1e3).toFixed(1)}s (sem busca)
+`);
+    return;
+  }
   const t0 = Date.now();
   const { intencao, perguntaReescrita } = await reescreverPergunta(perguntaContextualizada);
   const rewriteMs = Date.now() - t0;
+  if (intencao === "SAUDACAO" || intencao === "SAUDA\xC7\xC3O") {
+    console.log(`\u{1F680} [RAG] Fast-path ativado: reescrevedor classificou como SAUDACAO.`);
+    res.write(`data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}
+
+`);
+    const mensagens2 = [
+      { role: "system", content: SAUDACAO_SYSTEM_PROMPT },
+      { role: "user", content: pergunta }
+    ];
+    const t32 = Date.now();
+    await streamRespostaOllama(mensagens2, res, []);
+    const generationMs2 = Date.now() - t32;
+    const totalMs2 = Date.now() - inicio;
+    res.write(`data: ${JSON.stringify({ type: "metrics", timings: { rewrite: rewriteMs, embedding: 0, retrieval: 0, generation: generationMs2, total: totalMs2 } })}
+
+`);
+    if (session) {
+      updateSession(session.sessionId, pergunta, "SAUDACAO", "");
+    }
+    console.log(`\u23F1\uFE0F  [RAG] Fast-path LLM conclu\xEDdo em ${(totalMs2 / 1e3).toFixed(1)}s (sem busca)
+`);
+    return;
+  }
+  res.write(`data: ${JSON.stringify({ type: "status", status: "Buscando nos documentos..." })}
+
+`);
   const t1 = Date.now();
   const embedding = await gerarEmbedding(perguntaReescrita);
   const embedMs = Date.now() - t1;
@@ -1574,10 +1673,38 @@ async function enviarPergunta(req, res) {
     }
   }
 }
+async function registrarFeedback(req, res) {
+  try {
+    const { sessionId, messageId, feedback, pergunta, resposta } = req.body;
+    if (!feedback || feedback !== "up" && feedback !== "down") {
+      res.status(400).json({
+        erro: "O campo 'feedback' \xE9 obrigat\xF3rio e deve ser 'up' ou 'down'."
+      });
+      return;
+    }
+    console.log(`
+\u{1F4E2} [FEEDBACK RECEBIDO]`);
+    console.log(`   Sess\xE3o: ${sessionId || "N/A"}`);
+    console.log(`   ID Mensagem: ${messageId || "N/A"}`);
+    console.log(`   Voto: ${feedback === "up" ? "\u{1F44D} \xDAtil" : "\u{1F44E} N\xE3o \xDAtil"}`);
+    if (pergunta)
+      console.log(`   Pergunta: "${pergunta}"`);
+    if (resposta)
+      console.log(`   Resposta: "${resposta.substring(0, 150)}..."`);
+    console.log(`${"\u2500".repeat(40)}`);
+    res.status(200).json({ sucesso: true });
+  } catch (error) {
+    console.error("[ChatController] Erro ao registrar feedback:", error);
+    res.status(500).json({
+      erro: "Ocorreu um erro interno ao registrar o feedback."
+    });
+  }
+}
 
 // src/routes/chat.routes.ts
 var chatRouter = Router();
 chatRouter.post("/", enviarPergunta);
+chatRouter.post("/feedback", registrarFeedback);
 
 // src/routes/embedding.routes.ts
 import { Router as Router2 } from "express";
@@ -27019,6 +27146,27 @@ ${"\u2500".repeat(50)}`);
   const session = sessionId ? getOrCreateSession(sessionId) : null;
   const perguntaContextualizada = session ? resolverReferencias(pergunta, session) : pergunta;
   const inicio = Date.now();
+  res.write(`data: ${JSON.stringify({ type: "status", status: "Analisando pergunta..." })}
+
+`);
+  if (detectarBypassSaudacao(perguntaContextualizada)) {
+    console.log(`\u{1F680} [Agente] Fast-path ativado: sauda\xE7\xE3o detectada localmente.`);
+    res.write(`data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}
+
+`);
+    const mensagens = [
+      { role: "system", content: SAUDACAO_SYSTEM_PROMPT },
+      { role: "user", content: pergunta }
+    ];
+    await streamRespostaOllama(mensagens, res, []);
+    if (session) {
+      updateSession(session.sessionId, pergunta, "", "");
+    }
+    const duracao2 = ((Date.now() - inicio) / 1e3).toFixed(1);
+    console.log(`\u23F1\uFE0F  [Agente] Fast-path conclu\xEDdo em ${duracao2}s (sem busca/ferramentas)
+`);
+    return;
+  }
   const messages = [
     { role: "system", content: AGENT_SYSTEM_PROMPT },
     { role: "user", content: perguntaContextualizada }
@@ -27026,6 +27174,9 @@ ${"\u2500".repeat(50)}`);
   console.log(
     `\u{1F9E0} [Agente] Passo 1: Enviando ao Ollama com ${ollamaTools.length} ferramenta(s)...`
   );
+  res.write(`data: ${JSON.stringify({ type: "status", status: "Analisando inten\xE7\xE3o..." })}
+
+`);
   const firstResponse = await fetch(`${OLLAMA_BASE_URL2}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -27062,6 +27213,9 @@ ${"\u2500".repeat(50)}`);
       tool_calls: assistantMessage.tool_calls
     });
     const fontes = [];
+    res.write(`data: ${JSON.stringify({ type: "status", status: "Buscando nos documentos..." })}
+
+`);
     for (const toolCall of assistantMessage.tool_calls) {
       const { name, arguments: args } = toolCall.function;
       console.log(
@@ -27108,6 +27262,9 @@ ${"\u2500".repeat(50)}`);
     console.log(
       "\u{1F4AC} [Agente] Passo 2: Sem tool_calls \u2014 resposta direta"
     );
+    res.write(`data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}
+
+`);
     messages.push({
       role: "assistant",
       content: assistantMessage.content || ""
