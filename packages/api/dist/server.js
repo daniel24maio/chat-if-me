@@ -1252,9 +1252,9 @@ function extrairEntidades(texto, entities) {
 }
 
 // src/services/fast_path.util.ts
-function detectarBypassSaudacao(pergunta) {
-  const perguntaLimpa = pergunta.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\w\s]/gi, "");
-  const saudacoesEstritas = [
+function detectGreetingBypass(question) {
+  const cleanedQuestion = question.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\w\s]/gi, "");
+  const strictGreetings = [
     "ola",
     "oi",
     "bom dia",
@@ -1269,10 +1269,10 @@ function detectarBypassSaudacao(pergunta) {
     "hey",
     "ola assistente"
   ];
-  if (saudacoesEstritas.includes(perguntaLimpa)) {
+  if (strictGreetings.includes(cleanedQuestion)) {
     return true;
   }
-  const padroesFuncionalidade = [
+  const functionalityPatterns = [
     /como (voce )?pode me ajudar/i,
     /qual (e )?sua funcao/i,
     /o que (voce )?pode fazer/i,
@@ -1284,14 +1284,14 @@ function detectarBypassSaudacao(pergunta) {
     /^help$/i,
     /como funciona/i
   ];
-  for (const regex2 of padroesFuncionalidade) {
-    if (regex2.test(perguntaLimpa)) {
+  for (const regex2 of functionalityPatterns) {
+    if (regex2.test(cleanedQuestion)) {
       return true;
     }
   }
   return false;
 }
-var SAUDACAO_SYSTEM_PROMPT = `Voc\xEA \xE9 o assistente virtual oficial do IFMG Campus Ouro Branco.
+var GREETING_SYSTEM_PROMPT = `Voc\xEA \xE9 o assistente virtual oficial do IFMG Campus Ouro Branco.
 Responda de forma amig\xE1vel \xE0 sauda\xE7\xE3o do usu\xE1rio ou explique suas fun\xE7\xF5es.
 Seja cordial, educado e explique sucintamente que voc\xEA ajuda os alunos com informa\xE7\xF5es acad\xEAmicas, regulamentos do curso, Projeto Pedag\xF3gico do Curso (PPC), grade curricular e normas do campus.
 Diga que o usu\xE1rio pode fazer perguntas sobre esses t\xF3picos.
@@ -1307,7 +1307,7 @@ REGRAS:
    - [CURSO]: D\xFAvidas sobre o projeto pedag\xF3gico, regras gerais, est\xE1gios, TCC.
    - [DISCIPLINA]: D\xFAvidas sobre nomes de mat\xE9rias, c\xF3digos, carga hor\xE1ria, pr\xE9-requisitos.
    - [CONTEUDO]: D\xFAvidas espec\xEDficas sobre a ementa ou t\xF3picos ensinados dentro de uma disciplina.
-   - [SAUDACAO]: Cumprimentos, sauda\xE7\xF5es gerais (ex: "Ol\xE1", "bom dia") ou perguntas gerais sobre quem \xE9 o assistente/o que ele faz.
+   - [GREETING]: Cumprimentos, sauda\xE7\xF5es gerais (ex: "Ol\xE1", "bom dia") ou perguntas gerais sobre quem \xE9 o assistente/o que ele faz.
    - [OUTRAS]: D\xFAvidas administrativas, infraestrutura do campus, portarias, calend\xE1rio.
 2. Expanda TODAS as siglas acad\xEAmicas:
    - TCC \u2192 Trabalho de Conclus\xE3o de Curso
@@ -1473,13 +1473,13 @@ ${"\u2500".repeat(50)}`);
 
 `);
   const inicio = Date.now();
-  if (detectarBypassSaudacao(perguntaContextualizada)) {
+  if (detectGreetingBypass(perguntaContextualizada)) {
     console.log(`\u{1F680} [RAG] Fast-path ativado: sauda\xE7\xE3o detectada localmente.`);
     res.write(`data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}
 
 `);
     const mensagens2 = [
-      { role: "system", content: SAUDACAO_SYSTEM_PROMPT },
+      { role: "system", content: GREETING_SYSTEM_PROMPT },
       { role: "user", content: pergunta }
     ];
     const t32 = Date.now();
@@ -1490,7 +1490,7 @@ ${"\u2500".repeat(50)}`);
 
 `);
     if (session) {
-      updateSession(session.sessionId, pergunta, "SAUDACAO", "");
+      updateSession(session.sessionId, pergunta, "GREETING", "");
     }
     console.log(`\u23F1\uFE0F  [RAG] Fast-path conclu\xEDdo em ${(totalMs2 / 1e3).toFixed(1)}s (sem busca)
 `);
@@ -1499,13 +1499,13 @@ ${"\u2500".repeat(50)}`);
   const t0 = Date.now();
   const { intencao, perguntaReescrita } = await reescreverPergunta(perguntaContextualizada);
   const rewriteMs = Date.now() - t0;
-  if (intencao === "SAUDACAO" || intencao === "SAUDA\xC7\xC3O") {
-    console.log(`\u{1F680} [RAG] Fast-path ativado: reescrevedor classificou como SAUDACAO.`);
+  if (intencao === "GREETING") {
+    console.log(`\u{1F680} [RAG] Fast-path ativado: reescrevedor classificou como GREETING.`);
     res.write(`data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}
 
 `);
     const mensagens2 = [
-      { role: "system", content: SAUDACAO_SYSTEM_PROMPT },
+      { role: "system", content: GREETING_SYSTEM_PROMPT },
       { role: "user", content: pergunta }
     ];
     const t32 = Date.now();
@@ -1516,7 +1516,7 @@ ${"\u2500".repeat(50)}`);
 
 `);
     if (session) {
-      updateSession(session.sessionId, pergunta, "SAUDACAO", "");
+      updateSession(session.sessionId, pergunta, "GREETING", "");
     }
     console.log(`\u23F1\uFE0F  [RAG] Fast-path LLM conclu\xEDdo em ${(totalMs2 / 1e3).toFixed(1)}s (sem busca)
 `);
@@ -1673,9 +1673,9 @@ async function enviarPergunta(req, res) {
     }
   }
 }
-async function registrarFeedback(req, res) {
+async function registerFeedback(req, res) {
   try {
-    const { sessionId, messageId, feedback, pergunta, resposta } = req.body;
+    const { sessionId, messageId, feedback, question, response } = req.body;
     if (!feedback || feedback !== "up" && feedback !== "down") {
       res.status(400).json({
         erro: "O campo 'feedback' \xE9 obrigat\xF3rio e deve ser 'up' ou 'down'."
@@ -1687,10 +1687,10 @@ async function registrarFeedback(req, res) {
     console.log(`   Sess\xE3o: ${sessionId || "N/A"}`);
     console.log(`   ID Mensagem: ${messageId || "N/A"}`);
     console.log(`   Voto: ${feedback === "up" ? "\u{1F44D} \xDAtil" : "\u{1F44E} N\xE3o \xDAtil"}`);
-    if (pergunta)
-      console.log(`   Pergunta: "${pergunta}"`);
-    if (resposta)
-      console.log(`   Resposta: "${resposta.substring(0, 150)}..."`);
+    if (question)
+      console.log(`   Pergunta: "${question}"`);
+    if (response)
+      console.log(`   Resposta: "${response.substring(0, 150)}..."`);
     console.log(`${"\u2500".repeat(40)}`);
     res.status(200).json({ sucesso: true });
   } catch (error) {
@@ -1704,7 +1704,7 @@ async function registrarFeedback(req, res) {
 // src/routes/chat.routes.ts
 var chatRouter = Router();
 chatRouter.post("/", enviarPergunta);
-chatRouter.post("/feedback", registrarFeedback);
+chatRouter.post("/feedback", registerFeedback);
 
 // src/routes/embedding.routes.ts
 import { Router as Router2 } from "express";
@@ -27149,18 +27149,18 @@ ${"\u2500".repeat(50)}`);
   res.write(`data: ${JSON.stringify({ type: "status", status: "Analisando pergunta..." })}
 
 `);
-  if (detectarBypassSaudacao(perguntaContextualizada)) {
+  if (detectGreetingBypass(perguntaContextualizada)) {
     console.log(`\u{1F680} [Agente] Fast-path ativado: sauda\xE7\xE3o detectada localmente.`);
     res.write(`data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}
 
 `);
     const mensagens = [
-      { role: "system", content: SAUDACAO_SYSTEM_PROMPT },
+      { role: "system", content: GREETING_SYSTEM_PROMPT },
       { role: "user", content: pergunta }
     ];
     await streamRespostaOllama(mensagens, res, []);
     if (session) {
-      updateSession(session.sessionId, pergunta, "", "");
+      updateSession(session.sessionId, pergunta, "GREETING", "");
     }
     const duracao2 = ((Date.now() - inicio) / 1e3).toFixed(1);
     console.log(`\u23F1\uFE0F  [Agente] Fast-path conclu\xEDdo em ${duracao2}s (sem busca/ferramentas)
