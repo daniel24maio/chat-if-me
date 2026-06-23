@@ -28,6 +28,9 @@ import {
 
 const app = express();
 
+// Habilita o trust proxy para que o express-rate-limit identifique o IP real do cliente atrás de proxies (Docker, Nginx, Cloudflare)
+app.set("trust proxy", true);
+
 // Porta configurável via variável de ambiente (padrão: 3333)
 const PORT = Number(process.env.PORT) || 3333;
 

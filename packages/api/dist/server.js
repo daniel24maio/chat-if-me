@@ -893,8 +893,12 @@ async function reescreverComLLM(systemPrompt, pergunta) {
     throw new Error(`[Ollama Rewrite] Erro ${response.status}: ${errorText}`);
   }
   const data = await response.json();
-  if (!data.message?.content) {
-    throw new Error("[Ollama Rewrite] Resposta inv\xE1lida \u2014 campo 'message.content' ausente");
+  if (data.error) {
+    throw new Error(`[Ollama Rewrite] Erro do Ollama: ${data.error}`);
+  }
+  if (!data.message || typeof data.message.content !== "string") {
+    console.error("\u274C [Ollama Rewrite] Resposta inv\xE1lida:", JSON.stringify(data));
+    throw new Error("[Ollama Rewrite] Resposta inv\xE1lida \u2014 campo 'message.content' ausente ou inv\xE1lido");
   }
   return data.message.content.trim();
 }
@@ -926,6 +930,7 @@ async function streamRespostaOllama(mensagens, res, fontes) {
   const reader = ollamaResponse.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let gerouTokens = false;
   try {
     while (true) {
       const { done, value } = await reader.read();
@@ -940,7 +945,11 @@ async function streamRespostaOllama(mensagens, res, fontes) {
           continue;
         try {
           const chunk = JSON.parse(trimmed);
+          if (chunk.error) {
+            console.error("\u274C [Ollama LLM Stream] Erro retornado no chunk:", chunk.error);
+          }
           if (chunk.message?.content) {
+            gerouTokens = true;
             res.write(`data: ${JSON.stringify({ type: "token", content: chunk.message.content })}
 
 `);
@@ -956,6 +965,7 @@ async function streamRespostaOllama(mensagens, res, fontes) {
       try {
         const chunk = JSON.parse(buffer.trim());
         if (chunk.message?.content) {
+          gerouTokens = true;
           res.write(`data: ${JSON.stringify({ type: "token", content: chunk.message.content })}
 
 `);
@@ -966,13 +976,22 @@ async function streamRespostaOllama(mensagens, res, fontes) {
   } finally {
     reader.releaseLock();
   }
+  if (!gerouTokens) {
+    console.warn("\u26A0\uFE0F [Ollama] Resposta vazia no streaming. Enviando fallback.");
+    const fallbackMsg = "N\xE3o encontrei essa informa\xE7\xE3o nos documentos dispon\xEDveis. Recomendo consultar a coordena\xE7\xE3o do curso ou acessar o portal do IFMG.";
+    res.write(
+      `data: ${JSON.stringify({ type: "token", content: fallbackMsg })}
+
+`
+    );
+  }
   res.write(`data: [DONE]
 
 `);
 }
 
 // src/services/rag.service.ts
-var REWRITE_SYSTEM_PROMPT = `Voc\xEA \xE9 um assistente de pr\xE9-processamento de consultas para um sistema de busca de documentos acad\xEAmicos do IFMG (Instituto Federal de Minas Gerais), Campus Ouro Branco, curso de Sistemas de Informa\xE7\xE3o.
+var REWRITE_SYSTEM_PROMPT = `Voc\xEA \xE9 um assistente de pr\xE9-processamento de consultas para um sistema de busca de documentos acad\xEAmicos do IFMG (Instituto Federal de Minas Gerais), Campus Ouro Branco.
 
 Sua tarefa: reescrever a pergunta do usu\xE1rio para melhorar a busca sem\xE2ntica em documentos acad\xEAmicos.
 
@@ -1034,7 +1053,7 @@ async function gerarEmbedding(texto) {
 }
 var RRF_K = 60;
 var RRF_ALPHA = 0.5;
-async function buscarHibrido(embedding, queryTexto, limite = 5) {
+async function buscarHibrido(embedding, queryTexto, limite = 3) {
   console.log(
     `\u{1F50D} [RAG] Busca h\xEDbrida: vetorial (\u03B1=${RRF_ALPHA}) + FTS (1-\u03B1=${1 - RRF_ALPHA}), k=${RRF_K}`
   );
@@ -1103,21 +1122,21 @@ Sua fun\xE7\xE3o \xE9 responder d\xFAvidas dos alunos sobre regulamentos, PPC (P
 
 INTEN\xC7\xC3O DA PERGUNTA: [${intencao}] (Foque a sua resposta no contexto dessa inten\xE7\xE3o).
 
+CONTEXTO (trechos dos documentos oficiais do curso):
+${contexto}
+
 REGRAS OBRIGAT\xD3RIAS (siga rigorosamente):
-1. Use EXCLUSIVAMENTE as informa\xE7\xF5es dos trechos de documentos fornecidos abaixo.
+1. Use EXCLUSIVAMENTE as informa\xE7\xF5es do CONTEXTO acima.
 2. N\xC3O invente, suponha ou complemente com conhecimento externo.
 3. Se a resposta n\xE3o estiver nos trechos, diga: "N\xE3o encontrei essa informa\xE7\xE3o nos documentos dispon\xEDveis. Recomendo consultar a coordena\xE7\xE3o do curso ou acessar o portal do IFMG."
 4. Cite a fonte (nome do documento) quando poss\xEDvel.
 
-DIRETIVAS DE IDIOMA E FORMATA\xC7\xC3O:
-- REGRA ABSOLUTA: Voc\xEA deve responder EXCLUSIVAMENTE em Portugu\xEAs do Brasil (pt-BR). Traduza qualquer termo do contexto que esteja em ingl\xEAs.
-- Seja direto, cordial e acad\xEAmico. Nunca invente informa\xE7\xF5es.
+DIRETIVAS OBRIGAT\xD3RIAS DE IDIOMA E FORMATA\xC7\xC3O:
+- REGRA ABSOLUTA: Voc\xEA deve responder EXCLUSIVAMENTE em Portugu\xEAs do Brasil (pt-BR). Traduza qualquer termo do contexto que esteja em ingl\xEAs. \xC9 proibido responder em ingl\xEAs ou qualquer outro idioma.
+- Seja direto, cordial e acad\xEAmico.
 - Use '### ' para subt\xEDtulos.
 - Use bullet points ('* ') para listar disciplinas, cargas hor\xE1rias ou t\xF3picos.
-- Use **negrito** para destacar nomes de cursos, regras e n\xFAmeros importantes.
-
-CONTEXTO (trechos dos documentos oficiais do curso):
-${contexto}`;
+- Use **negrito** para destacar termos e n\xFAmeros importantes.`;
   return [
     { role: "system", content: systemPrompt },
     { role: "user", content: pergunta }
@@ -26612,28 +26631,36 @@ var NUM_CTX2 = Number(process.env.OLLAMA_NUM_CTX) || 2048;
 var FETCH_TIMEOUT_MS2 = 38e4;
 var AGENT_SYSTEM_PROMPT = `Voc\xEA \xE9 o assistente virtual oficial do IFMG Campus Ouro Branco.
 
-Voc\xEA tem acesso a uma ferramenta de busca nos documentos oficiais do curso. USE ESTA FERRAMENTA para responder perguntas sobre:
-- Regulamentos acad\xEAmicos
-- PPC (Projeto Pedag\xF3gico do Curso)
-- Grade curricular e carga hor\xE1ria
-- TCC, est\xE1gio, atividades complementares
-- Normas do campus e informa\xE7\xF5es institucionais
+Voc\xEA tem acesso a uma ferramenta de busca nos documentos oficiais (cursos, PPC, regulamentos, portarias, ementas). USE ESTA FERRAMENTA para responder perguntas sobre regulamentos acad\xEAmicos, PPC, grade curricular, TCC, est\xE1gio, atividades complementares e normas gerais do campus.
 
 REGRAS OBRIGAT\xD3RIAS:
-1. SEMPRE use a ferramenta search_ifmg_knowledge antes de responder perguntas sobre o curso.
-2. Na ferramenta de busca, voc\xEA DEVE classificar a inten\xE7\xE3o (intent) da pergunta (CURSO, DISCIPLINA, CONTEUDO ou OUTRAS).
-3. Use EXCLUSIVAMENTE as informa\xE7\xF5es retornadas pela ferramenta.
-4. N\xC3O invente, suponha ou complemente com conhecimento externo.
-5. Se a ferramenta n\xE3o retornar resultados relevantes, diga: "N\xE3o encontrei essa informa\xE7\xE3o nos documentos dispon\xEDveis. Recomendo consultar a coordena\xE7\xE3o do curso."
-6. Cite a fonte (nome do documento) quando poss\xEDvel.
-7. Para sauda\xE7\xF5es simples (ol\xE1, bom dia), responda diretamente sem usar a ferramenta.
+1. SEMPRE use a ferramenta search_ifmg_knowledge antes de responder perguntas acad\xEAmicas ou sobre normas do campus.
+2. Ao gerar o par\xE2metro 'query' na ferramenta de busca:
+   - Extraia APENAS palavras-chave principais e nomes pr\xF3prios (proibido usar frases completas, pronomes ou conectivos).
+   - SEMPRE EXPANDA SIGLAS acad\xEAmicas (ex: TCC -> Trabalho de Conclus\xE3o de Curso, PPC -> Projeto Pedag\xF3gico do Curso, AC -> Atividades Complementares, IRA -> \xCDndice de Rendimento Acad\xEAmico).
+3. Ao gerar o par\xE2metro 'intent', classifique a inten\xE7\xE3o estritamente em uma destas 10 categorias:
+   - INGRESSO_MATRICULA: Vestibular, SISU, transfer\xEAncias, trancamento, renova\xE7\xE3o de matr\xEDcula.
+   - ESTRUTURA_CURSOS: Matriz curricular, PPC, dura\xE7\xE3o de cursos, regras gerais dos cursos do campus.
+   - DISCIPLINA_EMENTA: Carga hor\xE1ria espec\xEDfica, pr\xE9-requisitos, conte\xFAdo program\xE1tico, ementas, bibliografia.
+   - AVALIACAO_FREQUENCIA: Pontua\xE7\xE3o, provas, aprova\xE7\xE3o, limite de faltas (25%), abono/atestados.
+   - TCC: Regras, documenta\xE7\xE3o, orientadores e bancas de Trabalho de Conclus\xE3o de Curso.
+   - ATIVIDADES_EXTRAS: Horas complementares (AAC), pesquisa, extens\xE3o, monitoria.
+   - ASSISTENCIA_BOLSAS: Assist\xEAncia estudantil, aux\xEDlios (moradia, transporte), bolsas de estudo.
+   - INFRA_CAMPUS: Biblioteca, laborat\xF3rios, restaurante, hor\xE1rios de funcionamento, setores administrativos.
+   - DIREITOS_DEVERES: Regime disciplinar, deveres dos alunos, penalidades, direitos discentes.
+   - OUTRAS: Para qualquer outro assunto acad\xEAmico ou geral.
+4. Use EXCLUSIVAMENTE as informa\xE7\xF5es retornadas pela ferramenta. N\xE3o invente ou complemente com conhecimento externo.
+5. Filtre estritamente os resultados: IGNORE e n\xE3o cite disciplinas, ementas, ou dados secund\xE1rios contidos nos trechos de contexto que n\xE3o sejam o foco direto da d\xFAvida do usu\xE1rio.
+6. Se a ferramenta n\xE3o retornar resultados relevantes, diga: "N\xE3o encontrei essa informa\xE7\xE3o nos documentos dispon\xEDveis. Recomendo consultar a coordena\xE7\xE3o do seu curso ou o setor correspondente do IFMG."
+7. Cite a fonte (nome do documento) quando poss\xEDvel.
+8. Para sauda\xE7\xF5es simples (ol\xE1, bom dia), responda diretamente sem usar a ferramenta.
 
 DIRETIVAS DE IDIOMA E FORMATA\xC7\xC3O:
-- REGRA ABSOLUTA: Voc\xEA deve responder EXCLUSIVAMENTE em Portugu\xEAs do Brasil (pt-BR). Traduza qualquer termo do contexto que esteja em ingl\xEAs.
-- Seja direto, cordial e acad\xEAmico. Nunca invente informa\xE7\xF5es.
+- REGRA ABSOLUTA: Responda EXCLUSIVAMENTE em Portugu\xEAs do Brasil (pt-BR).
+- Seja direto, cordial e acad\xEAmico.
 - Use '### ' para subt\xEDtulos.
-- Use bullet points ('* ') para listar disciplinas, cargas hor\xE1rias ou t\xF3picos.
-- Use **negrito** para destacar nomes de cursos, regras e n\xFAmeros importantes.`;
+- Use bullet points ('* ') para listas.
+- Use **negrito** para destacar termos importantes.`;
 var mcpClient = null;
 var ollamaTools = [];
 async function inicializarMCPClient() {
@@ -26815,15 +26842,22 @@ ${"\u2500".repeat(50)}`);
     }
   }
   console.log("\u{1F30A} [Agente] Passo 3: Gerando resposta final com streaming...");
+  const messagesFinal = [
+    ...messages,
+    {
+      role: "system",
+      content: "DIRETIVA OBRIGAT\xD3RIA: Responda EXCLUSIVAMENTE em Portugu\xEAs do Brasil (pt-BR). Baseie-se apenas nos dados retornados pela ferramenta acima e ignore trechos de outras disciplinas n\xE3o relacionadas."
+    }
+  ];
   const streamResponse = await fetch(`${OLLAMA_BASE_URL2}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS2),
     body: JSON.stringify({
       model: LLM_MODEL2,
-      messages,
+      messages: messagesFinal,
       stream: true,
-      keep_alive: "24h",
+      keep_alive: "1h",
       options: { num_ctx: NUM_CTX2 }
     })
   });
@@ -26839,6 +26873,7 @@ ${"\u2500".repeat(50)}`);
   const reader = streamResponse.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let gerouTokens = false;
   try {
     while (true) {
       const { done, value } = await reader.read();
@@ -26854,6 +26889,7 @@ ${"\u2500".repeat(50)}`);
         try {
           const chunk = JSON.parse(trimmed);
           if (chunk.message?.content) {
+            gerouTokens = true;
             res.write(
               `data: ${JSON.stringify({ type: "token", content: chunk.message.content })}
 
@@ -26871,6 +26907,7 @@ ${"\u2500".repeat(50)}`);
       try {
         const chunk = JSON.parse(buffer.trim());
         if (chunk.message?.content) {
+          gerouTokens = true;
           res.write(
             `data: ${JSON.stringify({ type: "token", content: chunk.message.content })}
 
@@ -26882,6 +26919,15 @@ ${"\u2500".repeat(50)}`);
     }
   } finally {
     reader.releaseLock();
+  }
+  if (!gerouTokens) {
+    console.warn("\u26A0\uFE0F [Agente] Resposta vazia no streaming. Enviando fallback.");
+    const fallbackMsg = "N\xE3o encontrei essa informa\xE7\xE3o nos documentos dispon\xEDveis. Recomendo consultar a coordena\xE7\xE3o do curso ou acessar o portal do IFMG.";
+    res.write(
+      `data: ${JSON.stringify({ type: "token", content: fallbackMsg })}
+
+`
+    );
   }
   res.write(`data: [DONE]
 
@@ -27014,6 +27060,7 @@ function adminAuth(req, res, next) {
 
 // src/server.ts
 var app = express();
+app.set("trust proxy", true);
 var PORT = Number(process.env.PORT) || 3333;
 var allowedOrigins = (process.env.CORS_ORIGINS || process.env.FRONTEND_URL || "http://localhost:5173").split(",").map((s) => s.trim());
 app.use(
