@@ -16,6 +16,8 @@ import {
 import {
   detectGreetingBypass,
   GREETING_SYSTEM_PROMPT,
+  streamStaticGreeting,
+  STATIC_GREETING_RESPONSE,
 } from "./fast_path.util.js";
 
 /**
@@ -361,20 +363,15 @@ export async function processarPerguntaStream(
     console.log(`🚀 [RAG] Fast-path ativado: saudação detectada localmente.`);
     res.write(`data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}\n\n`);
 
-    const mensagens = [
-      { role: "system", content: GREETING_SYSTEM_PROMPT },
-      { role: "user", content: pergunta },
-    ] as OllamaChatMessage[];
-
     const t3 = Date.now();
-    await streamRespostaOllama(mensagens, res, []);
+    await streamStaticGreeting(res);
     const generationMs = Date.now() - t3;
     const totalMs = Date.now() - inicio;
 
     res.write(`data: ${JSON.stringify({ type: "metrics", timings: { rewrite: 0, embedding: 0, retrieval: 0, generation: generationMs, total: totalMs } })}\n\n`);
 
     if (session) {
-      updateSession(session.sessionId, pergunta, "GREETING", "");
+      updateSession(session.sessionId, pergunta, "GREETING", STATIC_GREETING_RESPONSE);
     }
 
     console.log(`⏱️  [RAG] Fast-path concluído em ${(totalMs / 1000).toFixed(1)}s (sem busca)\n`);
@@ -391,20 +388,15 @@ export async function processarPerguntaStream(
     console.log(`🚀 [RAG] Fast-path ativado: reescrevedor classificou como GREETING.`);
     res.write(`data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}\n\n`);
 
-    const mensagens = [
-      { role: "system", content: GREETING_SYSTEM_PROMPT },
-      { role: "user", content: pergunta },
-    ] as OllamaChatMessage[];
-
     const t3 = Date.now();
-    await streamRespostaOllama(mensagens, res, []);
+    await streamStaticGreeting(res);
     const generationMs = Date.now() - t3;
     const totalMs = Date.now() - inicio;
 
     res.write(`data: ${JSON.stringify({ type: "metrics", timings: { rewrite: rewriteMs, embedding: 0, retrieval: 0, generation: generationMs, total: totalMs } })}\n\n`);
 
     if (session) {
-      updateSession(session.sessionId, pergunta, "GREETING", "");
+      updateSession(session.sessionId, pergunta, "GREETING", STATIC_GREETING_RESPONSE);
     }
 
     console.log(`⏱️  [RAG] Fast-path LLM concluído em ${(totalMs / 1000).toFixed(1)}s (sem busca)\n`);

@@ -1291,11 +1291,28 @@ function detectGreetingBypass(question) {
   }
   return false;
 }
-var GREETING_SYSTEM_PROMPT = `Voc\xEA \xE9 o assistente virtual oficial do IFMG Campus Ouro Branco.
-Responda de forma amig\xE1vel \xE0 sauda\xE7\xE3o do usu\xE1rio ou explique suas fun\xE7\xF5es.
-Seja cordial, educado e explique sucintamente que voc\xEA ajuda os alunos com informa\xE7\xF5es acad\xEAmicas, regulamentos do curso, Projeto Pedag\xF3gico do Curso (PPC), grade curricular e normas do campus.
-Diga que o usu\xE1rio pode fazer perguntas sobre esses t\xF3picos.
-Responda obrigatoriamente em Portugu\xEAs do Brasil (pt-BR).`;
+var STATIC_GREETING_RESPONSE = `Ol\xE1! Seja muito bem-vindo(a)! \u{1F44B}
+
+Sou o assistente virtual oficial do IFMG Campus Ouro Branco. Estou aqui para ajudar voc\xEA com informa\xE7\xF5es acad\xEAmicas, incluindo regulamentos do curso, o Projeto Pedag\xF3gico do Curso (PPC), a grade curricular e as normas do campus.
+
+Voc\xEA pode fazer perguntas sobre esses t\xF3picos! Estou \xE0 sua disposi\xE7\xE3o. \u{1F60A}`;
+async function streamStaticGreeting(res) {
+  res.write(`data: ${JSON.stringify({ type: "fontes", fontes: [] })}
+
+`);
+  const words = STATIC_GREETING_RESPONSE.split(/(\s+)/);
+  const groupSize = 4;
+  for (let i = 0; i < words.length; i += groupSize) {
+    const chunk = words.slice(i, i + groupSize).join("");
+    res.write(`data: ${JSON.stringify({ type: "token", content: chunk })}
+
+`);
+    await new Promise((resolve3) => setTimeout(resolve3, 15));
+  }
+  res.write(`data: [DONE]
+
+`);
+}
 
 // src/services/rag.service.ts
 var REWRITE_SYSTEM_PROMPT = `Voc\xEA \xE9 um assistente de pr\xE9-processamento de consultas para um sistema de busca de documentos acad\xEAmicos do IFMG (Instituto Federal de Minas Gerais), Campus Ouro Branco.
@@ -1479,19 +1496,15 @@ ${"\u2500".repeat(50)}`);
     res.write(`data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}
 
 `);
-    const mensagens2 = [
-      { role: "system", content: GREETING_SYSTEM_PROMPT },
-      { role: "user", content: pergunta }
-    ];
     const t32 = Date.now();
-    await streamRespostaOllama(mensagens2, res, []);
+    await streamStaticGreeting(res);
     const generationMs2 = Date.now() - t32;
     const totalMs2 = Date.now() - inicio;
     res.write(`data: ${JSON.stringify({ type: "metrics", timings: { rewrite: 0, embedding: 0, retrieval: 0, generation: generationMs2, total: totalMs2 } })}
 
 `);
     if (session) {
-      updateSession(session.sessionId, pergunta, "GREETING", "");
+      updateSession(session.sessionId, pergunta, "GREETING", STATIC_GREETING_RESPONSE);
     }
     console.log(`\u23F1\uFE0F  [RAG] Fast-path conclu\xEDdo em ${(totalMs2 / 1e3).toFixed(1)}s (sem busca)
 `);
@@ -1505,19 +1518,15 @@ ${"\u2500".repeat(50)}`);
     res.write(`data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}
 
 `);
-    const mensagens2 = [
-      { role: "system", content: GREETING_SYSTEM_PROMPT },
-      { role: "user", content: pergunta }
-    ];
     const t32 = Date.now();
-    await streamRespostaOllama(mensagens2, res, []);
+    await streamStaticGreeting(res);
     const generationMs2 = Date.now() - t32;
     const totalMs2 = Date.now() - inicio;
     res.write(`data: ${JSON.stringify({ type: "metrics", timings: { rewrite: rewriteMs, embedding: 0, retrieval: 0, generation: generationMs2, total: totalMs2 } })}
 
 `);
     if (session) {
-      updateSession(session.sessionId, pergunta, "GREETING", "");
+      updateSession(session.sessionId, pergunta, "GREETING", STATIC_GREETING_RESPONSE);
     }
     console.log(`\u23F1\uFE0F  [RAG] Fast-path LLM conclu\xEDdo em ${(totalMs2 / 1e3).toFixed(1)}s (sem busca)
 `);
@@ -27154,13 +27163,9 @@ ${"\u2500".repeat(50)}`);
     res.write(`data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}
 
 `);
-    const mensagens = [
-      { role: "system", content: GREETING_SYSTEM_PROMPT },
-      { role: "user", content: pergunta }
-    ];
-    await streamRespostaOllama(mensagens, res, []);
+    await streamStaticGreeting(res);
     if (session) {
-      updateSession(session.sessionId, pergunta, "GREETING", "");
+      updateSession(session.sessionId, pergunta, "GREETING", STATIC_GREETING_RESPONSE);
     }
     const duracao2 = ((Date.now() - inicio) / 1e3).toFixed(1);
     console.log(`\u23F1\uFE0F  [Agente] Fast-path conclu\xEDdo em ${duracao2}s (sem busca/ferramentas)

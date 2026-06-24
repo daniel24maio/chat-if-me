@@ -12,6 +12,8 @@ import {
 import {
   detectGreetingBypass,
   GREETING_SYSTEM_PROMPT,
+  streamStaticGreeting,
+  STATIC_GREETING_RESPONSE,
 } from "./fast_path.util.js";
 import { streamRespostaOllama, type OllamaChatMessage } from "../config/ollama.js";
 
@@ -234,15 +236,10 @@ export async function processarPerguntaAgente(
     console.log(`🚀 [Agente] Fast-path ativado: saudação detectada localmente.`);
     res.write(`data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}\n\n`);
 
-    const mensagens: OllamaChatMessage[] = [
-      { role: "system", content: GREETING_SYSTEM_PROMPT },
-      { role: "user", content: pergunta },
-    ];
-
-    await streamRespostaOllama(mensagens, res, []);
+    await streamStaticGreeting(res);
 
     if (session) {
-      updateSession(session.sessionId, pergunta, "GREETING", "");
+      updateSession(session.sessionId, pergunta, "GREETING", STATIC_GREETING_RESPONSE);
     }
 
     const duracao = ((Date.now() - inicio) / 1000).toFixed(1);

@@ -1,3 +1,5 @@
+import type { Response } from "express";
+
 /**
  * Utilitário para detecção rápida de saudações e dúvidas sobre as capacidades do robô.
  * Evita chamadas caras ao LLM de reescrita, busca semântica no banco de dados
@@ -50,6 +52,16 @@ export function detectGreetingBypass(question: string): boolean {
 }
 
 /**
+ * Resposta de saudação padrão do assistente.
+ * Retornada de forma estática para garantir alta velocidade e evitar erros de cold start na GPU/Ollama.
+ */
+export const STATIC_GREETING_RESPONSE = `Olá! Seja muito bem-vindo(a)! 👋
+
+Sou o assistente virtual oficial do IFMG Campus Ouro Branco. Estou aqui para ajudar você com informações acadêmicas, incluindo regulamentos do curso, o Projeto Pedagógico do Curso (PPC), a grade curricular e as normas do campus.
+
+Você pode fazer perguntas sobre esses tópicos! Estou à sua disposição. 😊`;
+
+/**
  * Prompt do sistema especializado em saudações e apresentação.
  * É usado como System Prompt quando o pipeline pula a busca de documentos.
  */
@@ -58,3 +70,25 @@ Responda de forma amigável à saudação do usuário ou explique suas funções
 Seja cordial, educado e explique sucintamente que você ajuda os alunos com informações acadêmicas, regulamentos do curso, Projeto Pedagógico do Curso (PPC), grade curricular e normas do campus.
 Diga que o usuário pode fazer perguntas sobre esses tópicos.
 Responda obrigatoriamente em Português do Brasil (pt-BR).`;
+
+/**
+ * Faz streaming de uma resposta estática de saudação (simulando digitação para UX).
+ */
+export async function streamStaticGreeting(res: Response): Promise<void> {
+  // Envia fontes vazias inicialmente
+  res.write(`data: ${JSON.stringify({ type: "fontes", fontes: [] })}\n\n`);
+
+  // Divide o texto em tokens/palavras para simular o efeito de digitação do LLM
+  const words = STATIC_GREETING_RESPONSE.split(/(\s+)/);
+  const groupSize = 4; // Envia de 4 em 4 palavras/espaços
+
+  for (let i = 0; i < words.length; i += groupSize) {
+    const chunk = words.slice(i, i + groupSize).join("");
+    res.write(`data: ${JSON.stringify({ type: "token", content: chunk })}\n\n`);
+    // Pequeno atraso para simulação visual de streaming
+    await new Promise((resolve) => setTimeout(resolve, 15));
+  }
+
+  res.write(`data: [DONE]\n\n`);
+}
+
