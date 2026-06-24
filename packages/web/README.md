@@ -16,6 +16,8 @@ Este pacote contém o frontend da aplicação, desenvolvido com React, Vite e Ta
 *   **Modal de Expiração por Inatividade**: Ao atingir 5 minutos de inatividade, o chat bloqueia a digitação (campo de texto e botão de envio) e exibe um modal overlay (com desfoque de fundo e animação suave) para iniciar uma "Nova Conversa" de forma segura.
 *   **Botões de Feedback**: Adição de botões 👍/👎 para coletar feedback sobre as respostas da IA (ocultados na mensagem inicial de boas-vindas e em avisos do sistema).
 *   **Ocultação Condicional de Fontes**: Em modo RAG clássico, as fontes de documentos são ocultadas da interface para manter o visual limpo, mas são logadas no console do navegador. São visíveis na UI apenas no modo Agente MCP.
+*   **Acessibilidade (Diretrizes WCAG)**: Contraste de cores otimizado para o tema escuro (mínimo de 4.5:1 em textos muted), anéis de foco (`focus-visible`) visíveis em todos os botões e inputs para navegação fluida por teclado, tags `aria-live="polite"` e `aria-atomic="false"` na bolha de streaming, e `aria-label` descritivos nos botões 👍/👎 e campos interativos.
+*   **Otimização Mobile e Tipografia**: Alinhamento à esquerda forçado (`text-align: left`) em todas as bolhas para melhor escaneabilidade sem texto justificado. Aplainamento visual de listas em Markdown para evitar recuos profundos e quebras de layout em telas de smartphones. Inclusão de data (`dd/mm/aaaa hh:mm`) no rodapé dos timestamps.
 *   **Painel Administrativo (`/embedding`)**:
     *   Drag-and-drop de arquivos para envio à API.
     *   Feedback visual do status de processamento por documento.

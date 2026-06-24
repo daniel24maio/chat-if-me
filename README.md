@@ -256,8 +256,10 @@ DIRETIVAS DE IDIOMA E FORMATAÇÃO:
 - 👍/👎 **Feedback de Respostas** — Botões interativos de feedback integrados com o servidor (ocultados na mensagem inicial e avisos do sistema).
 - 📚 **Ocultação Condicional de Fontes** — Em modo RAG clássico, as fontes de documentos são ocultadas da interface para manter o visual limpo (sendo registradas no console do navegador), e permanecem visíveis na UI apenas no modo Agente MCP.
 - ⏱️ Métricas de timing por etapa do pipeline RAG (rewrite, embedding, retrieval, generation)
+- ♿ **Acessibilidade Completa (Diretrizes WCAG)** — Foco visual (`focus-visible`) em todos os botões e links interativos para navegação por teclado, contraste mínimo de cores (≥4.5:1) no tema escuro para textosmuted, suporte a leitores de tela (`aria-live="polite"` + `aria-atomic="false"`) na bolha de streaming, e `aria-label` descritivos nos botões 👍/👎, campo de input e ações de modal.
+- 📱 **Otimização de Layout e Mobile** — Alinhamento à esquerda forçado (`text-align: left`) em todas as bolhas para melhor legibilidade rápida (scanning) e eliminação do texto justificado. Listas aninhadas em Markdown são aplainadas visualmente para evitar "rivers of whitespace" e quebras em telas móveis.
+- 📅 **Data no Timestamp** — Exibição completa de data e horário (`dd/mm/aaaa hh:mm`) no rodapé de cada balão de mensagem para fins de rastreabilidade temporal.
 - 🌙 Dark mode automático (segue preferência do sistema)
-- 📱 Layout responsivo (mobile e desktop)
 - 🔄 Auto-scroll suave durante streaming
 - ✍️ Cursor piscante durante a geração
 
