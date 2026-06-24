@@ -1441,10 +1441,11 @@ REGRAS OBRIGAT\xD3RIAS (siga rigorosamente):
 
 DIRETIVAS OBRIGAT\xD3RIAS DE IDIOMA E FORMATA\xC7\xC3O:
 - REGRA ABSOLUTA: Voc\xEA deve responder EXCLUSIVAMENTE em Portugu\xEAs do Brasil (pt-BR). Traduza qualquer termo do contexto que esteja em ingl\xEAs. \xC9 proibido responder em ingl\xEAs ou qualquer outro idioma.
-- Seja direto, cordial e acad\xEAmico.
-- Use '### ' para subt\xEDtulos.
-- Use bullet points ('* ') para listar disciplinas, cargas hor\xE1rias ou t\xF3picos.
-- Use **negrito** para destacar termos e n\xFAmeros importantes.`;
+- Seja DIRETO E CONCISO. N\xE3o copie longos trechos de texto (como ementas completas ou bibliografias) a menos que o usu\xE1rio tenha solicitado especificamente.
+- Se a inten\xE7\xE3o for [DISCIPLINA] e o usu\xE1rio pedir uma lista de disciplinas de um per\xEDodo, cite APENAS os nomes das disciplinas e seus c\xF3digos.
+- Mantenha a formata\xE7\xE3o simples. Use listas ('* ') com UM \xDANICO N\xCDVEL de aninhamento. NUNCA coloque listas dentro de listas.
+- Use **negrito** para destacar nomes de disciplinas, c\xF3digos ou termos chaves.
+- Finalize com uma pergunta breve e proativa (Ex: "Gostaria que eu detalhasse a ementa de alguma dessas disciplinas?").`;
   return [
     { role: "system", content: systemPrompt },
     { role: "user", content: pergunta }
@@ -27056,17 +27057,16 @@ REGRAS OBRIGAT\xD3RIAS:
    - DIREITOS_DEVERES: Regime disciplinar, deveres dos alunos, penalidades, direitos discentes.
    - OUTRAS: Para qualquer outro assunto acad\xEAmico ou geral.
 4. Use EXCLUSIVAMENTE as informa\xE7\xF5es retornadas pela ferramenta. N\xE3o invente ou complemente com conhecimento externo.
-5. Filtre estritamente os resultados: IGNORE e n\xE3o cite disciplinas, ementas, ou dados secund\xE1rios contidos nos trechos de contexto que n\xE3o sejam o foco direto da d\xFAvida do usu\xE1rio.
+5. FILTRE ESTRITAMENTE: Extraia APENAS a informa\xE7\xE3o pontual que responde \xE0 pergunta do usu\xE1rio. \xC9 EXPRESSAMENTE PROIBIDO gerar longos blocos de texto, ementas completas ou eixos curriculares se a pergunta for apenas sobre listar mat\xE9rias ou verificar carga hor\xE1ria.
 6. Se a ferramenta n\xE3o retornar resultados relevantes, diga: "N\xE3o encontrei essa informa\xE7\xE3o nos documentos dispon\xEDveis. Recomendo consultar a coordena\xE7\xE3o do seu curso ou o setor correspondente do IFMG."
 7. Cite a fonte (nome do documento) quando poss\xEDvel.
 8. Para sauda\xE7\xF5es simples (ol\xE1, bom dia), responda diretamente sem usar a ferramenta.
 
 DIRETIVAS DE IDIOMA E FORMATA\xC7\xC3O:
 - REGRA ABSOLUTA: Responda EXCLUSIVAMENTE em Portugu\xEAs do Brasil (pt-BR).
-- Seja direto, cordial e acad\xEAmico.
-- Use '### ' para subt\xEDtulos.
-- Use bullet points ('* ') para listas.
-- Use **negrito** para destacar termos importantes.`;
+- ECONOMIA DE TOKENS: Seja extremamente direto e conciso. N\xE3o enrole na introdu\xE7\xE3o ou conclus\xE3o.
+- FORMATA\xC7\xC3O SIMPLES: Use bullet points ('* ') APENAS no n\xEDvel principal. NUNCA crie listas aninhadas ou recuos secund\xE1rios.
+- Use **negrito** para destacar os termos principais (Ex: nomes das mat\xE9rias).`;
 var mcpClient = null;
 var ollamaTools = [];
 async function inicializarMCPClient() {
