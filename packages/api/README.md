@@ -18,7 +18,7 @@ Este pacote contém o backend da aplicação, desenvolvido com Node.js, Express,
     *   Resolução léxica de pronomes e contexto de entidades acadêmicas.
 *   **Otimização de Saudações (Fast-Path Bypass)** ([fast_path.util.ts](src/services/fast_path.util.ts)):
     *   Interceptação de saudações e dúvidas gerais em tempo real (dupla camada: local regex + LLM intent `[GREETING]`).
-    *   Evita busca vetorial no banco e geração de embeddings para respostas instantâneas de saudações, economizando preciosa VRAM na GPU local.
+    *   **Envio de Mensagem Estática (`streamStaticGreeting`)**: Responde instantaneamente com uma mensagem de apresentação pré-definida (`STATIC_GREETING_RESPONSE`) simulando o efeito de digitação, evitando qualquer chamada ao LLM no homelab (eliminando latência, uso de VRAM e falhas por cold-starts).
 *   **Status Dinâmicos SSE**:
     *   Pushes de status intermediários enviados em tempo real para manter o frontend ciente do progresso interno do pipeline.
 *   **API de Feedback**:

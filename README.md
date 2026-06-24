@@ -93,7 +93,7 @@ Nessa arquitetura agêntica baseada no protocolo MCP (**Model Context Protocol**
 2. **Passo 1 — Primeira Chamada (Decisão e Tool Calling):**
    - O Express envia a pergunta original do aluno para o Ollama com a lista de ferramentas declaradas (sem streaming).
    - O LLM analisa o prompt e decide de forma autônoma se precisa executar uma busca nos documentos. 
-     - Para saudações e interações simples, ele gera uma resposta direta e encerra o pipeline.
+     - Para saudações e interações simples, o pipeline detecta localmente no fast-path e envia a mensagem de apresentação estática, encerrando o fluxo.
      - Para perguntas acadêmicas, ele gera um objeto `tool_calls` solicitando a invocação da ferramenta `search_ifmg_knowledge`. Ele deve obrigatoriamente preencher dois parâmetros: `query` (termos chaves/nomes próprios limpos e com siglas expandidas) e `intent` (uma das 10 categorias de intenção acadêmica).
 
 3. **Passo 2 — Execução da Tool via Servidor MCP:**
@@ -286,7 +286,7 @@ DIRETIVAS DE IDIOMA E FORMATAÇÃO:
 
 ### Backend (API)
 - 🧠 **Memória Conversacional em RAM** — Serviço estruturado com `Map` e expiração de TTL a cada 5 minutos, monitorado por garbage collector de ciclo de 30s. Possui proteção de limite de 100 sessões ativas (evicção LRU) e suporte à resolução de pronomes.
-- 🚀 **Otimização de Saudações (Fast-Path Bypass)** — Dupla camada de detecção (Local Regex + LLM intent `[GREETING]`) que intercepta saudações/ajuda e responde instantaneamente sem acionar busca vetorial ou gerar embeddings (latência mínima e economia de VRAM).
+- 🚀 **Otimização de Saudações (Fast-Path Bypass)** — Dupla camada de detecção (Local Regex + LLM intent `[GREETING]`) que intercepta saudações/ajuda e responde instantaneamente com uma mensagem de apresentação pré-definida (`STATIC_GREETING_RESPONSE`) simulando digitação, sem acionar o LLM no homelab (latência zero, VRAM liberada e proteção total contra cold-starts da GPU).
 - 🔄 **Query Rewriting & Roteamento de Intenção** — reescrita com expansão de siglas e extração da Tag de Intenção (`[CURSO]`, `[DISCIPLINA]`, etc) para guiar o contexto.
 - 🤖 **Agentic RAG (MCP)** — LLM decide autonomamente quando buscar via Tool Calling (agora com suporte à classificação de intenção no prompt).
 - 🔀 **Busca Híbrida (RRF)** — combina busca semântica (`pgvector` HNSW) com busca léxica por palavras-chave (`tsvector` + `portuguese_unaccent`) usando Reciprocal Rank Fusion.
