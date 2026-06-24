@@ -295,10 +295,11 @@ REGRAS OBRIGATÓRIAS (siga rigorosamente):
 
 DIRETIVAS OBRIGATÓRIAS DE IDIOMA E FORMATAÇÃO:
 - REGRA ABSOLUTA: Você deve responder EXCLUSIVAMENTE em Português do Brasil (pt-BR). Traduza qualquer termo do contexto que esteja em inglês. É proibido responder em inglês ou qualquer outro idioma.
-- Seja direto, cordial e acadêmico.
-- Use '### ' para subtítulos.
-- Use bullet points ('* ') para listar disciplinas, cargas horárias ou tópicos.
-- Use **negrito** para destacar termos e números importantes.`;
+- Seja DIRETO E CONCISO. Não copie longos trechos de texto (como ementas completas ou bibliografias) a menos que o usuário tenha solicitado especificamente.
+- Se a intenção for [DISCIPLINA] e o usuário pedir uma lista de disciplinas de um período, cite APENAS os nomes das disciplinas e seus códigos.
+- Mantenha a formatação simples. Use listas ('* ') com UM ÚNICO NÍVEL de aninhamento. NUNCA coloque listas dentro de listas.
+- Use **negrito** para destacar nomes de disciplinas, códigos ou termos chaves.
+- Finalize com uma pergunta breve e proativa (Ex: "Gostaria que eu detalhasse a ementa de alguma dessas disciplinas?").`;
 
   return [
     { role: "system", content: systemPrompt },
