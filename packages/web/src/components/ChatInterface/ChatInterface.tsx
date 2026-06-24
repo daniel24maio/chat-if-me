@@ -50,6 +50,8 @@ const ChatInterface: React.FC = () => {
   const [sessionId, setSessionId] = useState(() => crypto.randomUUID());
   /** Status do pipeline exibido no frontend durante o carregamento */
   const [statusMessage, setStatusMessage] = useState('Analisando pergunta...');
+  /** Indica se a sessão atual expirou devido a inatividade */
+  const [isExpired, setIsExpired] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   /** Ref para abortar o stream se o usuário enviar outra pergunta */
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -180,22 +182,8 @@ const ChatInterface: React.FC = () => {
               setIsStreaming(false);
               return;
             } else if (event.type === 'session_expired') {
-              // Sessão expirada — notificar e reiniciar conversa
-              setMessages([
-                {
-                  id: '1',
-                  text: 'Olá! 👋 Bem-vindo ao Chat Assistente Virtual IFMG — assistente virtual do campus IFMG Ouro Branco.',
-                  sender: 'ai',
-                  timestamp: new Date(),
-                },
-                {
-                  id: 'expiration',
-                  text: '⏰ Sua sessão anterior expirou por inatividade. Uma nova conversa foi iniciada.',
-                  sender: 'ai',
-                  timestamp: new Date(),
-                },
-              ]);
-              setSessionId(crypto.randomUUID());
+              // Sessão expirada — ativa o modal e encerra streaming
+              setIsExpired(true);
               setIsStreaming(false);
               return;
             }
@@ -242,7 +230,7 @@ const ChatInterface: React.FC = () => {
    */
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputValue.trim() || isStreaming) return;
+    if (!inputValue.trim() || isStreaming || isExpired) return;
 
     const currentInput = inputValue.trim();
 
@@ -317,6 +305,24 @@ const ChatInterface: React.FC = () => {
     } catch (error) {
       console.error('[Feedback] Erro ao registrar voto:', error);
     }
+  };
+
+  /**
+   * Reseta o chat para iniciar uma nova conversa.
+   */
+  const handleResetSession = () => {
+    setMessages([
+      {
+        id: '1',
+        text: 'Olá! 👋 Bem-vindo ao Chat Assistente Virtual IFMG — assistente virtual do campus IFMG Ouro Branco.',
+        sender: 'ai',
+        timestamp: new Date(),
+      },
+    ]);
+    setSessionId(crypto.randomUUID());
+    setIsExpired(false);
+    setInputValue('');
+    setStatusMessage('Analisando pergunta...');
   };
 
   return (
@@ -421,19 +427,32 @@ const ChatInterface: React.FC = () => {
             type="text"
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
-            placeholder={isStreaming ? 'Aguarde a resposta...' : 'Digite sua dúvida...'}
+            placeholder={isExpired ? 'Sessão encerrada' : isStreaming ? 'Aguarde a resposta...' : 'Digite sua dúvida...'}
             className="input-field"
-            disabled={isStreaming}
+            disabled={isStreaming || isExpired}
           />
           <button
             type="submit"
             className="submit-btn"
-            disabled={isStreaming || !inputValue.trim()}
+            disabled={isStreaming || !inputValue.trim() || isExpired}
           >
             {isStreaming ? '⏳' : 'Enviar'}
           </button>
         </form>
       </footer>
+
+      {isExpired && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <span className="modal-icon">⏰</span>
+            <h2>Sua sessão expirou</h2>
+            <p>Por inatividade de 5 minutos, sua sessão foi encerrada de forma segura.</p>
+            <button onClick={handleResetSession} className="modal-btn">
+              Nova Conversa
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
