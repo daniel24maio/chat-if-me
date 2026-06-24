@@ -6,27 +6,25 @@ Este pacote contém o backend da aplicação, desenvolvido com Node.js, Express,
 
 ---
 
-## 🛠️ Funcionalidades Principais
+## 🏗️ Arquitetura de Serviços
 
-*   **Duplo Pipeline de Busca (SSE)**:
-    *   **RAG Clássico (`/api/chat`)**: Pipeline sequencial de reescrita, vetorização via Ollama (`bge-m3`), busca híbrida no PostgreSQL (`pgvector` HNSW + FTS) e streaming SSE.
-    *   **Agente MCP (`/api/agent`)**: Pipeline baseado no Model Context Protocol, gerenciando o subprocesso do servidor MCP de forma autônoma.
-*   **Memória Conversacional em RAM** ([memory.service.ts](src/services/memory.service.ts)):
-    *   Sessões gerenciadas na heap de memória do Node.js.
-    *   TTL automático de **5 minutos** (garbage collector rodando a cada 30 segundos).
-    *   Evicção LRU limitada a **100 sessões** para segurança de recursos.
-    *   Resolução léxica de pronomes e contexto de entidades acadêmicas.
-*   **Otimização de Saudações (Fast-Path Bypass)** ([fast_path.util.ts](src/services/fast_path.util.ts)):
-    *   Interceptação de saudações e dúvidas gerais em tempo real (dupla camada: local regex + LLM intent `[GREETING]`).
-    *   **Envio de Mensagem Estática (`streamStaticGreeting`)**: Responde instantaneamente com uma mensagem de apresentação pré-definida (`STATIC_GREETING_RESPONSE`) simulando o efeito de digitação, evitando qualquer chamada ao LLM no homelab (eliminando latência, uso de VRAM e falhas por cold-starts).
-*   **Status Dinâmicos SSE**:
-    *   Pushes de status intermediários enviados em tempo real para manter o frontend ciente do progresso interno do pipeline.
-*   **API de Feedback**:
-    *   Endpoint `POST /api/chat/feedback` estruturado com corpo em inglês para captar e consolidar votos 👍/👎 no console stdout.
-*   **Semáforo de Concorrência (VRAM Guard)**:
-    *   Mecanismo de semáforo baseado em fila em memória que limita inferências paralelas na GPU para evitar travamentos (*Out of Memory*).
+A lógica central da API é modulada em serviços especializados presentes em `src/services/`, cada um com responsabilidades estritas no pipeline de IA:
+
+*   **`rag.service.ts` (Pipeline RAG Clássico)**: Fluxo determinístico para responder dúvidas acadêmicas. Combina *Query Rewriting*, busca vetorial e lexical via *Reciprocal Rank Fusion (RRF)*, além de streaming SSE, sendo extremamente resistente a alucinações.
+*   **`mcp_agent.service.ts` (Agente MCP)**: Pipeline dinâmico baseado no Model Context Protocol, gerenciando o subprocesso do servidor MCP de forma autônoma para orquestrar *Tool Calling*.
+*   **`embedding.service.ts` (Ingestão e Vetorização)**: Processamento de arquivos (PDFs, planilhas), chunking semântico inteligente (jurídico, tabelas), geração de vetores 1024d (`bge-m3`) e inserção no banco híbrido do PostgreSQL.
+*   **`sanitization.service.ts` (Sanitização Avançada)**: Tratamento profundo do texto bruto extraído (OCR), removendo caracteres de controle, corrigindo palavras hifenizadas indevidamente, limpando rodapés/cabeçalhos institucionais padrão e formatando tabelas Markdown antes do corte (*chunking*).
+*   **`memory.service.ts` (Memória em RAM)**: Sessões conversacionais gerenciadas nativamente na heap do Node.js. Conta com *Garbage Collector* ativo (TTL de 5 min), limitador de segurança LRU (máx. 100 sessões ativas) e resolução automática de correferências nas conversas contínuas.
+*   **`fast_path.util.ts` (Bypass Rápido)**: Otimização de saudações (`Olá`, `Bom dia`). Detecta interações primárias instantaneamente (via regex + LLM intent) e envia mensagens pré-fabricadas (`STATIC_GREETING_RESPONSE`), economizando processamento de GPU e evitando demoras de inferência no primeiro contato.
+*   **`queue.service.ts` (VRAM Guard - Semáforo)**: Mecanismo de controle de concorrência que enfileira conexões ativas na porta do Ollama, garantindo que o limite físico da GPU (ex: max 2 requests simultâneos) seja respeitado, impedindo falhas críticas de sistema por *Out of Memory (OOM)*.
 
 ---
+
+## 🛠️ Funcionalidades Adicionais
+
+*   **Duplo Pipeline de Busca (SSE)**: Roteamento de perguntas otimizado para RAG sequencial e agente autônomo MCP.
+*   **Status Dinâmicos SSE**: Pushes de status intermediários enviados em tempo real para manter o frontend ciente do progresso interno do pipeline ("Buscando...", "Lendo documentos...").
+*   **API de Feedback**: Endpoint `POST /api/chat/feedback` para captar e consolidar avaliações qualitativas (👍/👎) nas respostas geradas.-
 
 ## ⚙️ Configuração (Variáveis de Ambiente)
 

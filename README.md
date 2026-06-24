@@ -254,7 +254,7 @@ DIRETIVAS DE IDIOMA E FORMATAÇÃO:
 - ⏰ **Modal de Expiração por Inatividade** — Ao atingir 5 minutos de inatividade, o chat bloqueia a digitação (campo de texto e botão de envio) e exibe um modal overlay (com desfoque de fundo e animação suave) para iniciar uma "Nova Conversa" de forma segura.
 - 💬 **Status Dinâmicos em Tempo Real** — Exibe o status dinâmico do pipeline ("Analisando pergunta...", "Buscando nos documentos...", "Preparando resposta...") na bolha de digitação.
 - 👍/👎 **Feedback de Respostas** — Botões interativos de feedback integrados com o servidor (ocultados na mensagem inicial e avisos do sistema).
-- 📚 **Ocultação Condicional de Fontes** — Em modo RAG clássico, as fontes de documentos são ocultadas da interface para manter o visual limpo (sendo registradas no console do navegador), e permanecem visíveis na UI apenas no modo Agente MCP.
+- 📚 **Ocultação Condicional de Fontes** — No modo RAG clássico, as fontes de documentos são intencionalmente ocultadas da interface para manter o visual limpo (registradas apenas no console do navegador e logs), mas permanecem totalmente visíveis na UI durante o uso do modo Agente MCP.
 - ⏱️ Métricas de timing por etapa do pipeline RAG (rewrite, embedding, retrieval, generation)
 - ♿ **Acessibilidade Completa (Diretrizes WCAG)** — Foco visual (`focus-visible`) em todos os botões e links interativos para navegação por teclado, contraste mínimo de cores (≥4.5:1) no tema escuro para textosmuted, suporte a leitores de tela (`aria-live="polite"` + `aria-atomic="false"`) na bolha de streaming, e `aria-label` descritivos nos botões 👍/👎, campo de input e ações de modal.
 - 📱 **Otimização de Layout e Mobile** — Alinhamento à esquerda forçado (`text-align: left`) em todas as bolhas para melhor legibilidade rápida (scanning) e eliminação do texto justificado. Listas aninhadas em Markdown são aplainadas visualmente para evitar "rivers of whitespace" e quebras em telas móveis.
@@ -287,8 +287,8 @@ DIRETIVAS DE IDIOMA E FORMATAÇÃO:
 - 🗑️ Exclusão de documentos e de todos os seus fragmentos associados
 
 ### Backend (API)
-- 🧠 **Memória Conversacional em RAM** — Serviço estruturado com `Map` e expiração de TTL a cada 5 minutos, monitorado por garbage collector de ciclo de 30s. Possui proteção de limite de 100 sessões ativas (evicção LRU) e suporte à resolução de pronomes.
-- 🚀 **Otimização de Saudações (Fast-Path Bypass)** — Dupla camada de detecção (Local Regex + LLM intent `[GREETING]`) que intercepta saudações/ajuda e responde instantaneamente com uma mensagem de apresentação pré-definida (`STATIC_GREETING_RESPONSE`) simulando digitação, sem acionar o LLM no homelab (latência zero, VRAM liberada e proteção total contra cold-starts da GPU).
+- 🧠 **Memória Conversacional em RAM** (`memory.service.ts`) — Serviço estruturado com `Map` e expiração de TTL a cada 5 minutos, monitorado por garbage collector de ciclo de 30s. Possui proteção de limite de 100 sessões ativas (evicção LRU) e suporte à resolução de pronomes.
+- 🚀 **Otimização de Saudações (Fast-Path Bypass)** (`fast_path.util.ts`) — Dupla camada de detecção (Local Regex + LLM intent `[GREETING]`) que intercepta saudações/ajuda e responde instantaneamente com uma mensagem de apresentação pré-definida (`STATIC_GREETING_RESPONSE`) simulando digitação, sem acionar o LLM no homelab. (Aplicado no Agente MCP).
 - 🔄 **Query Rewriting & Roteamento de Intenção** — reescrita com expansão de siglas e extração da Tag de Intenção (`[CURSO]`, `[DISCIPLINA]`, etc) para guiar o contexto.
 - 🤖 **Agentic RAG (MCP)** — LLM decide autonomamente quando buscar via Tool Calling (agora com suporte à classificação de intenção no prompt).
 - 🔀 **Busca Híbrida (RRF)** — combina busca semântica (`pgvector` HNSW) com busca léxica por palavras-chave (`tsvector` + `portuguese_unaccent`) usando Reciprocal Rank Fusion.
@@ -368,6 +368,8 @@ chat-if-me/
 │           ├── mcp_agent.service.ts     # Agente MCP + Tool Calling
 │           ├── embedding.service.ts     # Ingestão (chunking adaptativo)
 │           ├── sanitization.service.ts  # Sanitização de texto pós-extração
+│           ├── memory.service.ts        # Sessões, TTL e Garbage Collector
+│           ├── fast_path.util.ts        # Interceptação de saudações e bypass
 │           └── queue.service.ts         # Semáforo de concorrência (BullMQ)
 │
 └── packages/web/               # Frontend (React + Vite)
