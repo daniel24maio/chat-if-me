@@ -347,6 +347,7 @@ const ChatInterface: React.FC = () => {
             onClick={() => setUseAgent((prev) => !prev)}
             disabled={isStreaming}
             title={useAgent ? 'Modo: Agente MCP (Tool Calling)' : 'Modo: RAG Clássico'}
+            aria-label={useAgent ? 'Alternar para modo RAG Clássico' : 'Alternar para modo Agente MCP'}
           >
             {useAgent ? '🤖 Agente' : '📚 RAG'}
           </button>
@@ -361,14 +362,17 @@ const ChatInterface: React.FC = () => {
             key={msg.id}
             className={`message ${msg.sender === 'user' ? 'user-message' : 'ai-message'}`}
           >
-            <div className="message-content">
+          <div
+            className="message-content"
+            {...(msg.isStreaming ? { 'aria-live': 'polite', 'aria-atomic': 'false' } : {})}
+          >
               {msg.sender === 'ai' ? (
                 <MarkdownRenderer content={msg.text} />
               ) : (
                 msg.text
               )}
               {/* Cursor piscando durante o streaming */}
-              {msg.isStreaming && <span className="streaming-cursor">█</span>}
+              {msg.isStreaming && <span className="streaming-cursor" aria-hidden="true">█</span>}
             </div>
 
             {/* Meta-informações da resposta (Feedback e Fontes) */}
@@ -380,14 +384,16 @@ const ChatInterface: React.FC = () => {
                     <button
                       onClick={() => handleFeedback(msg.id, 'up')}
                       className={`feedback-btn feedback-up ${msg.feedback === 'up' ? 'active' : ''}`}
-                      title="Ajudou"
+                      title="Resposta útil"
+                      aria-label="Marcar resposta como útil"
                     >
                       👍
                     </button>
                     <button
                       onClick={() => handleFeedback(msg.id, 'down')}
                       className={`feedback-btn feedback-down ${msg.feedback === 'down' ? 'active-down' : ''}`}
-                      title="Não ajudou"
+                      title="Resposta não útil"
+                      aria-label="Marcar resposta como não útil"
                     >
                       👎
                     </button>
@@ -406,6 +412,7 @@ const ChatInterface: React.FC = () => {
             )}
 
             <span className="message-time">
+              {msg.timestamp.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })}{' '}
               {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </span>
           </div>
@@ -434,11 +441,13 @@ const ChatInterface: React.FC = () => {
             placeholder={isExpired ? 'Sessão encerrada' : isStreaming ? 'Aguarde a resposta...' : 'Digite sua dúvida...'}
             className="input-field"
             disabled={isStreaming || isExpired}
+            aria-label="Campo de texto para digitar sua dúvida"
           />
           <button
             type="submit"
             className="submit-btn"
             disabled={isStreaming || !inputValue.trim() || isExpired}
+            aria-label={isStreaming ? 'Aguardando resposta' : 'Enviar mensagem'}
           >
             {isStreaming ? '⏳' : 'Enviar'}
           </button>
@@ -451,7 +460,7 @@ const ChatInterface: React.FC = () => {
             <span className="modal-icon">⏰</span>
             <h2>Sua sessão expirou</h2>
             <p>Por inatividade de 5 minutos, sua sessão foi encerrada de forma segura.</p>
-            <button onClick={handleResetSession} className="modal-btn">
+            <button onClick={handleResetSession} className="modal-btn" aria-label="Iniciar nova conversa">
               Nova Conversa
             </button>
           </div>

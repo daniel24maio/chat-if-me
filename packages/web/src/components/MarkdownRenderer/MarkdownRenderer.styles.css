@@ -7,6 +7,7 @@
   line-height: 1.7;
   word-wrap: break-word;
   overflow-wrap: break-word;
+  text-align: left;
 }
 
 /* ── Parágrafos ── */
@@ -57,8 +58,8 @@
 /* ── Listas ── */
 .markdown-body ul,
 .markdown-body ol {
-  margin: 0.5em 0;
-  padding-left: 1.5em;
+  margin: 0.6em 0;
+  padding-left: 1.4em;
 }
 
 .markdown-body ul {
@@ -70,11 +71,26 @@
 }
 
 .markdown-body li {
-  margin: 0.25em 0;
+  margin: 0.3em 0;
 }
 
 .markdown-body li > p {
   margin: 0.2em 0;
+}
+
+/* Aplainar listas aninhadas — um único nível de recuo visual (WCAG + mobile) */
+.markdown-body ul ul,
+.markdown-body ol ol,
+.markdown-body ul ol,
+.markdown-body ol ul {
+  padding-left: 1em;
+  margin: 0.15em 0;
+}
+
+.markdown-body ul ul ul,
+.markdown-body ol ol ol {
+  padding-left: 0;
+  list-style-type: disc;
 }
 
 /* Listas de tarefas (GFM) */

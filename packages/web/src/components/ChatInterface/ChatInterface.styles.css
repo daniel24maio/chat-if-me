@@ -67,7 +67,7 @@
   --shadow-color: rgba(0, 0, 0, 0.4);
   --text-primary: #f0fdf4;        /* verde-50 — texto principal brilhante */
   --text-secondary: #bbf7d0;      /* verde-200 — texto secundário legível */
-  --text-muted: #86efac;          /* verde-300 — texto sutil mas visível */
+  --text-muted: #a7f3d0;          /* verde-200 — texto sutil com contraste ≥4.5:1 sobre bg escuro */
   --primary-light: rgba(74, 222, 128, 0.12);
   --primary-border: rgba(74, 222, 128, 0.35);
 }
@@ -263,6 +263,7 @@
 .message-content {
   margin: 0;
   font-size: 0.93rem;
+  text-align: left;
 }
 
 .message-time {
@@ -512,6 +513,11 @@
   background-color: var(--ifmg-vermelho-escuro);
 }
 
+.feedback-btn:focus-visible {
+  outline: 2px solid var(--ifmg-verde);
+  outline-offset: 2px;
+}
+
 .message-fontes-inline {
   display: flex;
   flex-wrap: wrap;
@@ -627,6 +633,11 @@
   cursor: not-allowed;
 }
 
+.mode-toggle:focus-visible {
+  outline: 2px solid var(--ifmg-verde);
+  outline-offset: 2px;
+}
+
 .mode-rag {
   border-color: var(--ifmg-verde);
   color: var(--ifmg-verde);
@@ -714,6 +725,11 @@
 
 .modal-btn:active {
   transform: translateY(0);
+}
+
+.modal-btn:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
 }
 
 @keyframes fadeIn {
