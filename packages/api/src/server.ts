@@ -6,7 +6,6 @@ import { embeddingRouter } from "./routes/embedding.routes.js";
 import { agentRouter } from "./routes/agent.routes.js";
 import { pool, testarConexaoDB, verificarDimensaoEmbedding } from "./config/database.js";
 import { verificarOllama } from "./config/ollama.js";
-import { redisConnection, testarConexaoRedis } from "./config/redis.js";
 import { chatLimiter, uploadLimiter } from "./middlewares/rateLimiter.js";
 import { adminAuth } from "./middlewares/adminAuth.js";
 import { ollamaSemaphore } from "./services/queue.service.js";
@@ -99,13 +98,6 @@ app.get("/api/health", async (_req, res) => {
     ollamaStatus = { ok: true, models: data.models?.map((m) => m.name) || [] };
   } catch { /* offline */ }
 
-  // ── Redis ──
-  let redisOk = false;
-  try {
-    const pong = await redisConnection.ping();
-    redisOk = pong === "PONG";
-  } catch { /* offline */ }
-
   // ── Queue metrics ──
   const queueStatus = ollamaSemaphore.getStatus();
 
@@ -118,7 +110,6 @@ app.get("/api/health", async (_req, res) => {
     services: {
       database: dbOk,
       ollama: ollamaStatus,
-      redis: redisOk,
     },
     queue: queueStatus,
     sessions: getSessionStats(),
@@ -144,7 +135,6 @@ const server = app.listen(PORT, async () => {
   // Testa conexões externas (não bloqueia a subida do servidor)
   await testarConexaoDB();
   await verificarDimensaoEmbedding(); // Auto-migra 768→1024 se necessário
-  await testarConexaoRedis();
   await verificarOllama();
 
   // Inicializa o MCP Client (conecta ao servidor como subprocesso)

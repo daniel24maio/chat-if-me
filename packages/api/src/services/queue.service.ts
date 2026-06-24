@@ -1,20 +1,17 @@
-import { Queue, Worker, type Job } from "bullmq";
-import { redisConnection } from "../config/redis.js";
-
 /**
- * Serviço de Fila de Concorrência — BullMQ.
+ * Serviço de Fila de Concorrência.
  *
- * Serializa requests ao Ollama para evitar OOM na GPU.
- * Cada request de chat/agent é enfileirado e processado um por vez.
+ * Serializa requests ao Ollama para evitar OOM na GPU local.
+ * Cada request de chat/agent aguarda na fila em memória e é processado um por vez
+ * (ou até o limite de MAX_CONCURRENT).
  *
  * Arquitetura:
- *   1. Controller adiciona job à fila via `enfileirarChat()`
- *   2. Worker processa jobs sequencialmente (concurrency: 1)
- *   3. O resultado (SSE stream) é feito diretamente no handler
+ *   1. Controller envolve a lógica no wrapper `comControleDeConcorrencia()`
+ *   2. Se há slot, executa. Se não, entra numa fila de promises em memória (waitQueue).
+ *   3. O resultado (SSE stream) é feito diretamente no handler.
  *
- * Nota: Como SSE requer manter a conexão HTTP aberta, o BullMQ aqui
- * funciona como um semáforo — controla QUANTOS requests processam
- * simultaneamente, não os dados em si.
+ * Nota: Como SSE requer manter a conexão HTTP aberta, este semáforo
+ * controla QUANTOS requests processam simultaneamente na GPU.
  */
 
 // ---------------------------------------------------------------------------
@@ -31,7 +28,7 @@ const QUEUE_TIMEOUT_MS = 120_000; // 2 minutos
 const QUEUE_NAME = "chatifme-llm";
 
 // ---------------------------------------------------------------------------
-// Semáforo baseado em BullMQ
+// Semáforo Nativo
 // ---------------------------------------------------------------------------
 
 /**

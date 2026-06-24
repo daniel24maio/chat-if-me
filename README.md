@@ -21,7 +21,7 @@ Sistema **Agentic RAG** (Retrieval-Augmented Generation com agentes autônomos) 
 │  │ • Chat (SSE)      │  │ • /api/chat (RAG)  │  │ • MCP Tool:       │  │
 │  │ • Toggle RAG/MCP  │  │ • /api/agent (MCP) │  │   search_ifmg_    │  │
 │  │ • Upload PDFs     │  │ • MCP Client       │  │   knowledge       │  │
-│  │                   │  │ • BullMQ Semaphore  │  │                   │  │
+│  │                   │  │ • VRAM Semaphore   │  │                   │  │
 │  └─────────┬────────┘  └──────┬────────┬────┘  └──────┬────────────┘  │
 │            │ HTTP              │  stdio │               │              │
 │            └──────────────────►│◄───────┘               │              │
@@ -30,12 +30,7 @@ Sistema **Agentic RAG** (Retrieval-Augmented Generation com agentes autônomos) 
 │                          │ PostgreSQL │          │    Ollama     │     │
 │                          │ + pgvector │          │  (homelab)   │     │
 │                          │  (Docker)  │          │              │     │
-│                          └─────┬─────┘          └──────────────┘     │
-│                                │                                      │
-│                          ┌─────┴─────┐                                │
-│                          │   Redis    │                                │
-│                          │  (BullMQ)  │                                │
-│                          └───────────┘                                │
+│                          └───────────┘          └──────────────┘     │
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -350,8 +345,7 @@ chat-if-me/
 │       ├── server.ts           # Entry point — Express + health check + MCP init
 │       ├── config/
 │       │   ├── database.ts     # Pool de conexão PostgreSQL (max=20)
-│       │   ├── ollama.ts       # Integração Ollama (embed, rewrite, stream)
-│       │   └── redis.ts        # Conexão Redis para BullMQ
+│       │   └── ollama.ts       # Integração Ollama (embed, rewrite, stream)
 │       ├── middlewares/
 │       │   ├── rateLimiter.ts  # Rate limiting (chat + upload)
 │       │   └── adminAuth.ts    # Autenticação admin via X-API-Key
@@ -370,7 +364,7 @@ chat-if-me/
 │           ├── sanitization.service.ts  # Sanitização de texto pós-extração
 │           ├── memory.service.ts        # Sessões, TTL e Garbage Collector
 │           ├── fast_path.util.ts        # Interceptação de saudações e bypass
-│           └── queue.service.ts         # Semáforo de concorrência (BullMQ)
+│           └── queue.service.ts         # Semáforo de concorrência local
 │
 └── packages/web/               # Frontend (React + Vite)
     └── src/
@@ -535,7 +529,7 @@ docker build --build-arg VITE_API_URL=http://localhost:3333 -t chatifme-frontend
 | **Backend** | Express 4, TypeScript 5, tsup |
 | **MCP** | @modelcontextprotocol/sdk (Server + Client) |
 | **Banco de Dados** | PostgreSQL 16 + pgvector (HNSW) + Full-Text Search (unaccent) |
-| **Cache / Fila** | Redis 7 + BullMQ (semáforo de concorrência) |
+| **Cache / Fila** | Memória RAM nativa (Sessões e Semáforo de concorrência) |
 | **IA / LLM** | Ollama (bge-m3 embeddings + qwen3.5:4b) |
 | **Ingestão/Upload** | Multer (memória) + @llamaindex/liteparse + tesseract.js + mammoth + xlsx + @langchain/textsplitters |
 | **Streaming** | Server-Sent Events (SSE) |
