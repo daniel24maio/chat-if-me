@@ -11,7 +11,11 @@ Este pacote contém o frontend da aplicação, desenvolvido com React, Vite e Ta
 *   **Identidade Visual IFMG**: Cores institucionais personalizadas (Verde `#2F9E41` / Vermelho `#CD191E`).
 *   **Modo Escuro (Dark Mode)**: Suporte completo a temas claro/escuro com transições suaves, respeitando as preferências do sistema ou do usuário.
 *   **Streaming SSE**: Exibição de tokens em tempo real com indicador de escrita (cursor piscante `█`) e carregamento dinâmico.
-*   **Exibição de Fontes**: Referências de documentos oficiais renderizadas de forma elegante abaixo de cada resposta.
+*   **Status Dinâmicos do Pipeline**: Exibe na bolha de digitação o progresso real do backend ("Analisando pergunta...", "Buscando nos documentos...", "Preparando resposta...") em tempo real.
+*   **Memória de Sessão em RAM**: Diálogos multi-turn integrados com resolução de pronomes e persistência conversacional.
+*   **Modal de Expiração por Inatividade**: Ao atingir 5 minutos de inatividade, o chat bloqueia a digitação (campo de texto e botão de envio) e exibe um modal overlay (com desfoque de fundo e animação suave) para iniciar uma "Nova Conversa" de forma segura.
+*   **Botões de Feedback**: Adição de botões 👍/👎 para coletar feedback sobre as respostas da IA (ocultados na mensagem inicial de boas-vindas e em avisos do sistema).
+*   **Ocultação Condicional de Fontes**: Em modo RAG clássico, as fontes de documentos são ocultadas da interface para manter o visual limpo, mas são logadas no console do navegador. São visíveis na UI apenas no modo Agente MCP.
 *   **Painel Administrativo (`/embedding`)**:
     *   Drag-and-drop de arquivos para envio à API.
     *   Feedback visual do status de processamento por documento.

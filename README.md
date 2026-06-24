@@ -99,7 +99,7 @@ Nessa arquitetura agêntica baseada no protocolo MCP (**Model Context Protocol**
 3. **Passo 2 — Execução da Tool via Servidor MCP:**
    - O backend captura a requisição de Tool Calling do Ollama e executa a ferramenta localmente via protocolo chamando `mcpClient.callTool`.
    - Dentro do MCP Server, é executada uma busca híbrida no PostgreSQL associando `pgvector` HNSW (similaridade de cosseno com peso $\alpha = 0.4$) e Full-Text Search com `tsvector` + `portuguese_unaccent`.
-   - **Filtro de Lixo Semântico:** Diferente do RAG clássico, o servidor MCP aplica uma nota de corte estrita **`MIN_RRF_SCORE = 0.002`** para descartar trechos irrelevantes de baixo ranking, retornando até 10 resultados para o agente.
+   - **Filtro de Lixo Semântico:** Diferente do RAG clássico, o servidor MCP aplica uma nota de corte estrita **`MIN_RRF_SCORE = 0.002`** para descartar trechos irrelevantes de baixo ranking, retornando até 5 resultados para o agente (limite `MAX_RESULTS = 5` para evitar saturação e estouro de contexto na GPU de homelabs).
 
 4. **Passo 3 — Segunda Chamada & Geração Final:**
    - O backend anexa os trechos retornados pela busca ao histórico de mensagens na conversa com a role `tool` e envia o histórico completo de volta ao Ollama.
@@ -251,10 +251,10 @@ DIRETIVAS DE IDIOMA E FORMATAÇÃO:
 - 💬 Interface de chat com identidade visual IFMG (verde `#2F9E41` / vermelho `#CD191E`)
 - ⚡ **Streaming de respostas** via Server-Sent Events (SSE) — token a token
 - 🧠 **Memória de Sessão em RAM** — Mantém o contexto de diálogo e resolve pronomes/referências anafóricas entre perguntas seguidas.
-- ⏰ **Notificação de Inatividade** — Encerramento automático de contexto com aviso de tela após 5 minutos de inatividade e reset automático.
+- ⏰ **Modal de Expiração por Inatividade** — Ao atingir 5 minutos de inatividade, o chat bloqueia a digitação (campo de texto e botão de envio) e exibe um modal overlay (com desfoque de fundo e animação suave) para iniciar uma "Nova Conversa" de forma segura.
 - 💬 **Status Dinâmicos em Tempo Real** — Exibe o status dinâmico do pipeline ("Analisando pergunta...", "Buscando nos documentos...", "Preparando resposta...") na bolha de digitação.
 - 👍/👎 **Feedback de Respostas** — Botões interativos de feedback integrados com o servidor (ocultados na mensagem inicial e avisos do sistema).
-- 📚 Exibição das fontes documentais utilizadas na resposta
+- 📚 **Ocultação Condicional de Fontes** — Em modo RAG clássico, as fontes de documentos são ocultadas da interface para manter o visual limpo (sendo registradas no console do navegador), e permanecem visíveis na UI apenas no modo Agente MCP.
 - ⏱️ Métricas de timing por etapa do pipeline RAG (rewrite, embedding, retrieval, generation)
 - 🌙 Dark mode automático (segue preferência do sistema)
 - 📱 Layout responsivo (mobile e desktop)

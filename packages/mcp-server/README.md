@@ -25,7 +25,7 @@ Realiza uma busca híbrida (semântica baseada em embeddings + léxica via Full-
     *   `query` (string, obrigatório): Palavras-chave principais para a busca. *Diretiva: Evitar pronomes, artigos e conectivos; focar apenas em termos fundamentais.*
     *   `intent` (enum, obrigatório): Classificação da intenção da busca disposta em 10 categorias estruturais (ex: `ESTAGIO_TCC`, `AVALIACAO_FREQUENCIA`, etc.).
 *   **Retorno**:
-    *   Trechos de documentos relevantes que superaram o score mínimo (threshold) com suas respectivas fontes e scores de similaridade RRF.
+    *   Até 5 trechos de documentos relevantes (limite configurado como `MAX_RESULTS = 5` para evitar saturação e estouro de contexto na GPU de homelabs) que superaram a nota de corte mínima `MIN_RRF_SCORE = 0.002`, contendo os conteúdos, origens e scores de similaridade RRF.
 
 ---
 
