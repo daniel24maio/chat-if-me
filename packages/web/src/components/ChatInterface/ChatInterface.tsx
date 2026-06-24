@@ -23,6 +23,8 @@ interface Message {
   isStreaming?: boolean;
   /** Feedback do usuário para a resposta da IA */
   feedback?: 'up' | 'down';
+  /** Modo em que a mensagem foi gerada */
+  mode?: 'rag' | 'agent';
 }
 
 /**
@@ -160,6 +162,7 @@ const ChatInterface: React.FC = () => {
                 )
               );
             } else if (event.type === 'fontes' && event.fontes) {
+              console.log(`📚 [${useAgent ? 'Agente' : 'RAG'}] Fontes utilizadas:`, event.fontes);
               // Armazena as fontes na mensagem
               setMessages((prev) =>
                 prev.map((m) =>
@@ -256,6 +259,7 @@ const ChatInterface: React.FC = () => {
       sender: 'ai',
       timestamp: new Date(),
       isStreaming: true,
+      mode: useAgent ? 'agent' : 'rag',
     };
 
     setMessages((prev) => [...prev, newUserMessage, aiPlaceholder]);
@@ -368,7 +372,7 @@ const ChatInterface: React.FC = () => {
             </div>
 
             {/* Meta-informações da resposta (Feedback e Fontes) */}
-            {msg.sender === 'ai' && !msg.isStreaming && (msg.id !== '1' && msg.id !== 'expiration' || (msg.fontes && msg.fontes.length > 0)) && (
+            {msg.sender === 'ai' && !msg.isStreaming && (msg.id !== '1' && msg.id !== 'expiration' || (msg.fontes && msg.fontes.length > 0 && msg.mode === 'agent')) && (
               <div className="message-meta">
                 {msg.id !== '1' && msg.id !== 'expiration' && (
                   <div className="message-feedback">
@@ -390,7 +394,7 @@ const ChatInterface: React.FC = () => {
                   </div>
                 )}
 
-                {msg.fontes && msg.fontes.length > 0 && (
+                {msg.fontes && msg.fontes.length > 0 && msg.mode === 'agent' && (
                   <div className="message-fontes-inline">
                     <span className="fontes-label">📚 Fontes:</span>
                     {msg.fontes.map((fonte, i) => (
