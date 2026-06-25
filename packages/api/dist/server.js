@@ -1469,9 +1469,11 @@ DIRETIVAS OBRIGAT\xD3RIAS DE IDIOMA E FORMATA\xC7\xC3O:
   ];
 }
 async function processarPerguntaStream(pergunta, res, sessionId) {
+  const dataHora = (/* @__PURE__ */ new Date()).toLocaleString("pt-BR");
   console.log(`
 ${"\u2500".repeat(50)}`);
   console.log(`\u{1F4E8} [RAG] Nova pergunta (stream): "${pergunta}"`);
+  console.log(`\u{1F4C5} [RAG] Data/Hora: ${dataHora}`);
   if (sessionId)
     console.log(`\u{1F9E0} [RAG] Sess\xE3o: ${sessionId.substring(0, 8)}...`);
   console.log(`${"\u2500".repeat(50)}`);
@@ -27136,9 +27138,11 @@ async function processarPerguntaAgente(pergunta, res, sessionId) {
   if (!mcpClient) {
     throw new Error("[Agente] MCP Client n\xE3o inicializado");
   }
+  const dataHora = (/* @__PURE__ */ new Date()).toLocaleString("pt-BR");
   console.log(`
 ${"\u2500".repeat(50)}`);
   console.log(`\u{1F916} [Agente] Nova pergunta: "${pergunta}"`);
+  console.log(`\u{1F4C5} [Agente] Data/Hora: ${dataHora}`);
   if (sessionId)
     console.log(`\u{1F9E0} [Agente] Sess\xE3o: ${sessionId.substring(0, 8)}...`);
   console.log(`${"\u2500".repeat(50)}`);
@@ -27456,27 +27460,6 @@ async function enviarPerguntaAgente(req, res) {
 var agentRouter = Router3();
 agentRouter.post("/", enviarPerguntaAgente);
 
-// src/config/redis.ts
-import IORedis from "ioredis";
-var redisConnection = new IORedis(
-  process.env.REDIS_URL || "redis://localhost:6379",
-  {
-    maxRetriesPerRequest: null,
-    enableReadyCheck: false
-  }
-);
-async function testarConexaoRedis() {
-  try {
-    const pong = await redisConnection.ping();
-    console.log(`\u2705 [Redis] Conectado \u2014 ${pong}`);
-  } catch (error) {
-    console.warn(
-      "\u26A0\uFE0F  [Redis] N\xE3o dispon\xEDvel \u2014 fila de concorr\xEAncia desabilitada.",
-      error instanceof Error ? error.message : error
-    );
-  }
-}
-
 // src/middlewares/rateLimiter.ts
 import rateLimit from "express-rate-limit";
 var chatLimiter = rateLimit({
@@ -27555,12 +27538,6 @@ app.get("/api/health", async (_req, res) => {
     ollamaStatus = { ok: true, models: data.models?.map((m) => m.name) || [] };
   } catch {
   }
-  let redisOk = false;
-  try {
-    const pong = await redisConnection.ping();
-    redisOk = pong === "PONG";
-  } catch {
-  }
   const queueStatus = ollamaSemaphore.getStatus();
   const allOk = dbOk && ollamaStatus.ok;
   res.status(allOk ? 200 : 503).json({
@@ -27569,8 +27546,7 @@ app.get("/api/health", async (_req, res) => {
     uptime: Math.floor(process.uptime()),
     services: {
       database: dbOk,
-      ollama: ollamaStatus,
-      redis: redisOk
+      ollama: ollamaStatus
     },
     queue: queueStatus,
     sessions: getSessionStats(),
@@ -27591,7 +27567,6 @@ var server = app.listen(PORT, async () => {
 `);
   await testarConexaoDB();
   await verificarDimensaoEmbedding();
-  await testarConexaoRedis();
   await verificarOllama();
   try {
     await inicializarMCPClient();

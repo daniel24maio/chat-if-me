@@ -333,8 +333,10 @@ export async function processarPerguntaStream(
   res: Response,
   sessionId?: string
 ): Promise<void> {
+  const dataHora = new Date().toLocaleString("pt-BR");
   console.log(`\n${"─".repeat(50)}`);
   console.log(`📨 [RAG] Nova pergunta (stream): "${pergunta}"`);
+  console.log(`📅 [RAG] Data/Hora: ${dataHora}`);
   if (sessionId) console.log(`🧠 [RAG] Sessão: ${sessionId.substring(0, 8)}...`);
   console.log(`${"─".repeat(50)}`);
 

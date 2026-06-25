@@ -206,8 +206,10 @@ export async function processarPerguntaAgente(
     throw new Error("[Agente] MCP Client não inicializado");
   }
 
+  const dataHora = new Date().toLocaleString("pt-BR");
   console.log(`\n${"─".repeat(50)}`);
   console.log(`🤖 [Agente] Nova pergunta: "${pergunta}"`);
+  console.log(`📅 [Agente] Data/Hora: ${dataHora}`);
   if (sessionId) console.log(`🧠 [Agente] Sessão: ${sessionId.substring(0, 8)}...`);
   console.log(`${"─".repeat(50)}`);
 
