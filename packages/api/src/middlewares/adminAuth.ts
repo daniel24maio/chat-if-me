@@ -35,7 +35,7 @@ export function adminAuth(
 
   if (!provided || provided !== apiKey) {
     res.status(401).json({
-      erro: "Acesso não autorizado. Chave de API inválida ou ausente.",
+      error: "Acesso não autorizado. Chave de API inválida ou ausente.",
     });
     return;
   }

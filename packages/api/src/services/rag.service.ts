@@ -1,29 +1,28 @@
 import type { Response } from "express";
-import type { DocumentoRecuperado } from "../interfaces/chat.interfaces.js";
+import type { RetrievedDocument } from "../interfaces/chat.interfaces.js";
 import { pool } from "../config/database.js";
 import {
-  gerarEmbeddingOllama,
-  streamRespostaOllama,
-  reescreverComLLM,
+  generateOllamaEmbedding,
+  streamOllamaResponse,
+  rewriteWithLLM,
   type OllamaChatMessage,
 } from "../config/ollama.js";
 import {
   isSessionExpired,
   getOrCreateSession,
   updateSession,
-  resolverReferencias,
+  resolveReferences,
 } from "./memory.service.js";
 import {
   detectGreetingBypass,
-  GREETING_SYSTEM_PROMPT,
   streamStaticGreeting,
   STATIC_GREETING_RESPONSE,
 } from "./fast_path.util.js";
 import {
-  buscarExemplosPositivos,
-  contarNegativosPorChunk,
+  getPositiveExamples,
+  countNegativesByChunk,
   PENALTY_BETA,
-  type ExemploFewShot,
+  type FewShotExample,
 } from "./feedback.service.js";
 
 /**
@@ -41,21 +40,6 @@ import {
  */
 
 // ---------------------------------------------------------------------------
-// Configuração
-// ---------------------------------------------------------------------------
-
-/**
- * Threshold mínimo de similaridade de cosseno (0 a 1).
- * Trechos com similaridade abaixo desse valor são descartados para evitar
- * que contexto irrelevante polua a resposta e cause alucinações.
- *
- * Decisão de projeto: 0.3 é um bom ponto de partida — suficientemente
- * permissivo para capturar resultados parciais, mas filtra ruído total.
- * Ajustar empiricamente conforme os resultados observados.
- */
-
-
-// ---------------------------------------------------------------------------
 // Etapa 0 — Query Rewriting (Reescrita de Pergunta)
 // ---------------------------------------------------------------------------
 
@@ -65,7 +49,7 @@ import {
  * Contém o dicionário de siglas acadêmicas do IFMG e regras para
  * formalizar a linguagem sem alterar o sentido da pergunta.
  */
-const REWRITE_SYSTEM_PROMPT = `Você é um assistente de pré-processamento de consultas para um sistema de busca de documentos acadêmicos do IFMG (Instituto Federal de Minas Gerais), Campus Ouro Branco.
+const REWRITE_SYSTEM_PROMPT = `Você é um assistente de pré-processamento de consultas para um sistema de busca de documentos acadêmicos do IFMG (Instituto Federal de Gerais), Campus Ouro Branco.
 
 Sua tarefa: reescrever a pergunta do usuário para melhorar a busca semântica em documentos acadêmicos.
 
@@ -103,38 +87,38 @@ REGRAS:
  *
  * Fallback: se a reescrita falhar (ex: Ollama offline), usa a pergunta original.
  *
- * @param pergunta - Pergunta original do aluno
+ * @param question - Pergunta original do aluno
  * @returns Pergunta reescrita e expandida
  */
-async function reescreverPergunta(pergunta: string): Promise<{ intencao: string; perguntaReescrita: string }> {
+async function rewriteQuestion(question: string): Promise<{ intention: string; rewrittenQuestion: string }> {
   try {
-    console.log(`✍️  [Reescrita] Original: "${pergunta}"`);
+    console.log(`✍️  [Reescrita] Original: "${question}"`);
 
-    const reescrita = await reescreverComLLM(REWRITE_SYSTEM_PROMPT, pergunta);
+    const rewritten = await rewriteWithLLM(REWRITE_SYSTEM_PROMPT, question);
 
     // Validação: se a reescrita ficou vazia ou absurdamente longa, usa a original
-    if (!reescrita || reescrita.length > 1000) {
+    if (!rewritten || rewritten.length > 1000) {
       console.log(`✍️  [Reescrita] Resultado inválido, usando original.`);
-      return { intencao: "OUTRAS", perguntaReescrita: pergunta };
+      return { intention: "OUTRAS", rewrittenQuestion: question };
     }
 
-    const match = reescrita.trim().match(/^\[(.*?)\]\s*(.*)/);
+    const match = rewritten.trim().match(/^\[(.*?)\]\s*(.*)/);
     if (match) {
-      const intencao = match[1].toUpperCase();
-      const perguntaReescrita = match[2];
-      console.log(`✍️  [Reescrita] Intenção: [${intencao}] | Reescrita: "${perguntaReescrita}"`);
-      return { intencao, perguntaReescrita };
+      const intention = match[1].toUpperCase();
+      const rewrittenQuestion = match[2];
+      console.log(`✍️  [Reescrita] Intenção: [${intention}] | Reescrita: "${rewrittenQuestion}"`);
+      return { intention, rewrittenQuestion };
     }
 
-    console.log(`✍️  [Reescrita] Resultado sem tag: "${reescrita}"`);
-    return { intencao: "OUTRAS", perguntaReescrita: reescrita };
+    console.log(`✍️  [Reescrita] Resultado sem tag: "${rewritten}"`);
+    return { intention: "OUTRAS", rewrittenQuestion: rewritten };
   } catch (error) {
     // Fallback gracioso: se a reescrita falhar, não bloqueia o pipeline
     console.warn(
       `⚠️  [Reescrita] Falha na reescrita, usando pergunta original:`,
       error instanceof Error ? error.message : error
     );
-    return { intencao: "OUTRAS", perguntaReescrita: pergunta };
+    return { intention: "OUTRAS", rewrittenQuestion: question };
   }
 }
 
@@ -146,13 +130,13 @@ async function reescreverPergunta(pergunta: string): Promise<{ intencao: string;
  * Converte o texto da pergunta em um vetor numérico (embedding).
  * Utiliza o modelo configurado no Ollama (ex: bge-m3, 1024 dimensões).
  *
- * @param texto - Texto a ser vetorizado (pergunta do aluno)
+ * @param text - Texto a ser vetorizado (pergunta do aluno)
  * @returns Vetor numérico representando o texto no espaço semântico
  */
-async function gerarEmbedding(texto: string): Promise<number[]> {
-  console.log(`🔢 [RAG] Vetorizando pergunta: "${texto.substring(0, 60)}..."`);
+async function generateEmbedding(text: string): Promise<number[]> {
+  console.log(`🔢 [RAG] Vetorizando pergunta: "${text.substring(0, 60)}..."`);
 
-  const embedding = await gerarEmbeddingOllama(texto);
+  const embedding = await generateOllamaEmbedding(text);
 
   console.log(
     `🔢 [RAG] Embedding gerado com sucesso (${embedding.length} dimensões)`
@@ -185,14 +169,14 @@ const RRF_ALPHA = 0.5;
  * - Nomes exatos de disciplinas/siglas subam ao topo via FTS
  *
  * @param embedding  - Vetor da pergunta (para busca semântica)
- * @param queryTexto - Texto da pergunta (para Full-Text Search)
- * @param limite     - Número máximo de resultados (default: 3)
+ * @param queryText  - Texto da pergunta (para Full-Text Search)
+ * @param limit      - Número máximo de resultados (default: 5)
  */
-async function buscarHibrido(
+async function hybridSearch(
   embedding: number[],
-  queryTexto: string,
-  limite: number = 5
-): Promise<DocumentoRecuperado[]> {
+  queryText: string,
+  limit: number = 5
+): Promise<RetrievedDocument[]> {
   console.log(
     `🔍 [RAG] Busca híbrida: vetorial (α=${RRF_ALPHA}) + FTS (1-α=${1 - RRF_ALPHA}), k=${RRF_K}`
   );
@@ -202,15 +186,15 @@ async function buscarHibrido(
   const result = await pool.query(
     `WITH
        semantic AS (
-         SELECT id, content AS conteudo, metadata->>'filename' AS origem,
-           1 - (embedding <=> $1::vector) AS similaridade,
+         SELECT id, content AS content, metadata->>'filename' AS source,
+           1 - (embedding <=> $1::vector) AS similarity,
            ROW_NUMBER() OVER (ORDER BY embedding <=> $1::vector) AS rank
          FROM documents
          ORDER BY embedding <=> $1::vector
          LIMIT 20
        ),
        lexical AS (
-         SELECT id, content AS conteudo, metadata->>'filename' AS origem,
+         SELECT id, content AS content, metadata->>'filename' AS source,
            ts_rank_cd(content_tsv, plainto_tsquery('portuguese_unaccent', $2)) AS ts_score,
            ROW_NUMBER() OVER (
              ORDER BY ts_rank_cd(content_tsv, plainto_tsquery('portuguese_unaccent', $2)) DESC
@@ -222,9 +206,9 @@ async function buscarHibrido(
        )
      SELECT
        COALESCE(s.id, l.id) AS id,
-       COALESCE(s.conteudo, l.conteudo) AS conteudo,
-       COALESCE(s.origem, l.origem) AS origem,
-       COALESCE(s.similaridade, 0) AS similaridade,
+       COALESCE(s.content, l.content) AS content,
+       COALESCE(s.source, l.source) AS source,
+       COALESCE(s.similarity, 0) AS similarity,
        (
          ${RRF_ALPHA} * COALESCE(1.0 / (${RRF_K} + s.rank), 0.0) +
          ${1 - RRF_ALPHA} * COALESCE(1.0 / (${RRF_K} + l.rank), 0.0)
@@ -233,54 +217,54 @@ async function buscarHibrido(
      FULL OUTER JOIN lexical l ON s.id = l.id
      ORDER BY rrf_score DESC
      LIMIT $3`,
-    [vectorStr, queryTexto, limite]
+    [vectorStr, queryText, limit]
   );
 
-  let documentos: DocumentoRecuperado[] = result.rows.map((row) => ({
+  let documents: RetrievedDocument[] = result.rows.map((row) => ({
     id: Number(row.id),
-    conteudo: row.conteudo,
-    origem: row.origem || "documento desconhecido",
-    similaridade: Number(row.rrf_score),
+    content: row.content,
+    source: row.source || "documento desconhecido",
+    similarity: Number(row.rrf_score),
   }));
 
   // ── Penalização por feedback negativo (ICL Dinâmico) ──
   // Chunks com feedbacks negativos acumulados têm o score RRF reduzido:
   //   Score_final = Score_RRF × 1 / (1 + β × N_negativos)
-  if (documentos.length > 0) {
-    const chunkIds = documentos.map((d) => d.id);
-    const negativos = await contarNegativosPorChunk(chunkIds);
+  if (documents.length > 0) {
+    const chunkIds = documents.map((d) => d.id);
+    const negatives = await countNegativesByChunk(chunkIds);
 
-    if (negativos.size > 0) {
-      for (const doc of documentos) {
-        const negCount = negativos.get(doc.id) || 0;
+    if (negatives.size > 0) {
+      for (const doc of documents) {
+        const negCount = negatives.get(doc.id) || 0;
         if (negCount > 0) {
-          const scoreOriginal = doc.similaridade;
-          doc.similaridade *= 1 / (1 + PENALTY_BETA * negCount);
+          const originalScore = doc.similarity;
+          doc.similarity *= 1 / (1 + PENALTY_BETA * negCount);
           console.log(
             `⚠️  [RRF] Chunk #${doc.id} penalizado: ` +
-            `${negCount} negativo(s), score ${scoreOriginal.toFixed(4)} → ${doc.similaridade.toFixed(4)}`
+            `${negCount} negativo(s), score ${originalScore.toFixed(4)} → ${doc.similarity.toFixed(4)}`
           );
         }
       }
 
       // Re-ordenar após penalização
-      documentos.sort((a, b) => b.similaridade - a.similaridade);
-      documentos = documentos.slice(0, limite);
+      documents.sort((a, b) => b.similarity - a.similarity);
+      documents = documents.slice(0, limit);
     }
   }
 
-  if (documentos.length === 0) {
+  if (documents.length === 0) {
     console.log(`🔍 [RAG] Nenhum documento encontrado (vetorial + FTS).`);
   } else {
-    console.log(`🔍 [RAG] ${documentos.length} documentos (RRF híbrido):`);
-    documentos.forEach((doc, i) => {
+    console.log(`🔍 [RAG] ${documents.length} documentos (RRF híbrido):`);
+    documents.forEach((doc, i) => {
       console.log(
-        `   ${i + 1}. [RRF: ${doc.similaridade.toFixed(4)}] ${doc.origem}: "${doc.conteudo.substring(0, 50)}..."`
+        `   ${i + 1}. [RRF: ${doc.similarity.toFixed(4)}] ${doc.source}: "${doc.content.substring(0, 50)}..."`
       );
     });
   }
 
-  return documentos;
+  return documents;
 }
 
 // ---------------------------------------------------------------------------
@@ -296,19 +280,19 @@ async function buscarHibrido(
  *   - Manter um tom educado e informativo
  *   - NÃO inventar informações (anti-alucinação)
  */
-function montarMensagensRAG(
-  pergunta: string,
-  documentos: DocumentoRecuperado[],
-  intencao: string,
-  exemplosFewShot: ExemploFewShot[] = []
+function buildRAGMessages(
+  question: string,
+  documents: RetrievedDocument[],
+  intention: string,
+  fewShotExamples: FewShotExample[] = []
 ): OllamaChatMessage[] {
   // Monta o contexto a partir dos documentos recuperados
-  const contexto =
-    documentos.length > 0
-      ? documentos
+  const context =
+    documents.length > 0
+      ? documents
         .map(
           (doc, i) =>
-            `--- Trecho ${i + 1} (fonte: ${doc.origem}, similaridade: ${doc.similaridade.toFixed(2)}) ---\n${doc.conteudo}`
+            `--- Trecho ${i + 1} (fonte: ${doc.source}, similaridade: ${doc.similarity.toFixed(2)}) ---\n${doc.content}`
         )
         .join("\n\n")
       : "Nenhum documento relevante foi encontrado na base de conhecimento.";
@@ -316,16 +300,16 @@ function montarMensagensRAG(
   // ── Bloco Few-Shot (ICL Dinâmico) ──
   // Injeta exemplos de interações anteriores avaliadas positivamente (👍)
   // para guiar o tom e formato da resposta do LLM em tempo real.
-  let blocoFewShot = "";
-  if (exemplosFewShot.length > 0) {
-    const exemplos = exemplosFewShot
+  let fewShotBlock = "";
+  if (fewShotExamples.length > 0) {
+    const examples = fewShotExamples
       .map(
         (ex, i) =>
           `EXEMPLO ${i + 1}:\nPERGUNTA DO ALUNO: ${ex.question}\nSUA RESPOSTA (aprovada pelo usuário): ${ex.response}`
       )
       .join("\n\n");
 
-    blocoFewShot = `\n═══ EXEMPLOS DE SUCESSO (interações anteriores avaliadas positivamente pelos usuários) ═══\n${exemplos}\n═══ FIM DOS EXEMPLOS ═══\n\nUse os exemplos acima como REFERÊNCIA DE TOM E FORMATO. Adapte o conteúdo ao CONTEXTO abaixo.\n`;
+    fewShotBlock = `\n═══ EXEMPLOS DE SUCESSO (interações anteriores avaliadas positivamente pelos usuários) ═══\n${examples}\n═══ FIM DOS EXEMPLOS ═══\n\nUse os exemplos acima como REFERÊNCIA DE TOM E FORMATO. Adapte o conteúdo ao CONTEXTO abaixo.\n`;
   }
 
   // System Prompt RAG rigoroso contra alucinações e com diretivas de formatação
@@ -333,10 +317,10 @@ function montarMensagensRAG(
 
 Sua função é responder dúvidas dos alunos sobre regulamentos, PPC (Projeto Pedagógico do Curso), grade curricular, normas acadêmicas e informações do campus.
 
-INTENÇÃO DA PERGUNTA: [${intencao}] (Foque a sua resposta no contexto dessa intenção).
-${blocoFewShot}
+INTENÇÃO DA PERGUNTA: [${intention}] (Foque a sua resposta no contexto dessa intenção).
+${fewShotBlock}
 CONTEXTO (trechos dos documentos oficiais do curso):
-${contexto}
+${context}
 
 REGRAS OBRIGATÓRIAS (siga rigorosamente):
 1. Use EXCLUSIVAMENTE as informações do CONTEXTO acima.
@@ -354,7 +338,7 @@ DIRETIVAS OBRIGATÓRIAS DE IDIOMA E FORMATAÇÃO:
 
   return [
     { role: "system", content: systemPrompt },
-    { role: "user", content: pergunta },
+    { role: "user", content: question },
   ];
 }
 
@@ -374,16 +358,16 @@ DIRETIVAS OBRIGATÓRIAS DE IDIOMA E FORMATAÇÃO:
  *   3. Montar o prompt RAG
  *   4. Fazer streaming da resposta do LLM → SSE → frontend
  *
- * @param pergunta - Pergunta do aluno extraída do body da requisição
+ * @param question - Pergunta do aluno extraída do body da requisição
  * @param res      - Response do Express (com headers SSE já configurados)
  */
-export async function processarPerguntaStream(
-  pergunta: string,
+export async function processQuestionStream(
+  question: string,
   res: Response,
   sessionId?: string
 ): Promise<void> {
   console.log(`\n${"─".repeat(50)}`);
-  console.log(`📨 [RAG] Nova pergunta (stream): "${pergunta}"`);
+  console.log(`📨 [RAG] Nova pergunta (stream): "${question}"`);
   if (sessionId) console.log(`🧠 [RAG] Sessão: ${sessionId.substring(0, 8)}...`);
   console.log(`${"─".repeat(50)}`);
 
@@ -399,28 +383,28 @@ export async function processarPerguntaStream(
   const session = sessionId ? getOrCreateSession(sessionId) : null;
 
   // ── Resolver referências anafóricas usando a memória ──
-  const perguntaContextualizada = session
-    ? resolverReferencias(pergunta, session)
-    : pergunta;
+  const contextualizedQuestion = session
+    ? resolveReferences(question, session)
+    : question;
 
   res.write(`data: ${JSON.stringify({ type: "status", status: "Analisando pergunta..." })}\n\n`);
 
-  const inicio = Date.now();
+  const start = Date.now();
 
   // 1. Verificação local fast-path para saudações
-  if (detectGreetingBypass(perguntaContextualizada)) {
+  if (detectGreetingBypass(contextualizedQuestion)) {
     console.log(`🚀 [RAG] Fast-path ativado: saudação detectada localmente.`);
     res.write(`data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}\n\n`);
 
     const t3 = Date.now();
     await streamStaticGreeting(res);
     const generationMs = Date.now() - t3;
-    const totalMs = Date.now() - inicio;
+    const totalMs = Date.now() - start;
 
     res.write(`data: ${JSON.stringify({ type: "metrics", timings: { rewrite: 0, embedding: 0, retrieval: 0, generation: generationMs, total: totalMs } })}\n\n`);
 
     if (session) {
-      updateSession(session.sessionId, pergunta, "GREETING", STATIC_GREETING_RESPONSE);
+      updateSession(session.sessionId, question, "GREETING", STATIC_GREETING_RESPONSE);
     }
 
     console.log(`⏱️  [RAG] Fast-path concluído em ${(totalMs / 1000).toFixed(1)}s (sem busca)\n`);
@@ -429,23 +413,23 @@ export async function processarPerguntaStream(
 
   // Etapa 0: Reescrever a pergunta (com pronomes já resolvidos) para melhorar a busca semântica
   const t0 = Date.now();
-  const { intencao, perguntaReescrita } = await reescreverPergunta(perguntaContextualizada);
+  const { intention, rewrittenQuestion } = await rewriteQuestion(contextualizedQuestion);
   const rewriteMs = Date.now() - t0;
 
   // 2. Verificação pós-reescrita para saudações classificadas pelo LLM
-  if (intencao === "GREETING") {
+  if (intention === "GREETING") {
     console.log(`🚀 [RAG] Fast-path ativado: reescrevedor classificou como GREETING.`);
     res.write(`data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}\n\n`);
 
     const t3 = Date.now();
     await streamStaticGreeting(res);
     const generationMs = Date.now() - t3;
-    const totalMs = Date.now() - inicio;
+    const totalMs = Date.now() - start;
 
     res.write(`data: ${JSON.stringify({ type: "metrics", timings: { rewrite: rewriteMs, embedding: 0, retrieval: 0, generation: generationMs, total: totalMs } })}\n\n`);
 
     if (session) {
-      updateSession(session.sessionId, pergunta, "GREETING", STATIC_GREETING_RESPONSE);
+      updateSession(session.sessionId, question, "GREETING", STATIC_GREETING_RESPONSE);
     }
 
     console.log(`⏱️  [RAG] Fast-path LLM concluído em ${(totalMs / 1000).toFixed(1)}s (sem busca)\n`);
@@ -456,29 +440,29 @@ export async function processarPerguntaStream(
 
   // Etapa 1: Vetorizar a pergunta REESCRITA (não a original)
   const t1 = Date.now();
-  const embedding = await gerarEmbedding(perguntaReescrita);
+  const embedding = await generateEmbedding(rewrittenQuestion);
   const embedMs = Date.now() - t1;
 
   // Etapa 2: Busca híbrida (vetorial + FTS) com RRF + penalização por feedback negativo
   const t2 = Date.now();
-  const documentos = await buscarHibrido(embedding, perguntaReescrita);
+  const documents = await hybridSearch(embedding, rewrittenQuestion);
   const retrievalMs = Date.now() - t2;
 
   // Extrair as fontes dos documentos recuperados para referência
-  const fontes = documentos.map(
-    (doc) => `${doc.origem} (similaridade: ${doc.similaridade.toFixed(2)})`
+  const sources = documents.map(
+    (doc) => `${doc.source} (similaridade: ${doc.similarity.toFixed(2)})`
   );
 
   // ── Etapa 2.5: ICL Dinâmico — Busca de exemplos few-shot positivos ──
   // Busca interações anteriores avaliadas com 👍 que sejam similares à
   // pergunta atual (cosseno > 0.85) para injeção como exemplos no prompt.
-  let exemplosFewShot: ExemploFewShot[] = [];
+  let fewShotExamples: FewShotExample[] = [];
   try {
-    exemplosFewShot = await buscarExemplosPositivos(embedding);
-    if (exemplosFewShot.length > 0) {
-      console.log(`✨ [ICL] ${exemplosFewShot.length} exemplo(s) positivo(s) encontrado(s)! Injetando few-shot...`);
-      exemplosFewShot.forEach((ex, i) => {
-        console.log(`   ${i + 1}. [sim: ${ex.similaridade.toFixed(4)}] "${ex.question.substring(0, 60)}..."`);
+    fewShotExamples = await getPositiveExamples(embedding);
+    if (fewShotExamples.length > 0) {
+      console.log(`✨ [ICL] ${fewShotExamples.length} exemplo(s) positivo(s) encontrado(s)! Injetando few-shot...`);
+      fewShotExamples.forEach((ex, i) => {
+        console.log(`   ${i + 1}. [sim: ${ex.similarity.toFixed(4)}] "${ex.question.substring(0, 60)}..."`);
       });
     }
   } catch (error) {
@@ -490,18 +474,18 @@ export async function processarPerguntaStream(
   // a intenção e os exemplos few-shot (se encontrados).
   // Isso garante que a resposta do LLM soe natural e responda exatamente
   // o que o aluno perguntou, sem a formalização artificial da reescrita.
-  const mensagens = montarMensagensRAG(pergunta, documentos, intencao, exemplosFewShot);
+  const messages = buildRAGMessages(question, documents, intention, fewShotExamples);
 
   console.log(
-    `🤖 [RAG] Iniciando streaming com ${documentos.length} documentos de contexto...`
+    `🤖 [RAG] Iniciar streaming com ${documents.length} documentos de contexto...`
   );
 
   // Etapa 4: Stream da resposta do LLM diretamente para o frontend
   const t3 = Date.now();
-  await streamRespostaOllama(mensagens, res, fontes);
+  await streamOllamaResponse(messages, res, sources);
   const generationMs = Date.now() - t3;
 
-  const totalMs = Date.now() - inicio;
+  const totalMs = Date.now() - start;
 
   // Envia métricas de timing como evento SSE antes do fim
   const timings = {
@@ -516,8 +500,8 @@ export async function processarPerguntaStream(
 
   // ── Atualizar memória da sessão ──
   if (session) {
-    updateSession(session.sessionId, pergunta, intencao, "");
-    session.lastDocuments = documentos;
+    updateSession(session.sessionId, question, intention, "");
+    session.lastDocuments = documents;
   }
 
   console.log(

@@ -7,15 +7,14 @@ import {
   isSessionExpired,
   getOrCreateSession,
   updateSession,
-  resolverReferencias,
+  resolveReferences,
 } from "./memory.service.js";
 import {
   detectGreetingBypass,
-  GREETING_SYSTEM_PROMPT,
   streamStaticGreeting,
   STATIC_GREETING_RESPONSE,
 } from "./fast_path.util.js";
-import { streamRespostaOllama, type OllamaChatMessage } from "../config/ollama.js";
+import { streamOllamaResponse, type OllamaChatMessage } from "../config/ollama.js";
 
 /**
  * Serviço do Agente MCP — Agentic RAG.
@@ -111,7 +110,7 @@ interface OllamaChatResponse {
  * Inicializa o MCP Client — conecta ao MCP Server como subprocesso.
  * Chamada uma vez na subida do servidor Express.
  */
-export async function inicializarMCPClient(): Promise<void> {
+export async function initializeMCPClient(): Promise<void> {
   try {
     // Resolve o caminho para o MCP Server compilado
     const __filename = fileURLToPath(import.meta.url);
@@ -174,7 +173,7 @@ export async function inicializarMCPClient(): Promise<void> {
 /**
  * Encerra o MCP Client (cleanup na saída do servidor).
  */
-export async function encerrarMCPClient(): Promise<void> {
+export async function closeMCPClient(): Promise<void> {
   if (mcpClient) {
     await mcpClient.close();
     console.log("🔌 [MCP Client] Desconectado");
@@ -188,17 +187,20 @@ export async function encerrarMCPClient(): Promise<void> {
 /**
  * Executa o pipeline Agentic RAG com streaming SSE.
  *
+ * Diferente da versão anterior que retornava uma string, esta função
+ * recebe o objeto Response do Express e faz o pipe dos tokens diretamente.
+ *
  * Fluxo:
  *   1. Envia pergunta ao Ollama com tools[] (stream: false)
  *   2. Se Ollama retorna tool_calls → executa via MCP callTool
  *   3. Reenvia resultado da ferramenta ao Ollama (stream: true)
  *   4. Faz pipe dos tokens para o frontend via SSE
  *
- * @param pergunta - Pergunta do aluno
+ * @param question - Pergunta do aluno
  * @param res      - Response do Express (com headers SSE)
  */
-export async function processarPerguntaAgente(
-  pergunta: string,
+export async function processAgentQuestion(
+  question: string,
   res: Response,
   sessionId?: string
 ): Promise<void> {
@@ -207,7 +209,7 @@ export async function processarPerguntaAgente(
   }
 
   console.log(`\n${"─".repeat(50)}`);
-  console.log(`🤖 [Agente] Nova pergunta: "${pergunta}"`);
+  console.log(`🤖 [Agente] Nova pergunta: "${question}"`);
   if (sessionId) console.log(`🧠 [Agente] Sessão: ${sessionId.substring(0, 8)}...`);
   console.log(`${"─".repeat(50)}`);
 
@@ -223,34 +225,34 @@ export async function processarPerguntaAgente(
   const session = sessionId ? getOrCreateSession(sessionId) : null;
 
   // ── Resolver referências anafóricas usando a memória ──
-  const perguntaContextualizada = session
-    ? resolverReferencias(pergunta, session)
-    : pergunta;
+  const contextualizedQuestion = session
+    ? resolveReferences(question, session)
+    : question;
 
-  const inicio = Date.now();
+  const start = Date.now();
 
   res.write(`data: ${JSON.stringify({ type: "status", status: "Analisando pergunta..." })}\n\n`);
 
   // 1. Verificação local fast-path para saudações
-  if (detectGreetingBypass(perguntaContextualizada)) {
+  if (detectGreetingBypass(contextualizedQuestion)) {
     console.log(`🚀 [Agente] Fast-path ativado: saudação detectada localmente.`);
     res.write(`data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}\n\n`);
 
     await streamStaticGreeting(res);
 
     if (session) {
-      updateSession(session.sessionId, pergunta, "GREETING", STATIC_GREETING_RESPONSE);
+      updateSession(session.sessionId, question, "GREETING", STATIC_GREETING_RESPONSE);
     }
 
-    const duracao = ((Date.now() - inicio) / 1000).toFixed(1);
-    console.log(`⏱️  [Agente] Fast-path concluído em ${duracao}s (sem busca/ferramentas)\n`);
+    const duration = ((Date.now() - start) / 1000).toFixed(1);
+    console.log(`⏱️  [Agente] Fast-path concluído em ${duration}s (sem busca/ferramentas)\n`);
     return;
   }
 
   // Monta as mensagens iniciais
   const messages: Array<Record<string, unknown>> = [
     { role: "system", content: AGENT_SYSTEM_PROMPT },
-    { role: "user", content: perguntaContextualizada },
+    { role: "user", content: contextualizedQuestion },
   ];
 
   // ── Passo 1: Primeira chamada ao Ollama (com tools, sem streaming) ──
@@ -307,7 +309,7 @@ export async function processarPerguntaAgente(
     });
 
     // Executa cada tool call via MCP
-    const fontes: string[] = [];
+    const sources: string[] = [];
 
     res.write(`data: ${JSON.stringify({ type: "status", status: "Buscando nos documentos..." })}\n\n`);
 
@@ -336,13 +338,13 @@ export async function processarPerguntaAgente(
         );
 
         // Extrai fontes do resultado para exibir no frontend
-        const fontesMatch = resultText.match(
+        const sourcesMatch = resultText.match(
           /\(fonte: ([^,]+), similaridade/g
         );
-        if (fontesMatch) {
-          fontesMatch.forEach((f) => {
+        if (sourcesMatch) {
+          sourcesMatch.forEach((f) => {
             const match = f.match(/fonte: ([^,]+)/);
-            if (match) fontes.push(match[1]);
+            if (match) sources.push(match[1]);
           });
         }
 
@@ -366,7 +368,7 @@ export async function processarPerguntaAgente(
     }
 
     // Envia as fontes como primeiro evento SSE
-    res.write(`data: ${JSON.stringify({ type: "fontes", fontes })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type: "sources", sources })}\n\n`);
   } else {
     // Sem tool_calls — resposta direta (ex: saudações)
     console.log(
@@ -383,7 +385,7 @@ export async function processarPerguntaAgente(
 
     // Envia fontes vazias
     res.write(
-      `data: ${JSON.stringify({ type: "fontes", fontes: [] })}\n\n`
+      `data: ${JSON.stringify({ type: "sources", sources: [] })}\n\n`
     );
 
     // Se já tem conteúdo na resposta direta, envia como tokens
@@ -393,14 +395,14 @@ export async function processarPerguntaAgente(
       );
       res.write(`data: [DONE]\n\n`);
 
-      const duracao = ((Date.now() - inicio) / 1000).toFixed(1);
+      const duration = ((Date.now() - start) / 1000).toFixed(1);
       console.log(
-        `⏱️  [Agente] Pipeline concluído em ${duracao}s (sem ferramentas)\n`
+        `⏱️  [Agente] Pipeline concluído em ${duration}s (sem ferramentas)\n`
       );
 
       // Atualizar memória com a resposta direta
       if (session) {
-        updateSession(session.sessionId, pergunta, "", assistantMessage.content);
+        updateSession(session.sessionId, question, "", assistantMessage.content);
       }
 
       return;
@@ -447,7 +449,7 @@ export async function processarPerguntaAgente(
   const reader = streamResponse.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  let gerouTokens = false;
+  let generatedTokens = false;
 
   try {
     while (true) {
@@ -466,7 +468,7 @@ export async function processarPerguntaAgente(
           const chunk = JSON.parse(trimmed) as OllamaChatResponse;
 
           if (chunk.message?.content) {
-            gerouTokens = true;
+            generatedTokens = true;
             res.write(
               `data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`
             );
@@ -486,7 +488,7 @@ export async function processarPerguntaAgente(
       try {
         const chunk = JSON.parse(buffer.trim()) as OllamaChatResponse;
         if (chunk.message?.content) {
-          gerouTokens = true;
+          generatedTokens = true;
           res.write(
             `data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`
           );
@@ -500,7 +502,7 @@ export async function processarPerguntaAgente(
   }
 
   // Se nenhum token foi gerado, envia um fallback amigável
-  if (!gerouTokens) {
+  if (!generatedTokens) {
     console.warn("⚠️ [Agente] Resposta vazia no streaming. Enviando fallback.");
     const fallbackMsg = "Não encontrei essa informação nos documentos disponíveis. Recomendo consultar a coordenação do curso ou acessar o portal do IFMG.";
     res.write(
@@ -511,12 +513,12 @@ export async function processarPerguntaAgente(
   // Sinaliza fim do stream
   res.write(`data: [DONE]\n\n`);
 
-  const duracao = ((Date.now() - inicio) / 1000).toFixed(1);
+  const duration = ((Date.now() - start) / 1000).toFixed(1);
 
   // ── Atualizar memória da sessão ──
   if (session) {
-    updateSession(session.sessionId, pergunta, "", "");
+    updateSession(session.sessionId, question, "", "");
   }
 
-  console.log(`⏱️  [Agente] Pipeline streaming concluído em ${duracao}s\n`);
+  console.log(`⏱️  [Agente] Pipeline streaming concluído em ${duration}s\n`);
 }

@@ -15,7 +15,7 @@ export const chatLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: {
-    erro: "Muitas requisições. Aguarde um momento e tente novamente.",
+    error: "Muitas requisições. Aguarde um momento e tente novamente.",
   },
 });
 
@@ -26,6 +26,6 @@ export const uploadLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: {
-    erro: "Limite de uploads atingido. Tente novamente em 1 minuto.",
+    error: "Limite de uploads atingido. Tente novamente em 1 minuto.",
   },
 });

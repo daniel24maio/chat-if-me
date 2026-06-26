@@ -6,8 +6,8 @@ import { LiteParse } from "@llamaindex/liteparse";
 import * as fs from "fs";
 import * as path from "path";
 import { pool } from "../config/database.js";
-import { gerarEmbeddingOllama } from "../config/ollama.js";
-import { sanitizarTexto } from "./sanitization.service.js";
+import { generateOllamaEmbedding } from "../config/ollama.js";
+import { sanitizeText } from "./sanitization.service.js";
 import type {
   ChunkData,
   UploadResponse,
@@ -18,9 +18,9 @@ import type {
  */
 
 const EMBEDDING_MAX_CHARS = 4000;
-const CHUNK_SIZE_GERAL = 2048;
-const CHUNK_OVERLAP_GERAL = 256;
-const TABELA_MAX_LINHAS_POR_CHUNK = 30;
+const CHUNK_SIZE_GENERAL = 2048;
+const CHUNK_OVERLAP_GENERAL = 256;
+const TABLE_MAX_ROWS_PER_CHUNK = 30;
 
 const BATCH_SIZE = 32;
 
@@ -28,7 +28,7 @@ const BATCH_SIZE = 32;
 // ETAPA 1 — EXTRAÇÃO DE TEXTO (Multi-formato com LiteParse)
 // ===========================================================================
 
-async function extrairTextoPDF(buffer: Buffer, filename: string): Promise<string> {
+async function extractTextFromPDF(buffer: Buffer, filename: string): Promise<string> {
   console.log(`📄 [Extração] Iniciando extração avançada com LiteParse em "${filename}"...`);
 
   // Cria um nome de arquivo temporário único para evitar colisões em concorrência
@@ -43,10 +43,10 @@ async function extrairTextoPDF(buffer: Buffer, filename: string): Promise<string
     const result = await parser.parse(tempPath);
 
     // Extrai o texto preservando a estrutura semântica/markdown gerada pela IA espacial
-    const textoFinal = result.text || JSON.stringify(result);
+    const finalText = result.text || JSON.stringify(result);
 
-    console.log(`📄 [Extração] Concluído via LiteParse: ${textoFinal.length} caracteres extraídos de "${filename}"`);
-    return textoFinal;
+    console.log(`📄 [Extração] Concluído via LiteParse: ${finalText.length} caracteres extraídos de "${filename}"`);
+    return finalText;
   } catch (error) {
     console.error(`❌ [Extração] Erro no LiteParse ao processar "${filename}":`, error);
     throw error;
@@ -56,7 +56,7 @@ async function extrairTextoPDF(buffer: Buffer, filename: string): Promise<string
   }
 }
 
-async function extrairTextoImagem(buffer: Buffer, filename: string): Promise<string> {
+async function extractTextFromImage(buffer: Buffer, filename: string): Promise<string> {
   console.log(`🔍 [OCR] Iniciando OCR de "${filename}"...`);
   const worker = await createWorker("por");
   try {
@@ -68,16 +68,16 @@ async function extrairTextoImagem(buffer: Buffer, filename: string): Promise<str
   }
 }
 
-async function extrairTextoWord(buffer: Buffer, filename: string): Promise<string> {
+async function extractTextFromWord(buffer: Buffer, filename: string): Promise<string> {
   console.log(`📝 [Extração] Iniciando extração de documento Word "${filename}"...`);
   const result = await mammoth.extractRawText({ buffer });
   return result.value;
 }
 
-async function extrairTextoPlanilha(buffer: Buffer, filename: string): Promise<string> {
+async function extractTextFromSpreadsheet(buffer: Buffer, filename: string): Promise<string> {
   console.log(`📊 [Extração] Iniciando extração de planilha "${filename}"...`);
   const workbook = xlsx.read(buffer, { type: "buffer" });
-  const planilhas: string[] = [];
+  const spreadsheets: string[] = [];
 
   for (const sheetName of workbook.SheetNames) {
     const worksheet = workbook.Sheets[sheetName];
@@ -96,36 +96,36 @@ async function extrairTextoPlanilha(buffer: Buffer, filename: string): Promise<s
         result.push(`| ${formattedRow.map(() => "---").join(" | ")} |`);
       }
     }
-    planilhas.push(`--- Planilha: ${sheetName} ---\n${result.join("\n")}`);
+    spreadsheets.push(`--- Planilha: ${sheetName} ---\n${result.join("\n")}`);
   }
-  return planilhas.join("\n\n");
+  return spreadsheets.join("\n\n");
 }
 
-async function extrairTexto(buffer: Buffer, filename: string, mimetype: string): Promise<string> {
-  const nomeLower = filename.toLowerCase();
+async function extractText(buffer: Buffer, filename: string, mimetype: string): Promise<string> {
+  const nameLower = filename.toLowerCase();
 
-  if (mimetype === "application/pdf" || nomeLower.endsWith(".pdf")) {
-    return extrairTextoPDF(buffer, filename);
+  if (mimetype === "application/pdf" || nameLower.endsWith(".pdf")) {
+    return extractTextFromPDF(buffer, filename);
   }
-  if (mimetype.startsWith("image/") || nomeLower.match(/\.(png|jpe?g)$/)) {
-    return extrairTextoImagem(buffer, filename);
+  if (mimetype.startsWith("image/") || nameLower.match(/\.(png|jpe?g)$/)) {
+    return extractTextFromImage(buffer, filename);
   }
   if (
     mimetype === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
     mimetype === "application/msword" ||
-    nomeLower.endsWith(".docx") || nomeLower.endsWith(".doc")
+    nameLower.endsWith(".docx") || nameLower.endsWith(".doc")
   ) {
-    return extrairTextoWord(buffer, filename);
+    return extractTextFromWord(buffer, filename);
   }
   if (
     mimetype === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
     mimetype === "application/vnd.ms-excel" ||
     mimetype === "text/csv" ||
-    nomeLower.endsWith(".xlsx") || nomeLower.endsWith(".xls") || nomeLower.endsWith(".csv")
+    nameLower.endsWith(".xlsx") || nameLower.endsWith(".xls") || nameLower.endsWith(".csv")
   ) {
-    return extrairTextoPlanilha(buffer, filename);
+    return extractTextFromSpreadsheet(buffer, filename);
   }
-  if (mimetype === "text/plain" || mimetype === "text/markdown" || nomeLower.endsWith(".txt") || nomeLower.endsWith(".md")) {
+  if (mimetype === "text/plain" || mimetype === "text/markdown" || nameLower.endsWith(".txt") || nameLower.endsWith(".md")) {
     return buffer.toString("utf-8");
   }
 
@@ -136,7 +136,7 @@ async function extrairTexto(buffer: Buffer, filename: string, mimetype: string):
 // ETAPA 2 — ROTEAMENTO E CHUNKING SEMÂNTICO ADAPTATIVO (LangChain)
 // ===========================================================================
 
-function gerarNomeDocumento(filename: string): string {
+function generateDocumentName(filename: string): string {
   return filename
     .replace(/\.[^.]+$/, "")
     .replace(/[_-]+/g, " ")
@@ -144,34 +144,34 @@ function gerarNomeDocumento(filename: string): string {
     .trim();
 }
 
-function injetarContexto(texto: string, nomeDocumento: string, contextoSecao: string): string {
-  const partes = [`Documento: ${nomeDocumento}`];
-  if (contextoSecao) {
-    partes.push(`Contexto: ${contextoSecao}`);
+function injectContext(text: string, documentName: string, sectionContext: string): string {
+  const parts = [`Documento: ${documentName}`];
+  if (sectionContext) {
+    parts.push(`Contexto: ${sectionContext}`);
   }
-  return `[${partes.join(" | ")}]\n\n${texto}`;
+  return `[${parts.join(" | ")}]\n\n${text}`;
 }
 
-type TipoChunking = "juridico" | "tabela" | "geral";
+type ChunkingType = "juridical" | "table" | "general";
 
-function detectarTipoChunking(texto: string, filename: string): TipoChunking {
-  const separadoresTabela = (texto.match(/\|[\s-]+\|/g) || []).length;
-  const linhasComPipe = (texto.match(/^\|.+\|$/gm) || []).length;
-  if (separadoresTabela >= 1 && linhasComPipe >= 5) return "tabela";
+function detectChunkingType(text: string, filename: string): ChunkingType {
+  const tableSeparators = (text.match(/\|[\s-]+\|/g) || []).length;
+  const pipeLines = (text.match(/^\|.+\|$/gm) || []).length;
+  if (tableSeparators >= 1 && pipeLines >= 5) return "table";
 
-  const artigos = (texto.match(/\bArt\.\s+\d+/g) || []).length;
-  const capitulos = (texto.match(/\bCAP[IÍ]TULO\s+[IVXLCDM\d]+/gi) || []).length;
-  if (artigos >= 3 || capitulos >= 2) return "juridico";
+  const articles = (text.match(/\bArt\.\s+\d+/g) || []).length;
+  const chapters = (text.match(/\bCAP[IÍ]TULO\s+[IVXLCDM\d]+/gi) || []).length;
+  if (articles >= 3 || chapters >= 2) return "juridical";
 
   if (/regulament|norma|resolu[çc]|portaria|edital|delibera|estatut|regimento/i.test(filename)) {
-    return "juridico";
+    return "juridical";
   }
 
-  return "geral";
+  return "general";
 }
 
-async function chunkingJuridico(texto: string, filename: string): Promise<ChunkData[]> {
-  const nomeDocumento = gerarNomeDocumento(filename);
+async function juridicalChunking(text: string, filename: string): Promise<ChunkData[]> {
+  const documentName = generateDocumentName(filename);
   const chunks: ChunkData[] = [];
 
   // LangChain Splitter configurado com hierarquia jurídica
@@ -182,30 +182,30 @@ async function chunkingJuridico(texto: string, filename: string): Promise<ChunkD
     keepSeparator: true
   });
 
-  const partes = await splitter.splitText(texto);
-  let contextoAtual = "";
+  const parts = await splitter.splitText(text);
+  let currentContext = "";
 
-  for (const parte of partes) {
-    const parteTrimmed = parte.trim();
-    if (parteTrimmed.length === 0) continue;
+  for (const part of parts) {
+    const partTrimmed = part.trim();
+    if (partTrimmed.length === 0) continue;
 
     // Atualiza o contexto se a parte contiver um marcador de hierarquia
-    const matchHierarquia = parteTrimmed.match(/^(?:CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o)\s+[IVXLCDM\d]+.*?(?:\n|$)/i);
-    if (matchHierarquia) {
-      contextoAtual = matchHierarquia[0].trim();
+    const hierarchyMatch = partTrimmed.match(/^(?:CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o)\s+[IVXLCDM\d]+.*?(?:\n|$)/i);
+    if (hierarchyMatch) {
+      currentContext = hierarchyMatch[0].trim();
     }
 
-    const conteudoComContexto = injetarContexto(parteTrimmed, nomeDocumento, contextoAtual);
+    const contentWithContext = injectContext(partTrimmed, documentName, currentContext);
 
     chunks.push({
-      conteudo: conteudoComContexto,
+      content: contentWithContext,
       metadata: {
         filename,
         chunkIndex: chunks.length,
         totalChunks: 0,
-        nomeDocumento,
-        tipoChunking: "juridico",
-        contextoSecao: contextoAtual,
+        documentName,
+        chunkingType: "juridical",
+        sectionContext: currentContext,
       },
     });
   }
@@ -213,65 +213,65 @@ async function chunkingJuridico(texto: string, filename: string): Promise<ChunkD
   return chunks;
 }
 
-async function chunkingTabela(texto: string, filename: string): Promise<ChunkData[]> {
-  const nomeDocumento = gerarNomeDocumento(filename);
+async function tableChunking(text: string, filename: string): Promise<ChunkData[]> {
+  const documentName = generateDocumentName(filename);
   const chunks: ChunkData[] = [];
-  const blocos = separarBlocosTabela(texto);
+  const blocks = separateTableBlocks(text);
 
-  for (const bloco of blocos) {
-    if (bloco.tipo === "texto") {
-      const subChunks = await chunkingGeral(bloco.conteudo, filename, "tabela");
+  for (const block of blocks) {
+    if (block.type === "texto") {
+      const subChunks = await generalChunking(block.content, filename, "table");
       chunks.push(...subChunks);
       continue;
     }
 
-    const linhas = bloco.conteudo.split("\n").filter((l) => l.trim().length > 0);
-    if (linhas.length === 0) continue;
+    const lines = block.content.split("\n").filter((l) => l.trim().length > 0);
+    if (lines.length === 0) continue;
 
-    let cabecalho = "";
-    let linhasDados: string[] = [];
+    let header = "";
+    let dataLines: string[] = [];
 
-    if (linhas.length >= 2 && /^\|[\s\-:|]+\|/.test(linhas[1])) {
-      cabecalho = linhas[0] + "\n" + linhas[1];
-      linhasDados = linhas.slice(2);
+    if (lines.length >= 2 && /^\|[\s\-:|]+\|/.test(lines[1])) {
+      header = lines[0] + "\n" + lines[1];
+      dataLines = lines.slice(2);
     } else {
-      linhasDados = linhas;
+      dataLines = lines;
     }
 
-    if (linhasDados.length <= TABELA_MAX_LINHAS_POR_CHUNK) {
-      const conteudo = injetarContexto(bloco.conteudo.trim(), nomeDocumento, "Tabela/Matriz");
+    if (dataLines.length <= TABLE_MAX_ROWS_PER_CHUNK) {
+      const content = injectContext(block.content.trim(), documentName, "Tabela/Matriz");
       chunks.push({
-        conteudo,
+        content,
         metadata: {
           filename,
           chunkIndex: chunks.length,
           totalChunks: 0,
-          nomeDocumento,
-          tipoChunking: "tabela",
-          contextoSecao: "Tabela/Matriz",
+          documentName,
+          chunkingType: "table",
+          sectionContext: "Tabela/Matriz",
         },
       });
       continue;
     }
 
-    for (let i = 0; i < linhasDados.length; i += TABELA_MAX_LINHAS_POR_CHUNK) {
-      const fatia = linhasDados.slice(i, i + TABELA_MAX_LINHAS_POR_CHUNK);
-      const parteNum = Math.floor(i / TABELA_MAX_LINHAS_POR_CHUNK) + 1;
-      const totalPartes = Math.ceil(linhasDados.length / TABELA_MAX_LINHAS_POR_CHUNK);
-      const contexto = `Tabela/Matriz (parte ${parteNum}/${totalPartes})`;
+    for (let i = 0; i < dataLines.length; i += TABLE_MAX_ROWS_PER_CHUNK) {
+      const slice = dataLines.slice(i, i + TABLE_MAX_ROWS_PER_CHUNK);
+      const partNum = Math.floor(i / TABLE_MAX_ROWS_PER_CHUNK) + 1;
+      const totalPartes = Math.ceil(dataLines.length / TABLE_MAX_ROWS_PER_CHUNK);
+      const context = `Tabela/Matriz (parte ${partNum}/${totalPartes})`;
 
-      const tabelaChunk = cabecalho ? `${cabecalho}\n${fatia.join("\n")}` : fatia.join("\n");
-      const conteudo = injetarContexto(tabelaChunk, nomeDocumento, contexto);
+      const tableChunk = header ? `${header}\n${slice.join("\n")}` : slice.join("\n");
+      const content = injectContext(tableChunk, documentName, context);
 
       chunks.push({
-        conteudo,
+        content,
         metadata: {
           filename,
           chunkIndex: chunks.length,
           totalChunks: 0,
-          nomeDocumento,
-          tipoChunking: "tabela",
-          contextoSecao: contexto,
+          documentName,
+          chunkingType: "table",
+          sectionContext: context,
         },
       });
     }
@@ -280,68 +280,68 @@ async function chunkingTabela(texto: string, filename: string): Promise<ChunkDat
   return chunks;
 }
 
-interface BlocoTabela {
-  tipo: "tabela" | "texto";
-  conteudo: string;
+interface TableBlock {
+  type: "tabela" | "texto";
+  content: string;
 }
 
-function separarBlocosTabela(texto: string): BlocoTabela[] {
-  const linhas = texto.split("\n");
-  const blocos: BlocoTabela[] = [];
-  let blocoAtual: string[] = [];
-  let tipoAtual: "tabela" | "texto" | null = null;
+function separateTableBlocks(text: string): TableBlock[] {
+  const lines = text.split("\n");
+  const blocks: TableBlock[] = [];
+  let currentBlock: string[] = [];
+  let currentType: "tabela" | "texto" | null = null;
 
-  for (const linha of linhas) {
-    const ehLinhaPipe = /^\s*\|.+\|\s*$/.test(linha);
-    const tipo: "tabela" | "texto" = ehLinhaPipe ? "tabela" : "texto";
+  for (const line of lines) {
+    const isPipeLine = /^\s*\|.+\|\s*$/.test(line);
+    const type: "tabela" | "texto" = isPipeLine ? "tabela" : "texto";
 
-    if (tipoAtual !== null && tipo !== tipoAtual) {
-      const conteudo = blocoAtual.join("\n").trim();
-      if (conteudo.length > 0) blocos.push({ tipo: tipoAtual, conteudo });
-      blocoAtual = [];
+    if (currentType !== null && type !== currentType) {
+      const content = currentBlock.join("\n").trim();
+      if (content.length > 0) blocks.push({ type: currentType, content });
+      currentBlock = [];
     }
-    tipoAtual = tipo;
-    blocoAtual.push(linha);
+    currentType = type;
+    currentBlock.push(line);
   }
 
-  if (blocoAtual.length > 0 && tipoAtual !== null) {
-    const conteudo = blocoAtual.join("\n").trim();
-    if (conteudo.length > 0) blocos.push({ tipo: tipoAtual, conteudo });
+  if (currentBlock.length > 0 && currentType !== null) {
+    const content = currentBlock.join("\n").trim();
+    if (content.length > 0) blocks.push({ type: currentType, content });
   }
-  return blocos;
+  return blocks;
 }
 
-async function chunkingGeral(
-  texto: string,
+async function generalChunking(
+  text: string,
   filename: string,
-  tipoOverride?: "tabela" | "geral"
+  typeOverride?: "table" | "general"
 ): Promise<ChunkData[]> {
-  const nomeDocumento = gerarNomeDocumento(filename);
+  const documentName = generateDocumentName(filename);
   const chunks: ChunkData[] = [];
-  const tipo = tipoOverride || "geral";
+  const type = typeOverride || "general";
 
   // LangChain Splitter padrão para texto corrido
   const splitter = new RecursiveCharacterTextSplitter({
-    chunkSize: CHUNK_SIZE_GERAL,
-    chunkOverlap: CHUNK_OVERLAP_GERAL,
+    chunkSize: CHUNK_SIZE_GENERAL,
+    chunkOverlap: CHUNK_OVERLAP_GENERAL,
     separators: ["\n\n", "\n", ". ", " "],
   });
 
-  const partes = await splitter.splitText(texto);
+  const parts = await splitter.splitText(text);
 
-  for (const parte of partes) {
-    if (parte.trim().length === 0) continue;
-    const conteudo = injetarContexto(parte.trim(), nomeDocumento, "");
+  for (const part of parts) {
+    if (part.trim().length === 0) continue;
+    const content = injectContext(part.trim(), documentName, "");
 
     chunks.push({
-      conteudo,
+      content,
       metadata: {
         filename,
         chunkIndex: chunks.length,
         totalChunks: 0,
-        nomeDocumento,
-        tipoChunking: tipo,
-        contextoSecao: "",
+        documentName,
+        chunkingType: type,
+        sectionContext: "",
       },
     });
   }
@@ -349,22 +349,22 @@ async function chunkingGeral(
   return chunks;
 }
 
-async function dividirEmChunks(texto: string, filename: string): Promise<ChunkData[]> {
-  const tipoChunking = detectarTipoChunking(texto, filename);
-  console.log(`🔀 [Roteamento] "${filename}" → estratégia: ${tipoChunking.toUpperCase()}`);
+async function splitIntoChunks(text: string, filename: string): Promise<ChunkData[]> {
+  const chunkingType = detectChunkingType(text, filename);
+  console.log(`🔀 [Roteamento] "${filename}" → estratégia: ${chunkingType.toUpperCase()}`);
 
   let chunks: ChunkData[];
 
-  switch (tipoChunking) {
-    case "juridico":
-      chunks = await chunkingJuridico(texto, filename);
+  switch (chunkingType) {
+    case "juridical":
+      chunks = await juridicalChunking(text, filename);
       break;
-    case "tabela":
-      chunks = await chunkingTabela(texto, filename);
+    case "table":
+      chunks = await tableChunking(text, filename);
       break;
-    case "geral":
+    case "general":
     default:
-      chunks = await chunkingGeral(texto, filename);
+      chunks = await generalChunking(text, filename);
       break;
   }
 
@@ -372,7 +372,7 @@ async function dividirEmChunks(texto: string, filename: string): Promise<ChunkDa
     chunk.metadata.totalChunks = chunks.length;
   }
 
-  console.log(`✂️  [Chunking] "${filename}" → ${chunks.length} chunks (tipo: ${tipoChunking})`);
+  console.log(`✂️  [Chunking] "${filename}" → ${chunks.length} chunks (tipo: ${chunkingType})`);
   return chunks;
 }
 
@@ -380,19 +380,19 @@ async function dividirEmChunks(texto: string, filename: string): Promise<ChunkDa
 // ETAPA 3 — VETORIZAÇÃO E GRAVAÇÃO
 // ===========================================================================
 
-function truncarParaEmbedding(texto: string): string {
-  if (texto.length <= EMBEDDING_MAX_CHARS) return texto;
-  console.warn(`⚠️ [Embedding] Chunk com ${texto.length} chars excede o limite. Truncando.`);
-  const corte = texto.lastIndexOf(". ", EMBEDDING_MAX_CHARS);
-  return corte > EMBEDDING_MAX_CHARS * 0.5
-    ? texto.slice(0, corte + 1).trim()
-    : texto.slice(0, EMBEDDING_MAX_CHARS).trim();
+function truncateForEmbedding(text: string): string {
+  if (text.length <= EMBEDDING_MAX_CHARS) return text;
+  console.warn(`⚠️ [Embedding] Chunk com ${text.length} chars excede o limite. Truncando.`);
+  const cut = text.lastIndexOf(". ", EMBEDDING_MAX_CHARS);
+  return cut > EMBEDDING_MAX_CHARS * 0.5
+    ? text.slice(0, cut + 1).trim()
+    : text.slice(0, EMBEDDING_MAX_CHARS).trim();
 }
 
-async function vetorizarEGravar(chunks: ChunkData[]): Promise<number> {
-  let gravados = 0;
-  let errosDimensao = 0;
-  let outrosErros = 0;
+async function vectorizeAndSave(chunks: ChunkData[]): Promise<number> {
+  let saved = 0;
+  let dimensionErrors = 0;
+  let otherErrors = 0;
 
   for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
     const batch = chunks.slice(i, i + BATCH_SIZE);
@@ -404,14 +404,14 @@ async function vetorizarEGravar(chunks: ChunkData[]): Promise<number> {
       batch.map(async (chunk, j) => {
         const idx = i + j;
         const progresso = `[${idx + 1}/${chunks.length}]`;
-        const conteudoSeguro = truncarParaEmbedding(chunk.conteudo);
+        const safeContent = truncateForEmbedding(chunk.content);
 
-        const embedding = await gerarEmbeddingOllama(conteudoSeguro);
+        const embedding = await generateOllamaEmbedding(safeContent);
         const vectorStr = `[${embedding.join(",")}]`;
 
         await pool.query(
           `INSERT INTO documents (content, metadata, embedding) VALUES ($1, $2, $3)`,
-          [conteudoSeguro, JSON.stringify(chunk.metadata), vectorStr]
+          [safeContent, JSON.stringify(chunk.metadata), vectorStr]
         );
 
         console.log(`💾 [Banco] ${progresso} Chunk gravado (${embedding.length} dimensões)`);
@@ -420,32 +420,32 @@ async function vetorizarEGravar(chunks: ChunkData[]): Promise<number> {
 
     for (const result of results) {
       if (result.status === "fulfilled") {
-        gravados++;
+        saved++;
       } else {
         const errMsg = result.reason?.message || String(result.reason);
         if (errMsg.includes("expected") && errMsg.includes("dimensions")) {
-          errosDimensao++;
-          if (errosDimensao === 1) {
+          dimensionErrors++;
+          if (dimensionErrors === 1) {
             console.error(`❌ [Embedding] ERRO DE DIMENSÃO...`);
           }
         } else {
-          outrosErros++;
+          otherErrors++;
           console.error(`❌ [Embedding] Erro no lote: ${errMsg}`);
         }
       }
     }
 
-    if (errosDimensao > 0 && gravados === 0 && i + BATCH_SIZE >= chunks.length) break;
+    if (dimensionErrors > 0 && saved === 0 && i + BATCH_SIZE >= chunks.length) break;
   }
 
-  return gravados;
+  return saved;
 }
 
 // ===========================================================================
 // PIPELINE PRINCIPAL
 // ===========================================================================
 
-export async function processarDocumento(
+export async function processDocument(
   buffer: Buffer,
   filename: string,
   mimetype: string = "application/pdf"
@@ -454,38 +454,38 @@ export async function processarDocumento(
   console.log(`🚀 [Ingestão] Processando "${filename}" (${mimetype})`);
   console.log(`${"=".repeat(60)}\n`);
 
-  const inicio = Date.now();
-  const textoRaw = await extrairTexto(buffer, filename, mimetype);
+  const start = Date.now();
+  const rawText = await extractText(buffer, filename, mimetype);
 
-  if (textoRaw.trim().length === 0) {
-    return { mensagem: "O arquivo não contém texto extraível.", arquivo: filename, totalChunks: 0, chunksGravados: 0 };
+  if (rawText.trim().length === 0) {
+    return { message: "O arquivo não contém texto extraível.", file: filename, totalChunks: 0, savedChunks: 0 };
   }
 
-  const texto = sanitizarTexto(textoRaw);
+  const text = sanitizeText(rawText);
 
-  const chunks = await dividirEmChunks(texto, filename);
+  const chunks = await splitIntoChunks(text, filename);
 
-  const chunksGravados = await vetorizarEGravar(chunks);
-  const duracao = ((Date.now() - inicio) / 1000).toFixed(1);
-  const falhas = chunks.length - chunksGravados;
+  const savedChunks = await vectorizeAndSave(chunks);
+  const duration = ((Date.now() - start) / 1000).toFixed(1);
+  const failures = chunks.length - savedChunks;
 
-  if (chunksGravados === 0 && chunks.length > 0) {
-    console.error(`❌ [Ingestão] "${filename}" FALHOU em ${duracao}s — 0/${chunks.length} chunks gravados`);
+  if (savedChunks === 0 && chunks.length > 0) {
+    console.error(`❌ [Ingestão] "${filename}" FALHOU em ${duration}s — 0/${chunks.length} chunks gravados`);
     return {
-      mensagem: `Falha na ingestão: nenhum chunk foi gravado (0/${chunks.length}). Possível causa de dimensão.`,
-      arquivo: filename, totalChunks: chunks.length, chunksGravados: 0,
+      message: `Falha na ingestão: nenhum chunk foi gravado (0/${chunks.length}). Possível causa de dimensão.`,
+      file: filename, totalChunks: chunks.length, savedChunks: 0,
     };
   }
 
-  if (falhas > 0) {
-    console.warn(`⚠️  [Ingestão] "${filename}" concluído com erros em ${duracao}s — ${chunksGravados}/${chunks.length} chunks (${falhas} falhas)`);
+  if (failures > 0) {
+    console.warn(`⚠️  [Ingestão] "${filename}" concluído com erros em ${duration}s — ${savedChunks}/${chunks.length} chunks (${failures} falhas)`);
   } else {
-    console.log(`✅ [Ingestão] "${filename}" concluído em ${duracao}s — ${chunksGravados}/${chunks.length} chunks`);
+    console.log(`✅ [Ingestão] "${filename}" concluído em ${duration}s — ${savedChunks}/${chunks.length} chunks`);
   }
 
   return {
-    mensagem: falhas > 0 ? `Documento processado parcialmente em ${duracao}s. ${falhas} chunk(s) falharam.` : `Documento processado com sucesso em ${duracao}s.`,
-    arquivo: filename, totalChunks: chunks.length, chunksGravados,
+    message: failures > 0 ? `Documento processado parcialmente em ${duration}s. ${failures} chunk(s) falharam.` : `Documento processado com sucesso em ${duration}s.`,
+    file: filename, totalChunks: chunks.length, savedChunks,
   };
 }
 
@@ -493,7 +493,7 @@ export async function processarDocumento(
 // LISTAGEM E REMOÇÃO DE DOCUMENTOS
 // ===========================================================================
 
-export async function listarDocumentosProcessados(): Promise<{ filename: string; totalChunks: number; ultimaAtualizacao: string }[]> {
+export async function listProcessedDocuments(): Promise<{ filename: string; totalChunks: number; ultimaAtualizacao: string }[]> {
   try {
     const result = await pool.query(`
       SELECT metadata->>'filename' AS filename, COUNT(*) AS total_chunks, MAX(created_at) AS ultima_atualizacao
@@ -506,10 +506,10 @@ export async function listarDocumentosProcessados(): Promise<{ filename: string;
   }
 }
 
-export async function removerDocumento(filename: string): Promise<number> {
+export async function removeDocument(filename: string): Promise<number> {
   console.log(`🗑️  [Remoção] Removendo "${filename}" do banco...`);
   const result = await pool.query(`DELETE FROM documents WHERE metadata->>'filename' = $1`, [filename]);
-  const removidos = result.rowCount ?? 0;
-  console.log(`🗑️  [Remoção] ${removidos} chunks removidos`);
-  return removidos;
+  const removed = result.rowCount ?? 0;
+  console.log(`🗑️  [Remoção] ${removed} chunks removidos`);
+  return removed;
 }

@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import type { ChatRequestBody } from "../interfaces/chat.interfaces.js";
-import { processarPerguntaAgente } from "../services/mcp_agent.service.js";
-import { comControleDeConcorrencia } from "../services/queue.service.js";
+import { processAgentQuestion } from "../services/mcp_agent.service.js";
+import { withConcurrencyControl } from "../services/queue.service.js";
 
 /**
  * Controller do Agente MCP (Agentic RAG).
@@ -15,37 +15,37 @@ import { comControleDeConcorrencia } from "../services/queue.service.js";
  * Processa uma pergunta via Agente MCP com streaming SSE.
  *
  * Endpoint: POST /api/agent
- * Body: { "pergunta": "string" }
+ * Body: { "question": "string" }
  * Resposta: SSE stream (mesmo protocolo do /api/chat)
  */
-export async function enviarPerguntaAgente(
+export async function sendAgentQuestion(
   req: Request<object, unknown, ChatRequestBody>,
   res: Response
 ): Promise<void> {
   try {
-    const { pergunta, sessionId } = req.body;
+    const { question, sessionId } = req.body;
 
     // Validação: campo obrigatório
-    if (!pergunta || typeof pergunta !== "string") {
+    if (!question || typeof question !== "string") {
       res.status(400).json({
-        erro: "O campo 'pergunta' é obrigatório e deve ser uma string.",
+        error: "O campo 'question' é obrigatório e deve ser uma string.",
       });
       return;
     }
 
     // Validação: tamanho mínimo
-    const perguntaTrimmed = pergunta.trim();
-    if (perguntaTrimmed.length < 3) {
+    const questionTrimmed = question.trim();
+    if (questionTrimmed.length < 3) {
       res.status(400).json({
-        erro: "A pergunta deve ter pelo menos 3 caracteres.",
+        error: "A pergunta deve ter pelo menos 3 caracteres.",
       });
       return;
     }
 
     // Validação: tamanho máximo
-    if (perguntaTrimmed.length > 1000) {
+    if (questionTrimmed.length > 1000) {
       res.status(400).json({
-        erro: "A pergunta deve ter no máximo 1000 caracteres.",
+        error: "A pergunta deve ter no máximo 1000 caracteres.",
       });
       return;
     }
@@ -64,8 +64,8 @@ export async function enviarPerguntaAgente(
     });
 
     // Delega ao agente MCP com controle de concorrência
-    await comControleDeConcorrencia(async () => {
-      await processarPerguntaAgente(perguntaTrimmed, res, sessionId);
+    await withConcurrencyControl(async () => {
+      await processAgentQuestion(questionTrimmed, res, sessionId);
     });
 
     res.end();
@@ -73,18 +73,18 @@ export async function enviarPerguntaAgente(
     console.error("[AgentController] Erro:", error);
 
     if (res.headersSent) {
-      const mensagemErro =
+      const errorMessage =
         error instanceof Error && error.message.includes("Ollama")
           ? "O servidor de IA ficou inacessível. Tente novamente."
           : "Ocorreu um erro durante a geração da resposta.";
 
       res.write(
-        `data: ${JSON.stringify({ type: "erro", mensagem: mensagemErro })}\n\n`
+        `data: ${JSON.stringify({ type: "error", message: errorMessage })}\n\n`
       );
       res.end();
     } else {
       res.status(500).json({
-        erro: "Erro interno ao processar sua pergunta.",
+        error: "Erro interno ao processar sua pergunta.",
       });
     }
   }

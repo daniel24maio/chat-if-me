@@ -12,7 +12,7 @@ import pg from "pg";
 const { Pool } = pg;
 
 /** Dimensão esperada para os embeddings (bge-m3 = 1024) */
-const EMBEDDING_DIM_ESPERADA = 1024;
+const EXPECTED_EMBEDDING_DIM = 1024;
 
 /** Pool de conexões do PostgreSQL com configuração otimizada */
 export const pool = new Pool({
@@ -26,12 +26,12 @@ export const pool = new Pool({
  * Testa a conexão com o banco de dados.
  * Chamada na inicialização do servidor para validar que o banco está acessível.
  */
-export async function testarConexaoDB(): Promise<void> {
+export async function testDBConnection(): Promise<void> {
   try {
     const client = await pool.connect();
-    const result = await client.query("SELECT NOW() as agora");
+    const result = await client.query("SELECT NOW() as now");
     console.log(
-      `✅ [Database] Conectado ao PostgreSQL — ${result.rows[0].agora}`
+      `✅ [Database] Conectado ao PostgreSQL — ${result.rows[0].now}`
     );
     client.release();
   } catch (error) {
@@ -55,17 +55,17 @@ export async function testarConexaoDB(): Promise<void> {
  *
  * ⚠️  DESTRUTIVA: remove todos os embeddings existentes (incompatíveis).
  */
-export async function verificarDimensaoEmbedding(): Promise<void> {
+export async function verifyEmbeddingDimension(): Promise<void> {
   try {
     // Verifica se a tabela documents existe
-    const tabelaExiste = await pool.query(`
+    const tableExists = await pool.query(`
       SELECT EXISTS (
         SELECT 1 FROM information_schema.tables
         WHERE table_name = 'documents'
-      ) AS existe
+      ) AS exists
     `);
 
-    if (!tabelaExiste.rows[0]?.existe) {
+    if (!tableExists.rows[0]?.exists) {
       console.log("⏭️  [Database] Tabela 'documents' não existe ainda. Pulando verificação de dimensão.");
       return;
     }
@@ -83,26 +83,26 @@ export async function verificarDimensaoEmbedding(): Promise<void> {
       return;
     }
 
-    const dimAtual = result.rows[0].dim;
+    const currentDim = result.rows[0].dim;
 
-    if (dimAtual === EMBEDDING_DIM_ESPERADA) {
-      console.log(`✅ [Database] Dimensão do embedding: ${dimAtual}d ✓`);
+    if (currentDim === EXPECTED_EMBEDDING_DIM) {
+      console.log(`✅ [Database] Dimensão do embedding: ${currentDim}d ✓`);
       return;
     }
 
     // ── Auto-migração ──
     console.warn(
-      `⚠️  [Database] Dimensão incompatível detectada: ${dimAtual}d (esperado: ${EMBEDDING_DIM_ESPERADA}d)`
+      `⚠️  [Database] Dimensão incompatível detectada: ${currentDim}d (esperado: ${EXPECTED_EMBEDDING_DIM}d)`
     );
-    console.log(`🔄 [Database] Iniciando auto-migração ${dimAtual}d → ${EMBEDDING_DIM_ESPERADA}d...`);
+    console.log(`🔄 [Database] Iniciando auto-migração ${currentDim}d → ${EXPECTED_EMBEDDING_DIM}d...`);
 
     // Verifica quantos registros serão perdidos
     const countResult = await pool.query(`SELECT COUNT(*) AS total FROM documents WHERE embedding IS NOT NULL`);
-    const registrosExistentes = Number(countResult.rows[0]?.total || 0);
+    const existingRecords = Number(countResult.rows[0]?.total || 0);
 
-    if (registrosExistentes > 0) {
+    if (existingRecords > 0) {
       console.warn(
-        `⚠️  [Database] ${registrosExistentes} registro(s) com embeddings serão invalidados. ` +
+        `⚠️  [Database] ${existingRecords} registro(s) com embeddings serão invalidados. ` +
         `Re-uploade os documentos após a migração.`
       );
     }
@@ -110,7 +110,7 @@ export async function verificarDimensaoEmbedding(): Promise<void> {
     // Executa a migração
     await pool.query(`DROP INDEX IF EXISTS idx_documents_embedding`);
     await pool.query(`ALTER TABLE documents DROP COLUMN IF EXISTS embedding`);
-    await pool.query(`ALTER TABLE documents ADD COLUMN embedding vector(${EMBEDDING_DIM_ESPERADA})`);
+    await pool.query(`ALTER TABLE documents ADD COLUMN embedding vector(${EXPECTED_EMBEDDING_DIM})`);
     await pool.query(`
       CREATE INDEX idx_documents_embedding
         ON documents USING hnsw (embedding vector_cosine_ops)
@@ -118,12 +118,12 @@ export async function verificarDimensaoEmbedding(): Promise<void> {
     `);
 
     console.log(
-      `✅ [Database] Auto-migração concluída! Embedding agora é ${EMBEDDING_DIM_ESPERADA}d (HNSW).`
+      `✅ [Database] Auto-migração concluída! Embedding agora é ${EXPECTED_EMBEDDING_DIM}d (HNSW).`
     );
 
-    if (registrosExistentes > 0) {
+    if (existingRecords > 0) {
       console.warn(
-        `⚠️  [Database] AÇÃO NECESSÁRIA: Re-uploade os ${registrosExistentes} documento(s) via /api/embedding/upload`
+        `⚠️  [Database] AÇÃO NECESSÁRIA: Re-uploade os ${existingRecords} documento(s) via /api/embedding/upload`
       );
     }
   } catch (error) {

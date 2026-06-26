@@ -104,7 +104,7 @@ export const ollamaSemaphore = new OllamaSemaphore(MAX_CONCURRENT);
  * });
  * ```
  */
-export async function comControleDeConcorrencia<T>(
+export async function withConcurrencyControl<T>(
   fn: () => Promise<T>
 ): Promise<T> {
   await ollamaSemaphore.acquire();

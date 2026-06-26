@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { enviarPerguntaAgente } from "../controllers/agent.controller.js";
+import { sendAgentQuestion } from "../controllers/agent.controller.js";
 
 /**
  * Rotas do Agente MCP (Agentic RAG).
@@ -7,6 +7,6 @@ import { enviarPerguntaAgente } from "../controllers/agent.controller.js";
  */
 const agentRouter = Router();
 
-agentRouter.post("/", enviarPerguntaAgente);
+agentRouter.post("/", sendAgentQuestion);
 
 export { agentRouter };

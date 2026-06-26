@@ -13,23 +13,23 @@ import './EmbeddingPage.styles.css';
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3333';
 
 /** Status possíveis de um arquivo na fila de upload */
-type FileStatus = 'aguardando' | 'enviando' | 'processando' | 'concluido' | 'erro';
+type FileStatus = 'waiting' | 'uploading' | 'processing' | 'completed' | 'error';
 
 /** Arquivo na fila de upload com seu status */
 interface FileItem {
   id: string;
   file: File;
   status: FileStatus;
-  progresso: number;
-  mensagem?: string;
+  progress: number;
+  message?: string;
   chunks?: number;
 }
 
 /** Documento já processado no banco */
-interface DocumentoProcessado {
+interface ProcessedDocument {
   filename: string;
   totalChunks: number;
-  ultimaAtualizacao: string;
+  lastUpdated: string;
 }
 
 /**
@@ -42,23 +42,23 @@ interface DocumentoProcessado {
  */
 const EmbeddingPage: React.FC = () => {
   const { theme } = useTheme();
-  const [arquivos, setArquivos] = useState<FileItem[]>([]);
-  const [documentos, setDocumentos] = useState<DocumentoProcessado[]>([]);
+  const [files, setFiles] = useState<FileItem[]>([]);
+  const [documents, setDocuments] = useState<ProcessedDocument[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Carrega documentos já processados ao montar o componente
   useEffect(() => {
-    carregarDocumentos();
+    loadDocuments();
   }, []);
 
   /** Busca a lista de documentos já processados no backend */
-  async function carregarDocumentos() {
+  async function loadDocuments() {
     try {
       const response = await fetch(`${API_URL}/api/embedding/documentos`);
       if (response.ok) {
         const data = await response.json();
-        setDocumentos(data.documentos || []);
+        setDocuments(data.documents || []);
       }
     } catch (error) {
       console.error('Erro ao carregar documentos:', error);
@@ -78,10 +78,10 @@ const EmbeddingPage: React.FC = () => {
 
       if (response.ok) {
         // Remove da lista local imediatamente para melhor UX
-        setDocumentos((prev) => prev.filter((doc) => doc.filename !== filename));
+        setDocuments((prev) => prev.filter((doc) => doc.filename !== filename));
       } else {
         const data = await response.json();
-        alert(data.erro || 'Erro ao excluir o documento.');
+        alert(data.error || 'Erro ao excluir o documento.');
       }
     } catch (error) {
       console.error('Erro ao excluir documento:', error);
@@ -90,37 +90,37 @@ const EmbeddingPage: React.FC = () => {
   }
 
   /** Adiciona arquivo(s) à fila e inicia o upload */
-  const adicionarArquivos = useCallback((files: FileList | File[]) => {
-    const novosArquivos: FileItem[] = Array.from(files)
+  const addFiles = useCallback((filesList: FileList | File[]) => {
+    const newFiles: FileItem[] = Array.from(filesList)
       .filter((f) => f.name.match(/\.(pdf|docx?|xlsx?|csv|txt|md|jpe?g|png)$/i) || f.type === 'application/pdf')
       .map((file) => ({
         id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
         file,
-        status: 'aguardando' as FileStatus,
-        progresso: 0,
+        status: 'waiting' as FileStatus,
+        progress: 0,
       }));
 
-    if (novosArquivos.length === 0) {
+    if (newFiles.length === 0) {
       alert('Por favor, selecione apenas arquivos suportados (PDF, Imagens, Word, Excel, CSV, TXT, Markdown).');
       return;
     }
 
-    setArquivos((prev) => [...prev, ...novosArquivos]);
+    setFiles((prev) => [...prev, ...newFiles]);
 
     // Inicia o upload de cada arquivo
-    novosArquivos.forEach((item) => enviarArquivo(item));
+    newFiles.forEach((item) => uploadFile(item));
   }, []);
 
   /** Envia um arquivo para a API e acompanha o progresso */
-  async function enviarArquivo(item: FileItem) {
-    // Atualiza status para "enviando"
-    atualizarArquivo(item.id, { status: 'enviando', progresso: 10 });
+  async function uploadFile(item: FileItem) {
+    // Atualiza status para "uploading"
+    updateFile(item.id, { status: 'uploading', progress: 10 });
 
     const formData = new FormData();
-    formData.append('arquivo', item.file);
+    formData.append('file', item.file);
 
     try {
-      atualizarArquivo(item.id, { status: 'processando', progresso: 30 });
+      updateFile(item.id, { status: 'processing', progress: 30 });
 
       const response = await fetch(`${API_URL}/api/embedding/upload`, {
         method: 'POST',
@@ -130,33 +130,33 @@ const EmbeddingPage: React.FC = () => {
       const data = await response.json();
 
       if (response.ok) {
-        atualizarArquivo(item.id, {
-          status: 'concluido',
-          progresso: 100,
-          mensagem: `${data.chunksGravados}/${data.totalChunks} chunks processados`,
-          chunks: data.chunksGravados,
+        updateFile(item.id, {
+          status: 'completed',
+          progress: 100,
+          message: `${data.savedChunks}/${data.totalChunks} chunks processados`,
+          chunks: data.savedChunks,
         });
         // Recarrega lista de documentos
-        carregarDocumentos();
+        loadDocuments();
       } else {
-        atualizarArquivo(item.id, {
-          status: 'erro',
-          progresso: 100,
-          mensagem: data.erro || 'Erro desconhecido',
+        updateFile(item.id, {
+          status: 'error',
+          progress: 100,
+          message: data.error || 'Erro desconhecido',
         });
       }
     } catch (error) {
-      atualizarArquivo(item.id, {
-        status: 'erro',
-        progresso: 100,
-        mensagem: 'Falha na conexão com o servidor.',
+      updateFile(item.id, {
+        status: 'error',
+        progress: 100,
+        message: 'Falha na conexão com o servidor.',
       });
     }
   }
 
   /** Atualiza um arquivo na lista pelo ID */
-  function atualizarArquivo(id: string, updates: Partial<FileItem>) {
-    setArquivos((prev) =>
+  function updateFile(id: string, updates: Partial<FileItem>) {
+    setFiles((prev) =>
       prev.map((a) => (a.id === id ? { ...a, ...updates } : a))
     );
   }
@@ -179,13 +179,13 @@ const EmbeddingPage: React.FC = () => {
     e.preventDefault();
     setIsDragOver(false);
     if (e.dataTransfer.files.length > 0) {
-      adicionarArquivos(e.dataTransfer.files);
+      addFiles(e.dataTransfer.files);
     }
   }
 
   function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     if (e.target.files && e.target.files.length > 0) {
-      adicionarArquivos(e.target.files);
+      addFiles(e.target.files);
       // Limpa o input para permitir reselecionar o mesmo arquivo
       e.target.value = '';
     }
@@ -197,18 +197,18 @@ const EmbeddingPage: React.FC = () => {
 
   function statusLabel(status: FileStatus): string {
     const labels: Record<FileStatus, string> = {
-      aguardando: '⏳ Aguardando...',
-      enviando: '📤 Enviando...',
-      processando: '⚙️ Processando chunks e embeddings...',
-      concluido: '✅ Concluído',
-      erro: '❌ Erro',
+      waiting: '⏳ Aguardando...',
+      uploading: '📤 Enviando...',
+      processing: '⚙️ Processando chunks e embeddings...',
+      completed: '✅ Concluído',
+      error: '❌ Erro',
     };
     return labels[status];
   }
 
   function statusClass(status: FileStatus): string {
-    if (status === 'concluido') return 'success';
-    if (status === 'erro') return 'error';
+    if (status === 'completed') return 'success';
+    if (status === 'error') return 'error';
     return '';
   }
 
@@ -268,26 +268,26 @@ const EmbeddingPage: React.FC = () => {
         <section className="files-card">
           <h2>📋 Fila de Processamento</h2>
           <div className="files-list">
-            {arquivos.length === 0 ? (
+            {files.length === 0 ? (
               <div className="empty-state">
                 <span className="empty-state-icon">📭</span>
                 <p>Nenhum arquivo na fila. Faça o upload de um PDF acima.</p>
               </div>
             ) : (
-              arquivos.map((item) => (
+              files.map((item) => (
                 <div key={item.id} className="file-item">
                   <span className="file-icon">📄</span>
                   <div className="file-info">
                     <div className="file-name">{item.file.name}</div>
                     <div className={`file-status ${statusClass(item.status)}`}>
                       {statusLabel(item.status)}
-                      {item.mensagem && ` — ${item.mensagem}`}
+                      {item.message && ` — ${item.message}`}
                     </div>
-                    {item.status !== 'concluido' && item.status !== 'erro' && (
+                    {item.status !== 'completed' && item.status !== 'error' && (
                       <div className="progress-bar-container">
                         <div
                           className="progress-bar"
-                          style={{ width: `${item.progresso}%` }}
+                          style={{ width: `${item.progress}%` }}
                         />
                       </div>
                     )}
@@ -301,13 +301,13 @@ const EmbeddingPage: React.FC = () => {
         {/* Documentos já processados no banco */}
         <section className="docs-card">
           <h2>🗄️ Documentos na Base de Conhecimento</h2>
-          {documentos.length === 0 ? (
+          {documents.length === 0 ? (
             <div className="empty-state">
               <span className="empty-state-icon">📚</span>
               <p>Nenhum documento processado ainda.</p>
             </div>
           ) : (
-            documentos.map((doc, i) => (
+            documents.map((doc, i) => (
               <div key={i} className="doc-item">
                 <div className="doc-info">
                   <span className="doc-name">📄 {doc.filename}</span>

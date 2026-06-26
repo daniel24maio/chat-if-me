@@ -1,5 +1,5 @@
 import { pool } from "../config/database.js";
-import { gerarEmbeddingOllama } from "../config/ollama.js";
+import { generateOllamaEmbedding } from "../config/ollama.js";
 
 /**
  * Serviço de Feedback — ICL Dinâmico (In-Context Learning).
@@ -46,7 +46,7 @@ export const PENALTY_BETA = 0.3;
 // ---------------------------------------------------------------------------
 
 /** Parâmetros para salvar um feedback no banco */
-export interface SalvarFeedbackParams {
+export interface SaveFeedbackParams {
   question: string;
   response: string;
   feedbackType: "positive" | "negative";
@@ -55,10 +55,10 @@ export interface SalvarFeedbackParams {
 }
 
 /** Exemplo positivo retornado pela busca few-shot */
-export interface ExemploFewShot {
+export interface FewShotExample {
   question: string;
   response: string;
-  similaridade: number;
+  similarity: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -76,12 +76,12 @@ export interface ExemploFewShot {
  *
  * @param params - Dados do feedback a ser salvo
  */
-export async function salvarFeedback(params: SalvarFeedbackParams): Promise<void> {
+export async function saveFeedback(params: SaveFeedbackParams): Promise<void> {
   const { question, response, feedbackType, chunkIds, metadata } = params;
 
   try {
     // 1. Gerar embedding da pergunta
-    const embedding = await gerarEmbeddingOllama(question);
+    const embedding = await generateOllamaEmbedding(question);
     const vectorStr = `[${embedding.join(",")}]`;
 
     // 2. Inserir no banco
@@ -127,26 +127,26 @@ export async function salvarFeedback(params: SalvarFeedbackParams): Promise<void
  *
  * @param questionEmbedding - Vetor da pergunta atual (já gerado na Etapa 1 do pipeline)
  * @param threshold         - Similaridade mínima de cosseno (default: 0.85)
- * @param maxExemplos       - Número máximo de exemplos a retornar (default: 3)
+ * @param maxExamples       - Número máximo de exemplos a retornar (default: 3)
  * @returns Array de exemplos positivos ordenados por similaridade decrescente
  */
-export async function buscarExemplosPositivos(
+export async function getPositiveExamples(
   questionEmbedding: number[],
   threshold: number = FEW_SHOT_SIMILARITY_THRESHOLD,
-  maxExemplos: number = MAX_FEW_SHOT_EXAMPLES
-): Promise<ExemploFewShot[]> {
+  maxExamples: number = MAX_FEW_SHOT_EXAMPLES
+): Promise<FewShotExample[]> {
   try {
     const vectorStr = `[${questionEmbedding.join(",")}]`;
 
     const result = await pool.query(
       `SELECT question, response,
-              1 - (question_embedding <=> $1::vector) AS similaridade
+              1 - (question_embedding <=> $1::vector) AS similarity
        FROM chat_feedbacks
        WHERE feedback_type = 'positive'
          AND 1 - (question_embedding <=> $1::vector) > $2
        ORDER BY question_embedding <=> $1::vector
        LIMIT $3`,
-      [vectorStr, threshold, maxExemplos]
+      [vectorStr, threshold, maxExamples]
     );
 
     if (result.rows.length === 0) {
@@ -156,7 +156,7 @@ export async function buscarExemplosPositivos(
     return result.rows.map((row) => ({
       question: row.question,
       response: row.response,
-      similaridade: Number(row.similaridade),
+      similarity: Number(row.similarity),
     }));
   } catch (error) {
     // Falha silenciosa: se a tabela não existir ou houver erro,
@@ -183,14 +183,14 @@ export async function buscarExemplosPositivos(
  * @param chunkIds - Array de IDs dos chunks retornados pela busca híbrida
  * @returns Map onde a chave é o chunk_id e o valor é o número de feedbacks negativos
  */
-export async function contarNegativosPorChunk(
+export async function countNegativesByChunk(
   chunkIds: number[]
 ): Promise<Map<number, number>> {
-  const negativos = new Map<number, number>();
+  const negatives = new Map<number, number>();
 
   // Se não há chunk_ids, retorna mapa vazio
   if (!chunkIds || chunkIds.length === 0) {
-    return negativos;
+    return negatives;
   }
 
   try {
@@ -204,7 +204,7 @@ export async function contarNegativosPorChunk(
     );
 
     for (const row of result.rows) {
-      negativos.set(Number(row.chunk_id), Number(row.neg_count));
+      negatives.set(Number(row.chunk_id), Number(row.neg_count));
     }
   } catch (error) {
     // Falha silenciosa: se a tabela não existir, retorna mapa vazio
@@ -214,5 +214,5 @@ export async function contarNegativosPorChunk(
     );
   }
 
-  return negativos;
+  return negatives;
 }

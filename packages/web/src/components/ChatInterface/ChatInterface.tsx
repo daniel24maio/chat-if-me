@@ -18,7 +18,7 @@ interface Message {
   sender: 'user' | 'ai';
   timestamp: Date;
   /** Fontes dos documentos que embasaram a resposta (apenas mensagens da IA) */
-  fontes?: string[];
+  sources?: string[];
   /** Indica se a mensagem está sendo gerada por streaming */
   isStreaming?: boolean;
   /** Feedback do usuário para a resposta da IA */
@@ -67,12 +67,12 @@ const ChatInterface: React.FC = () => {
    * Processa o stream SSE da API usando fetch + ReadableStream.
    *
    * Eventos esperados do backend:
-   *   data: {"type":"fontes","fontes":[...]}   → fontes dos documentos
+   *   data: {"type":"sources","sources":[...]}   → fontes dos documentos
    *   data: {"type":"token","content":"..."}    → token da resposta
-   *   data: {"type":"erro","mensagem":"..."}    → erro durante o stream
+   *   data: {"type":"error","message":"..."}    → erro durante o stream
    *   data: [DONE]                              → fim do stream
    */
-  const processarStream = useCallback(async (pergunta: string, aiMessageId: string) => {
+  const processStream = useCallback(async (question: string, aiMessageId: string) => {
     // Cria AbortController para permitir cancelamento
     const controller = new AbortController();
     abortControllerRef.current = controller;
@@ -83,17 +83,17 @@ const ChatInterface: React.FC = () => {
       const response = await fetch(`${API_URL}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pergunta, sessionId }),
+        body: JSON.stringify({ question, sessionId }),
         signal: controller.signal,
       });
 
       // Se a resposta não for SSE (ex: erro de validação), trata como JSON
       if (!response.ok || !response.headers.get('content-type')?.includes('text/event-stream')) {
-        const errorData = await response.json().catch(() => ({ erro: 'Erro desconhecido' }));
+        const errorData = await response.json().catch(() => ({ error: 'Erro desconhecido' }));
         setMessages((prev) =>
           prev.map((m) =>
             m.id === aiMessageId
-              ? { ...m, text: `⚠️ ${errorData.erro || 'Erro ao processar pergunta.'}`, isStreaming: false }
+              ? { ...m, text: `⚠️ ${errorData.error || 'Erro ao processar pergunta.'}`, isStreaming: false }
               : m
           )
         );
@@ -144,8 +144,8 @@ const ChatInterface: React.FC = () => {
              const event = JSON.parse(payload) as {
                type: string;
                content?: string;
-               fontes?: string[];
-               mensagem?: string;
+               sources?: string[];
+               message?: string;
                status?: string;
              };
 
@@ -161,22 +161,22 @@ const ChatInterface: React.FC = () => {
                     : m
                 )
               );
-            } else if (event.type === 'fontes' && event.fontes) {
-              console.log(`📚 [${useAgent ? 'Agente' : 'RAG'}] Fontes utilizadas:`, event.fontes);
+            } else if (event.type === 'sources' && event.sources) {
+              console.log(`📚 [${useAgent ? 'Agente' : 'RAG'}] Fontes utilizadas:`, event.sources);
               // Armazena as fontes na mensagem
               setMessages((prev) =>
                 prev.map((m) =>
-                  m.id === aiMessageId ? { ...m, fontes: event.fontes } : m
+                  m.id === aiMessageId ? { ...m, sources: event.sources } : m
                 )
               );
-            } else if (event.type === 'erro') {
+            } else if (event.type === 'error') {
               // Erro enviado pelo backend durante o stream
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === aiMessageId
                     ? {
                         ...m,
-                        text: `⚠️ ${event.mensagem || 'Erro durante a geração.'}`,
+                        text: `⚠️ ${event.message || 'Erro durante a geração.'}`,
                         isStreaming: false,
                       }
                     : m
@@ -267,14 +267,14 @@ const ChatInterface: React.FC = () => {
     setIsStreaming(true);
 
     // 3. Inicia o stream
-    processarStream(currentInput, aiMsgId);
+    processStream(currentInput, aiMsgId);
   };
 
   /**
    * Envia o feedback da resposta (👍 ou 👎) ao backend.
    */
   const handleFeedback = async (messageId: string, feedbackType: 'up' | 'down') => {
-    // Atualiza estado local da mensagem
+    // Patches estado local da mensagem
     setMessages((prev) =>
       prev.map((m) =>
         m.id === messageId ? { ...m, feedback: feedbackType } : m
@@ -376,7 +376,7 @@ const ChatInterface: React.FC = () => {
             </div>
 
             {/* Meta-informações da resposta (Feedback e Fontes) */}
-            {msg.sender === 'ai' && !msg.isStreaming && (msg.id !== '1' && msg.id !== 'expiration' || (msg.fontes && msg.fontes.length > 0 && msg.mode === 'agent')) && (
+            {msg.sender === 'ai' && !msg.isStreaming && (msg.id !== '1' && msg.id !== 'expiration' || (msg.sources && msg.sources.length > 0 && msg.mode === 'agent')) && (
               <div className="message-meta">
                 {msg.id !== '1' && msg.id !== 'expiration' && (
                   <div className="message-feedback">
@@ -400,10 +400,10 @@ const ChatInterface: React.FC = () => {
                   </div>
                 )}
 
-                {msg.fontes && msg.fontes.length > 0 && msg.mode === 'agent' && (
+                {msg.sources && msg.sources.length > 0 && msg.mode === 'agent' && (
                   <div className="message-fontes-inline">
                     <span className="fontes-label">📚 Fontes:</span>
-                    {msg.fontes.map((fonte, i) => (
+                    {msg.sources.map((fonte, i) => (
                       <span key={i} className="fonte-tag">{fonte}</span>
                     ))}
                   </div>
