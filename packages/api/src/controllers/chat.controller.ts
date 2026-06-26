@@ -2,6 +2,8 @@ import type { Request, Response } from "express";
 import type { ChatRequestBody } from "../interfaces/chat.interfaces.js";
 import { processarPerguntaStream } from "../services/rag.service.js";
 import { comControleDeConcorrencia } from "../services/queue.service.js";
+import { salvarFeedback } from "../services/feedback.service.js";
+import { obterChunkIdsDaSessao } from "../services/memory.service.js";
 
 /**
  * Controller do módulo de chat com Server-Sent Events (SSE).
@@ -112,6 +114,12 @@ export async function enviarPergunta(
 /**
  * Registra o feedback do usuário sobre a resposta gerada pelo assistente.
  *
+ * Persiste a interação (pergunta + resposta + embedding + chunk_ids) na tabela
+ * chat_feedbacks para alimentar o mecanismo de ICL Dinâmico (Few-Shot Adaptativo).
+ *
+ * A vetorização e o INSERT são executados de forma assíncrona (fire-and-forget):
+ * o frontend recebe 200 OK instantaneamente enquanto a persistência roda em background.
+ *
  * Endpoint: POST /api/chat/feedback
  * Body esperado: { "sessionId": "string", "messageId": "string", "feedback": "up" | "down", "question": "string", "response": "string" }
  */
@@ -120,7 +128,7 @@ export async function registerFeedback(
   res: Response
 ): Promise<void> {
   try {
-    const { sessionId, messageId, feedback, question, response } = req.body;
+    const { sessionId, messageId, feedback, question, response: aiResponse } = req.body;
 
     // Validação básica do feedback
     if (!feedback || (feedback !== "up" && feedback !== "down")) {
@@ -130,13 +138,38 @@ export async function registerFeedback(
       return;
     }
 
+    // Validação: pergunta e resposta são obrigatórias para persistência no ICL
+    if (!question || !aiResponse) {
+      res.status(400).json({
+        erro: "Os campos 'question' e 'response' são obrigatórios para o registro do feedback.",
+      });
+      return;
+    }
+
     console.log(`\n📢 [FEEDBACK RECEBIDO]`);
     console.log(`   Sessão: ${sessionId || "N/A"}`);
     console.log(`   ID Mensagem: ${messageId || "N/A"}`);
     console.log(`   Voto: ${feedback === "up" ? "👍 Útil" : "👎 Não Útil"}`);
     if (question) console.log(`   Pergunta: "${question}"`);
-    if (response) console.log(`   Resposta: "${response.substring(0, 150)}..."`);
+    if (aiResponse) console.log(`   Resposta: "${aiResponse.substring(0, 150)}..."`);
     console.log(`${"─".repeat(40)}`);
+
+    // Recuperar chunk IDs da sessão em memória (se disponível)
+    const chunkIds = obterChunkIdsDaSessao(sessionId);
+    console.log(`   Chunks associados: [${chunkIds.join(", ") || "nenhum"}]`);
+
+    // Persistir feedback de forma assíncrona (fire-and-forget)
+    // O frontend recebe 200 OK instantaneamente enquanto a vetorização + INSERT
+    // rodam em background (~80ms para embedding + ~5ms para INSERT)
+    salvarFeedback({
+      question,
+      response: aiResponse,
+      feedbackType: feedback === "up" ? "positive" : "negative",
+      chunkIds,
+      metadata: { sessionId, messageId },
+    }).catch((err) => {
+      console.error("❌ [Feedback] Erro ao persistir no banco:", err);
+    });
 
     res.status(200).json({ sucesso: true });
   } catch (error) {

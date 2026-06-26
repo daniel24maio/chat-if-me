@@ -19,6 +19,12 @@ import {
   streamStaticGreeting,
   STATIC_GREETING_RESPONSE,
 } from "./fast_path.util.js";
+import {
+  buscarExemplosPositivos,
+  contarNegativosPorChunk,
+  PENALTY_BETA,
+  type ExemploFewShot,
+} from "./feedback.service.js";
 
 /**
  * Serviço RAG (Retrieval-Augmented Generation) com Streaming.
@@ -230,11 +236,38 @@ async function buscarHibrido(
     [vectorStr, queryTexto, limite]
   );
 
-  const documentos: DocumentoRecuperado[] = result.rows.map((row) => ({
+  let documentos: DocumentoRecuperado[] = result.rows.map((row) => ({
+    id: Number(row.id),
     conteudo: row.conteudo,
     origem: row.origem || "documento desconhecido",
     similaridade: Number(row.rrf_score),
   }));
+
+  // ── Penalização por feedback negativo (ICL Dinâmico) ──
+  // Chunks com feedbacks negativos acumulados têm o score RRF reduzido:
+  //   Score_final = Score_RRF × 1 / (1 + β × N_negativos)
+  if (documentos.length > 0) {
+    const chunkIds = documentos.map((d) => d.id);
+    const negativos = await contarNegativosPorChunk(chunkIds);
+
+    if (negativos.size > 0) {
+      for (const doc of documentos) {
+        const negCount = negativos.get(doc.id) || 0;
+        if (negCount > 0) {
+          const scoreOriginal = doc.similaridade;
+          doc.similaridade *= 1 / (1 + PENALTY_BETA * negCount);
+          console.log(
+            `⚠️  [RRF] Chunk #${doc.id} penalizado: ` +
+            `${negCount} negativo(s), score ${scoreOriginal.toFixed(4)} → ${doc.similaridade.toFixed(4)}`
+          );
+        }
+      }
+
+      // Re-ordenar após penalização
+      documentos.sort((a, b) => b.similaridade - a.similaridade);
+      documentos = documentos.slice(0, limite);
+    }
+  }
 
   if (documentos.length === 0) {
     console.log(`🔍 [RAG] Nenhum documento encontrado (vetorial + FTS).`);
@@ -266,7 +299,8 @@ async function buscarHibrido(
 function montarMensagensRAG(
   pergunta: string,
   documentos: DocumentoRecuperado[],
-  intencao: string
+  intencao: string,
+  exemplosFewShot: ExemploFewShot[] = []
 ): OllamaChatMessage[] {
   // Monta o contexto a partir dos documentos recuperados
   const contexto =
@@ -279,13 +313,28 @@ function montarMensagensRAG(
         .join("\n\n")
       : "Nenhum documento relevante foi encontrado na base de conhecimento.";
 
+  // ── Bloco Few-Shot (ICL Dinâmico) ──
+  // Injeta exemplos de interações anteriores avaliadas positivamente (👍)
+  // para guiar o tom e formato da resposta do LLM em tempo real.
+  let blocoFewShot = "";
+  if (exemplosFewShot.length > 0) {
+    const exemplos = exemplosFewShot
+      .map(
+        (ex, i) =>
+          `EXEMPLO ${i + 1}:\nPERGUNTA DO ALUNO: ${ex.question}\nSUA RESPOSTA (aprovada pelo usuário): ${ex.response}`
+      )
+      .join("\n\n");
+
+    blocoFewShot = `\n═══ EXEMPLOS DE SUCESSO (interações anteriores avaliadas positivamente pelos usuários) ═══\n${exemplos}\n═══ FIM DOS EXEMPLOS ═══\n\nUse os exemplos acima como REFERÊNCIA DE TOM E FORMATO. Adapte o conteúdo ao CONTEXTO abaixo.\n`;
+  }
+
   // System Prompt RAG rigoroso contra alucinações e com diretivas de formatação
   const systemPrompt = `Você é o assistente virtual oficial do IFMG Campus Ouro Branco.
 
 Sua função é responder dúvidas dos alunos sobre regulamentos, PPC (Projeto Pedagógico do Curso), grade curricular, normas acadêmicas e informações do campus.
 
 INTENÇÃO DA PERGUNTA: [${intencao}] (Foque a sua resposta no contexto dessa intenção).
-
+${blocoFewShot}
 CONTEXTO (trechos dos documentos oficiais do curso):
 ${contexto}
 
@@ -410,7 +459,7 @@ export async function processarPerguntaStream(
   const embedding = await gerarEmbedding(perguntaReescrita);
   const embedMs = Date.now() - t1;
 
-  // Etapa 2: Busca híbrida (vetorial + FTS) com RRF
+  // Etapa 2: Busca híbrida (vetorial + FTS) com RRF + penalização por feedback negativo
   const t2 = Date.now();
   const documentos = await buscarHibrido(embedding, perguntaReescrita);
   const retrievalMs = Date.now() - t2;
@@ -420,10 +469,28 @@ export async function processarPerguntaStream(
     (doc) => `${doc.origem} (similaridade: ${doc.similaridade.toFixed(2)})`
   );
 
-  // Etapa 3: Montar mensagens RAG com a PERGUNTA ORIGINAL (não a reescrita) e a intenção
+  // ── Etapa 2.5: ICL Dinâmico — Busca de exemplos few-shot positivos ──
+  // Busca interações anteriores avaliadas com 👍 que sejam similares à
+  // pergunta atual (cosseno > 0.85) para injeção como exemplos no prompt.
+  let exemplosFewShot: ExemploFewShot[] = [];
+  try {
+    exemplosFewShot = await buscarExemplosPositivos(embedding);
+    if (exemplosFewShot.length > 0) {
+      console.log(`✨ [ICL] ${exemplosFewShot.length} exemplo(s) positivo(s) encontrado(s)! Injetando few-shot...`);
+      exemplosFewShot.forEach((ex, i) => {
+        console.log(`   ${i + 1}. [sim: ${ex.similaridade.toFixed(4)}] "${ex.question.substring(0, 60)}..."`);
+      });
+    }
+  } catch (error) {
+    // Falha silenciosa: pipeline continua sem few-shot
+    console.warn(`⚠️  [ICL] Erro na busca few-shot, continuando sem exemplos:`, error instanceof Error ? error.message : error);
+  }
+
+  // Etapa 3: Montar mensagens RAG com a PERGUNTA ORIGINAL (não a reescrita),
+  // a intenção e os exemplos few-shot (se encontrados).
   // Isso garante que a resposta do LLM soe natural e responda exatamente
   // o que o aluno perguntou, sem a formalização artificial da reescrita.
-  const mensagens = montarMensagensRAG(pergunta, documentos, intencao);
+  const mensagens = montarMensagensRAG(pergunta, documentos, intencao, exemplosFewShot);
 
   console.log(
     `🤖 [RAG] Iniciando streaming com ${documentos.length} documentos de contexto...`

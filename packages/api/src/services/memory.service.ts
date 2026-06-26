@@ -343,6 +343,20 @@ export function getSessionStats(): {
 }
 
 /**
+ * Retorna os IDs dos últimos chunks utilizados pela sessão.
+ * Usado pelo endpoint de feedback para associar chunks à avaliação
+ * sem necessidade de alteração no frontend.
+ */
+export function obterChunkIdsDaSessao(sessionId?: string): number[] {
+  if (!sessionId) return [];
+  const session = sessions.get(sessionId);
+  if (!session || !session.lastDocuments) return [];
+  return session.lastDocuments
+    .filter((doc) => doc.id != null)
+    .map((doc) => doc.id);
+}
+
+/**
  * Remove todas as sessões (cleanup para SIGINT/SIGTERM).
  */
 export function limparTodasSessoes(): void {

@@ -24,6 +24,8 @@ export interface ChatResponseBody {
  * Será populado quando integrarmos o pgvector.
  */
 export interface DocumentoRecuperado {
+  /** ID do chunk no banco de dados (documents.id) — usado para rastrear feedbacks */
+  id: number;
   /** Conteúdo textual do trecho */
   conteudo: string;
   /** Nome ou identificador do documento de origem (ex.: "PPC_SI_2023.pdf") */

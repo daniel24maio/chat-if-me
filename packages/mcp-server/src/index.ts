@@ -41,6 +41,9 @@ const MIN_RRF_SCORE = 0.002;
 /** Número máximo de trechos a retornar */
 const MAX_RESULTS = 5;
 
+/** Fator de sensibilidade à penalização por feedback negativo (ICL Dinâmico) */
+const PENALTY_BETA = 0.3;
+
 // ---------------------------------------------------------------------------
 // PostgreSQL
 // ---------------------------------------------------------------------------
@@ -87,13 +90,14 @@ function formatarQueryFTS(query: string): string {
 }
 
 /**
- * Busca híbrida (vetorial + FTS) no pgvector usando Reciprocal Rank Fusion (RRF) e Limite de Corte.
+ * Busca híbrida (vetorial + FTS) no pgvector usando Reciprocal Rank Fusion (RRF),
+ * Limite de Corte e Penalização por Feedback Negativo.
  */
 async function buscarDocumentos(
   embedding: number[],
   queryTexto: string,
   limite: number
-): Promise<{ conteudo: string; origem: string; similaridade: number }[]> {
+): Promise<{ id: number; conteudo: string; origem: string; similaridade: number }[]> {
   const vectorStr = `[${embedding.join(",")}]`;
   const ftsQuery = formatarQueryFTS(queryTexto);
 
@@ -138,11 +142,61 @@ async function buscarDocumentos(
     [vectorStr, ftsQuery, limite]
   );
 
-  return result.rows.map((row) => ({
+  let documentos = result.rows.map((row) => ({
+    id: Number(row.id),
     conteudo: row.conteudo,
     origem: row.origem || "documento desconhecido",
     similaridade: Number(row.rrf_score),
   }));
+
+  // ── Penalização por feedback negativo (ICL Dinâmico) ──
+  // Chunks com feedbacks negativos acumulados têm o score RRF reduzido:
+  //   Score_final = Score_RRF × 1 / (1 + β × N_negativos)
+  if (documentos.length > 0) {
+    try {
+      const chunkIds = documentos.map((d) => d.id);
+      const negResult = await pool.query(
+        `SELECT unnest(chunk_ids) AS chunk_id, COUNT(*) AS neg_count
+         FROM chat_feedbacks
+         WHERE feedback_type = 'negative'
+           AND chunk_ids && $1::integer[]
+         GROUP BY chunk_id`,
+        [chunkIds]
+      );
+
+      if (negResult.rows.length > 0) {
+        const negativos = new Map<number, number>();
+        for (const row of negResult.rows) {
+          negativos.set(Number(row.chunk_id), Number(row.neg_count));
+        }
+
+        for (const doc of documentos) {
+          const negCount = negativos.get(doc.id) || 0;
+          if (negCount > 0) {
+            const scoreOriginal = doc.similaridade;
+            doc.similaridade *= 1 / (1 + PENALTY_BETA * negCount);
+            console.error(
+              `⚠️  [MCP RRF] Chunk #${doc.id} penalizado: ` +
+              `${negCount} negativo(s), score ${scoreOriginal.toFixed(4)} → ${doc.similaridade.toFixed(4)}`
+            );
+          }
+        }
+
+        // Re-ordenar após penalização
+        documentos.sort((a, b) => b.similaridade - a.similaridade);
+        documentos = documentos.slice(0, limite);
+      }
+    } catch (error) {
+      // Falha silenciosa: se a tabela chat_feedbacks não existir ainda,
+      // o pipeline continua sem penalização
+      console.error(
+        "⚠️  [MCP] Erro ao aplicar penalização por feedback negativo:",
+        error instanceof Error ? error.message : error
+      );
+    }
+  }
+
+  return documentos;
 }
 
 // ---------------------------------------------------------------------------
