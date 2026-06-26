@@ -1,4 +1,4 @@
-import type { DocumentoRecuperado } from "../interfaces/chat.interfaces.js";
+import type { RetrievedDocument } from "../interfaces/chat.interfaces.js";
 
 /**
  * Serviço de Memória de Sessão em RAM.
@@ -48,13 +48,13 @@ interface SessionMessage {
 /** Entidades acadêmicas extraídas da conversa */
 interface EntityMemory {
   /** Disciplinas mencionadas (ex: ["Cálculo 1", "Algoritmos"]) */
-  disciplinas: string[];
+  subjects: string[];
   /** Períodos mencionados (ex: [5, 6]) */
-  periodos: number[];
+  periods: number[];
   /** Temas/assuntos discutidos (ex: ["pré-requisitos", "carga horária"]) */
-  temas: string[];
+  topics: string[];
   /** Último assunto principal da conversa (usado para resolução de pronomes) */
-  ultimoAssunto: string;
+  lastTopic: string;
 }
 
 /** Contexto completo de uma sessão */
@@ -63,7 +63,7 @@ export interface SessionContext {
   messages: SessionMessage[];
   entities: EntityMemory;
   lastIntent: string;
-  lastDocuments: DocumentoRecuperado[];
+  lastDocuments: RetrievedDocument[];
   createdAt: number;
   lastAccessedAt: number;
 }
@@ -92,31 +92,31 @@ const expiredSessions = new Map<string, number>();
  * Loga no terminal cada sessão removida para rastreabilidade.
  */
 const cleanupInterval = setInterval(() => {
-  const agora = Date.now();
-  let removidas = 0;
+  const now = Date.now();
+  let removed = 0;
 
   for (const [id, ctx] of sessions) {
-    if (agora - ctx.lastAccessedAt > SESSION_TTL_MS) {
+    if (now - ctx.lastAccessedAt > SESSION_TTL_MS) {
       sessions.delete(id);
-      expiredSessions.set(id, agora);
-      removidas++;
+      expiredSessions.set(id, now);
+      removed++;
       console.log(
         `🧹 [Memória] Sessão expirada e removida: ${id.substring(0, 8)}... ` +
-        `(${ctx.messages.length} msgs, ${Math.round((agora - ctx.createdAt) / 1000)}s de vida)`
+        `(${ctx.messages.length} msgs, ${Math.round((now - ctx.createdAt) / 1000)}s de vida)`
       );
     }
   }
 
   // Limpa registros de expiração antigos (> 10 minutos)
   for (const [id, expiredAt] of expiredSessions) {
-    if (agora - expiredAt > 10 * 60 * 1000) {
+    if (now - expiredAt > 10 * 60 * 1000) {
       expiredSessions.delete(id);
     }
   }
 
-  if (removidas > 0) {
+  if (removed > 0) {
     console.log(
-      `🧹 [Memória] ${removidas} sessão(ões) removida(s). Ativas: ${sessions.size}`
+      `🧹 [Memória] ${removed} sessão(ões) removida(s). Ativas: ${sessions.size}`
     );
   }
 }, CLEANUP_INTERVAL_MS);
@@ -151,11 +151,11 @@ export function isSessionExpired(sessionId: string): boolean {
  * (política LRU — Least Recently Used).
  */
 export function getOrCreateSession(sessionId: string): SessionContext {
-  const existente = sessions.get(sessionId);
+  const existing = sessions.get(sessionId);
 
-  if (existente) {
-    existente.lastAccessedAt = Date.now();
-    return existente;
+  if (existing) {
+    existing.lastAccessedAt = Date.now();
+    return existing;
   }
 
   // Evicção LRU se atingiu o limite
@@ -179,14 +179,14 @@ export function getOrCreateSession(sessionId: string): SessionContext {
   }
 
   // Cria nova sessão
-  const novaSessao: SessionContext = {
+  const newSession: SessionContext = {
     sessionId,
     messages: [],
     entities: {
-      disciplinas: [],
-      periodos: [],
-      temas: [],
-      ultimoAssunto: "",
+      subjects: [],
+      periods: [],
+      topics: [],
+      lastTopic: "",
     },
     lastIntent: "",
     lastDocuments: [],
@@ -194,14 +194,14 @@ export function getOrCreateSession(sessionId: string): SessionContext {
     lastAccessedAt: Date.now(),
   };
 
-  sessions.set(sessionId, novaSessao);
+  sessions.set(sessionId, newSession);
 
   console.log(
     `🧠 [Memória] Nova sessão criada: ${sessionId.substring(0, 8)}... ` +
     `(total ativas: ${sessions.size})`
   );
 
-  return novaSessao;
+  return newSession;
 }
 
 /**
@@ -212,9 +212,9 @@ export function getOrCreateSession(sessionId: string): SessionContext {
  */
 export function updateSession(
   sessionId: string,
-  pergunta: string,
+  question: string,
   intent: string,
-  resposta: string
+  response: string
 ): void {
   const session = sessions.get(sessionId);
   if (!session) return;
@@ -222,15 +222,15 @@ export function updateSession(
   // Adiciona a mensagem do usuário
   session.messages.push({
     role: "user",
-    content: pergunta,
+    content: question,
     timestamp: Date.now(),
   });
 
   // Adiciona a resposta (se não vazia)
-  if (resposta) {
+  if (response) {
     session.messages.push({
       role: "assistant",
-      content: resposta,
+      content: response,
       timestamp: Date.now(),
     });
   }
@@ -244,7 +244,7 @@ export function updateSession(
   session.lastIntent = intent;
 
   // Extrai e acumula entidades da pergunta
-  extrairEntidades(pergunta, session.entities);
+  extractEntities(question, session.entities);
 
   // Atualiza timestamp de acesso
   session.lastAccessedAt = Date.now();
@@ -261,62 +261,62 @@ export function updateSession(
  *   "E os pré-requisitos dessa?" → "E os pré-requisitos de Cálculo 1?"
  *   "Qual a carga horária desse?" → "Qual a carga horária do 5º período?"
  *
- * @param pergunta - Pergunta atual do aluno (pode conter pronomes)
+ * @param question - Pergunta atual do aluno (pode conter pronomes)
  * @param session  - Contexto da sessão com entidades extraídas
  * @returns Pergunta com pronomes substituídos (ou a original se não houver resolução)
  */
-export function resolverReferencias(
-  pergunta: string,
+export function resolveReferences(
+  question: string,
   session: SessionContext
 ): string {
   const { entities, messages } = session;
 
   // Se a sessão não tem histórico, retorna a pergunta original
-  if (messages.length === 0) return pergunta;
+  if (messages.length === 0) return question;
 
-  let perguntaResolvida = pergunta;
+  let resolvedQuestion = question;
 
   // Padrão 1: Pronomes demonstrativos femininos → última disciplina
   // "dessa", "nessa", "desta", "dela", "essa"
-  if (entities.disciplinas.length > 0) {
-    const ultimaDisciplina = entities.disciplinas[entities.disciplinas.length - 1];
-    perguntaResolvida = perguntaResolvida.replace(
+  if (entities.subjects.length > 0) {
+    const lastSubject = entities.subjects[entities.subjects.length - 1];
+    resolvedQuestion = resolvedQuestion.replace(
       /\b(d?essa|nessa|desta|dela)\b/gi,
-      `de ${ultimaDisciplina}`
+      `de ${lastSubject}`
     );
   }
 
   // Padrão 2: Pronomes demonstrativos masculinos → último período ou tema
   // "desse", "nesse", "deste", "dele", "esse"
-  if (entities.periodos.length > 0) {
-    const ultimoPeriodo = entities.periodos[entities.periodos.length - 1];
-    perguntaResolvida = perguntaResolvida.replace(
+  if (entities.periods.length > 0) {
+    const lastPeriod = entities.periods[entities.periods.length - 1];
+    resolvedQuestion = resolvedQuestion.replace(
       /\b(d?esse|nesse|deste|dele)\b/gi,
-      `do ${ultimoPeriodo}º período`
+      `do ${lastPeriod}º período`
     );
-  } else if (entities.ultimoAssunto) {
-    perguntaResolvida = perguntaResolvida.replace(
+  } else if (entities.lastTopic) {
+    resolvedQuestion = resolvedQuestion.replace(
       /\b(d?esse|nesse|deste|dele)\b/gi,
-      `de ${entities.ultimoAssunto}`
+      `de ${entities.lastTopic}`
     );
   }
 
   // Padrão 3: "também" / "e sobre" → injeta contexto da última pergunta
   // Se a pergunta começa com "E ", "E sobre", "Também" sem sujeito claro
-  if (/^(e\s|e\s+sobre\s|também\s)/i.test(perguntaResolvida) && entities.ultimoAssunto) {
-    perguntaResolvida = `${perguntaResolvida} (contexto: ${entities.ultimoAssunto})`;
+  if (/^(e\s|e\s+sobre\s|também\s)/i.test(resolvedQuestion) && entities.lastTopic) {
+    resolvedQuestion = `${resolvedQuestion} (contexto: ${entities.lastTopic})`;
   }
 
   // Loga se houve resolução
-  if (perguntaResolvida !== pergunta) {
+  if (resolvedQuestion !== question) {
     console.log(
       `🔗 [Memória] Pronomes resolvidos:\n` +
-      `   Original:  "${pergunta}"\n` +
-      `   Resolvida: "${perguntaResolvida}"`
+      `   Original:  "${question}"\n` +
+      `   Resolvida: "${resolvedQuestion}"`
     );
   }
 
-  return perguntaResolvida;
+  return resolvedQuestion;
 }
 
 /**
@@ -343,9 +343,23 @@ export function getSessionStats(): {
 }
 
 /**
+ * Retorna os IDs dos últimos chunks utilizados pela sessão.
+ * Usado pelo endpoint de feedback para associar chunks à avaliação
+ * sem necessidade de alteração no frontend.
+ */
+export function getSessionChunkIds(sessionId?: string): number[] {
+  if (!sessionId) return [];
+  const session = sessions.get(sessionId);
+  if (!session || !session.lastDocuments) return [];
+  return session.lastDocuments
+    .filter((doc) => doc.id != null)
+    .map((doc) => doc.id);
+}
+
+/**
  * Remove todas as sessões (cleanup para SIGINT/SIGTERM).
  */
-export function limparTodasSessoes(): void {
+export function clearAllSessions(): void {
   const total = sessions.size;
   sessions.clear();
   expiredSessions.clear();
@@ -366,31 +380,31 @@ export function limparTodasSessoes(): void {
  *
  * As entidades são acumuladas na sessão para uso em perguntas futuras.
  */
-function extrairEntidades(texto: string, entities: EntityMemory): void {
-  const textoLower = texto.toLowerCase();
+function extractEntities(text: string, entities: EntityMemory): void {
+  const textLower = text.toLowerCase();
 
   // ── Períodos ──
-  const periodoNumerico = texto.match(/(\d+)[ºª°]?\s*per[ií]odo/i);
-  if (periodoNumerico) {
-    const num = Number(periodoNumerico[1]);
-    if (!entities.periodos.includes(num)) {
-      entities.periodos.push(num);
+  const numericPeriod = text.match(/(\d+)[ºª°]?\s*per[ií]odo/i);
+  if (numericPeriod) {
+    const num = Number(numericPeriod[1]);
+    if (!entities.periods.includes(num)) {
+      entities.periods.push(num);
     }
   }
 
   // Períodos por extenso
-  const periodosExtenso: Record<string, number> = {
+  const periodsInWords: Record<string, number> = {
     primeiro: 1, segundo: 2, terceiro: 3, quarto: 4, quinto: 5,
     sexto: 6, sétimo: 7, oitavo: 8, nono: 9, décimo: 10,
   };
-  for (const [nome, num] of Object.entries(periodosExtenso)) {
-    if (textoLower.includes(`${nome} período`) && !entities.periodos.includes(num)) {
-      entities.periodos.push(num);
+  for (const [nome, num] of Object.entries(periodsInWords)) {
+    if (textLower.includes(`${nome} período`) && !entities.periods.includes(num)) {
+      entities.periods.push(num);
     }
   }
 
   // ── Disciplinas (vocabulário do curso de SI do IFMG) ──
-  const disciplinas = [
+  const subjects = [
     "Cálculo", "Cálculo 1", "Cálculo 2", "Cálculo 3",
     "Álgebra Linear", "Geometria Analítica",
     "Algoritmos", "Algoritmos e Programação",
@@ -414,16 +428,16 @@ function extrairEntidades(texto: string, entities: EntityMemory): void {
     "Projeto Integrador",
   ];
 
-  for (const disciplina of disciplinas) {
-    if (textoLower.includes(disciplina.toLowerCase())) {
-      if (!entities.disciplinas.includes(disciplina)) {
-        entities.disciplinas.push(disciplina);
+  for (const subject of subjects) {
+    if (textLower.includes(subject.toLowerCase())) {
+      if (!entities.subjects.includes(subject)) {
+        entities.subjects.push(subject);
       }
     }
   }
 
   // ── Temas acadêmicos ──
-  const temas: Record<string, string> = {
+  const topics: Record<string, string> = {
     "pré-requisito": "pré-requisitos",
     "prerequisito": "pré-requisitos",
     "carga horária": "carga horária",
@@ -448,19 +462,17 @@ function extrairEntidades(texto: string, entities: EntityMemory): void {
     "matriz curricular": "grade curricular",
   };
 
-  for (const [termo, tema] of Object.entries(temas)) {
-    if (textoLower.includes(termo) && !entities.temas.includes(tema)) {
-      entities.temas.push(tema);
+  for (const [termo, tema] of Object.entries(topics)) {
+    if (textLower.includes(termo) && !entities.topics.includes(tema)) {
+      entities.topics.push(tema);
     }
   }
 
-  // ── Último assunto (para resolução de "esse/essa") ──
-  // Prioridade: disciplina > período > tema
-  if (entities.disciplinas.length > 0) {
-    entities.ultimoAssunto = entities.disciplinas[entities.disciplinas.length - 1];
-  } else if (entities.periodos.length > 0) {
-    entities.ultimoAssunto = `${entities.periodos[entities.periodos.length - 1]}º período`;
-  } else if (entities.temas.length > 0) {
-    entities.ultimoAssunto = entities.temas[entities.temas.length - 1];
+  if (entities.subjects.length > 0) {
+    entities.lastTopic = entities.subjects[entities.subjects.length - 1];
+  } else if (entities.periods.length > 0) {
+    entities.lastTopic = `${entities.periods[entities.periods.length - 1]}º período`;
+  } else if (entities.topics.length > 0) {
+    entities.lastTopic = entities.topics[entities.topics.length - 1];
   }
 }

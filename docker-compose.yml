@@ -29,6 +29,7 @@ services:
       - ./packages/api/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
       - ./packages/api/migrate_hybrid.sql:/docker-entrypoint-initdb.d/02-migrate_hybrid.sql:ro
       - ./packages/api/migrate_bge_m3.sql:/docker-entrypoint-initdb.d/03-migrate_bge_m3.sql:ro
+      - ./packages/api/migrate_feedbacks.sql:/docker-entrypoint-initdb.d/04-migrate_feedbacks.sql:ro
 
 volumes:
   pgdata:

@@ -4,18 +4,18 @@ import cors from "cors";
 import { chatRouter } from "./routes/chat.routes.js";
 import { embeddingRouter } from "./routes/embedding.routes.js";
 import { agentRouter } from "./routes/agent.routes.js";
-import { pool, testarConexaoDB, verificarDimensaoEmbedding } from "./config/database.js";
-import { verificarOllama } from "./config/ollama.js";
+import { pool, testDBConnection, verifyEmbeddingDimension } from "./config/database.js";
+import { checkOllama } from "./config/ollama.js";
 import { chatLimiter, uploadLimiter } from "./middlewares/rateLimiter.js";
 import { adminAuth } from "./middlewares/adminAuth.js";
 import { ollamaSemaphore } from "./services/queue.service.js";
 import {
-  inicializarMCPClient,
-  encerrarMCPClient,
+  initializeMCPClient,
+  closeMCPClient,
 } from "./services/mcp_agent.service.js";
 import {
   getSessionStats,
-  limparTodasSessoes,
+  clearAllSessions,
 } from "./services/memory.service.js";
 
 /**
@@ -133,13 +133,13 @@ const server = app.listen(PORT, async () => {
   console.log(`💚 Health check:       GET  /api/health\n`);
 
   // Testa conexões externas (não bloqueia a subida do servidor)
-  await testarConexaoDB();
-  await verificarDimensaoEmbedding(); // Auto-migra 768→1024 se necessário
-  await verificarOllama();
+  await testDBConnection();
+  await verifyEmbeddingDimension(); // Auto-migra 768→1024 se necessário
+  await checkOllama();
 
   // Inicializa o MCP Client (conecta ao servidor como subprocesso)
   try {
-    await inicializarMCPClient();
+    await initializeMCPClient();
   } catch (error) {
     console.error("⚠️  MCP Client não disponível — rota /api/agent inoperante");
   }
@@ -161,12 +161,12 @@ server.on("error", (err: NodeJS.ErrnoException) => {
 
 // Cleanup: encerra o MCP Client quando o processo termina
 process.on("SIGINT", async () => {
-  limparTodasSessoes();
-  await encerrarMCPClient();
+  clearAllSessions();
+  await closeMCPClient();
   process.exit(0);
 });
 process.on("SIGTERM", async () => {
-  limparTodasSessoes();
-  await encerrarMCPClient();
+  clearAllSessions();
+  await closeMCPClient();
   process.exit(0);
 });

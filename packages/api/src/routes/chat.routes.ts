@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { enviarPergunta, registerFeedback } from "../controllers/chat.controller.js";
+import { sendQuestion, registerFeedback } from "../controllers/chat.controller.js";
 
 /**
  * Rotas do módulo de chat.
@@ -14,10 +14,10 @@ const chatRouter = Router();
  * POST /api/chat
  * Recebe a pergunta do aluno e retorna a resposta do assistente virtual.
  *
- * Body esperado: { "pergunta": "string" }
- * Resposta: { "resposta": "string", "fontes": ["string"] }
+ * Body esperado: { "question": "string" }
+ * Resposta: { "response": "string", "sources": ["string"] }
  */
-chatRouter.post("/", enviarPergunta);
+chatRouter.post("/", sendQuestion);
 
 /**
  * POST /api/chat/feedback

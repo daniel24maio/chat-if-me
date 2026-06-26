@@ -51,26 +51,26 @@ export interface OllamaChatMessage {
  * * Previne o "Context Bloat" e o erro de Timeout garantindo que a GPU não seja
  * asfixiada com histórico irrelevante, mantendo SEMPRE o System Prompt intacto.
  */
-function podarHistorico(mensagens: OllamaChatMessage[], maxInteracoes: number = 4): OllamaChatMessage[] {
+function pruneHistory(messages: OllamaChatMessage[], maxInteractions: number = 4): OllamaChatMessage[] {
   // Se o array já for pequeno, não faz nada
-  if (mensagens.length <= maxInteracoes + 1) return mensagens;
+  if (messages.length <= maxInteractions + 1) return messages;
 
   // Separa o system prompt (geralmente a primeira mensagem) do resto
-  const systemPrompt = mensagens.find(m => m.role === "system");
-  const outrasMensagens = mensagens.filter(m => m.role !== "system");
+  const systemPrompt = messages.find(m => m.role === "system");
+  const otherMessages = messages.filter(m => m.role !== "system");
 
   // Pega apenas as interações mais recentes
-  const mensagensRecentes = outrasMensagens.slice(-maxInteracoes);
+  const recentMessages = otherMessages.slice(-maxInteractions);
 
   // Remonta o array garantindo que o Agente não esqueça as suas regras vitais
-  return systemPrompt ? [systemPrompt, ...mensagensRecentes] : mensagensRecentes;
+  return systemPrompt ? [systemPrompt, ...recentMessages] : recentMessages;
 }
 
 // ---------------------------------------------------------------------------
 // Health Check
 // ---------------------------------------------------------------------------
 
-export async function verificarOllama(): Promise<void> {
+export async function checkOllama(): Promise<void> {
   try {
     const response = await fetch(`${OLLAMA_BASE_URL}/api/tags`, {
       signal: AbortSignal.timeout(10000) // Timeout rápido de 10s para health check
@@ -78,9 +78,9 @@ export async function verificarOllama(): Promise<void> {
     if (!response.ok) throw new Error(`Status ${response.status}`);
 
     const data = (await response.json()) as { models?: { name: string }[] };
-    const modelos = data.models?.map((m) => m.name) || [];
+    const models = data.models?.map((m) => m.name) || [];
     console.log(`✅ [Ollama] Conectado em ${OLLAMA_BASE_URL}`);
-    console.log(`   Modelos disponíveis: ${modelos.join(", ") || "nenhum"}`);
+    console.log(`   Modelos disponíveis: ${models.join(", ") || "nenhum"}`);
   } catch (error) {
     console.error(`❌ [Ollama] Servidor inacessível em ${OLLAMA_BASE_URL}`);
     console.error("   Verifique se o Ollama está rodando e a variável OLLAMA_BASE_URL");
@@ -91,7 +91,7 @@ export async function verificarOllama(): Promise<void> {
 // Embeddings
 // ---------------------------------------------------------------------------
 
-export async function gerarEmbeddingOllama(texto: string): Promise<number[]> {
+export async function generateOllamaEmbedding(text: string): Promise<number[]> {
   const url = `${OLLAMA_BASE_URL}/api/embeddings`;
 
   const response = await fetch(url, {
@@ -100,7 +100,7 @@ export async function gerarEmbeddingOllama(texto: string): Promise<number[]> {
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     body: JSON.stringify({
       model: EMBED_MODEL,
-      prompt: texto,
+      prompt: text,
       keep_alive: "24h",
     }),
   });
@@ -123,9 +123,9 @@ export async function gerarEmbeddingOllama(texto: string): Promise<number[]> {
 // Geração de Texto (LLM) — Modo sem streaming
 // ---------------------------------------------------------------------------
 
-export async function gerarRespostaOllama(mensagens: OllamaChatMessage[]): Promise<string> {
+export async function generateOllamaResponse(messages: OllamaChatMessage[]): Promise<string> {
   const url = `${OLLAMA_BASE_URL}/api/chat`;
-  const mensagensSeguras = podarHistorico(mensagens);
+  const safeMessages = pruneHistory(messages);
 
   const response = await fetch(url, {
     method: "POST",
@@ -133,7 +133,7 @@ export async function gerarRespostaOllama(mensagens: OllamaChatMessage[]): Promi
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     body: JSON.stringify({
       model: LLM_MODEL,
-      messages: mensagensSeguras,
+      messages: safeMessages,
       stream: false,
       keep_alive: "24h",
       options: { num_ctx: NUM_CTX },
@@ -163,7 +163,7 @@ export async function gerarRespostaOllama(mensagens: OllamaChatMessage[]): Promi
 // Reescrita de Query (Query Rewriting)
 // ---------------------------------------------------------------------------
 
-export async function reescreverComLLM(systemPrompt: string, pergunta: string): Promise<string> {
+export async function rewriteWithLLM(systemPrompt: string, question: string): Promise<string> {
   const url = `${OLLAMA_BASE_URL}/api/chat`;
 
   const response = await fetch(url, {
@@ -174,7 +174,7 @@ export async function reescreverComLLM(systemPrompt: string, pergunta: string): 
       model: REWRITE_MODEL,
       messages: [
         { role: "system", content: systemPrompt },
-        { role: "user", content: pergunta },
+        { role: "user", content: question },
       ],
       stream: false,
       keep_alive: "24h",
@@ -209,15 +209,15 @@ export async function reescreverComLLM(systemPrompt: string, pergunta: string): 
 // Geração de Texto (LLM) — Modo STREAMING (SSE)
 // ---------------------------------------------------------------------------
 
-export async function streamRespostaOllama(
-  mensagens: OllamaChatMessage[],
+export async function streamOllamaResponse(
+  messages: OllamaChatMessage[],
   res: Response,
-  fontes: string[]
+  sources: string[]
 ): Promise<void> {
   const url = `${OLLAMA_BASE_URL}/api/chat`;
-  const mensagensSeguras = podarHistorico(mensagens);
+  const safeMessages = pruneHistory(messages);
 
-  res.write(`data: ${JSON.stringify({ type: "fontes", fontes })}\n\n`);
+  res.write(`data: ${JSON.stringify({ type: "sources", sources })}\n\n`);
 
   const ollamaResponse = await fetch(url, {
     method: "POST",
@@ -225,7 +225,7 @@ export async function streamRespostaOllama(
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     body: JSON.stringify({
       model: LLM_MODEL,
-      messages: mensagensSeguras,
+      messages: safeMessages,
       stream: true,
       keep_alive: "24h",
       options: { num_ctx: NUM_CTX },
@@ -244,7 +244,7 @@ export async function streamRespostaOllama(
   const reader = ollamaResponse.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  let gerouTokens = false;
+  let generatedTokens = false;
 
   try {
     while (true) {
@@ -271,7 +271,7 @@ export async function streamRespostaOllama(
           }
 
           if (chunk.message?.content) {
-            gerouTokens = true;
+            generatedTokens = true;
             res.write(`data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`);
           }
 
@@ -288,7 +288,7 @@ export async function streamRespostaOllama(
       try {
         const chunk = JSON.parse(buffer.trim()) as { message?: { content: string } };
         if (chunk.message?.content) {
-          gerouTokens = true;
+          generatedTokens = true;
           res.write(`data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`);
         }
       } catch {
@@ -300,7 +300,7 @@ export async function streamRespostaOllama(
   }
 
   // Se nenhum token foi gerado, envia um fallback amigável
-  if (!gerouTokens) {
+  if (!generatedTokens) {
     console.warn("⚠️ [Ollama] Resposta vazia no streaming. Enviando fallback.");
     const fallbackMsg = "Não encontrei essa informação nos documentos disponíveis. Recomendo consultar a coordenação do curso ou acessar o portal do IFMG.";
     res.write(

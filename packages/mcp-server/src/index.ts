@@ -41,6 +41,9 @@ const MIN_RRF_SCORE = 0.002;
 /** Número máximo de trechos a retornar */
 const MAX_RESULTS = 5;
 
+/** Fator de sensibilidade à penalização por feedback negativo (ICL Dinâmico) */
+const PENALTY_BETA = 0.3;
+
 // ---------------------------------------------------------------------------
 // PostgreSQL
 // ---------------------------------------------------------------------------
@@ -55,13 +58,13 @@ const pool = new Pool({ connectionString: DATABASE_URL });
 /**
  * Gera embedding de um texto via Ollama (bge-m3).
  */
-async function gerarEmbedding(texto: string): Promise<number[]> {
+async function generateEmbedding(text: string): Promise<number[]> {
   const response = await fetch(`${OLLAMA_BASE_URL}/api/embeddings`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       model: EMBED_MODEL,
-      prompt: texto,
+      prompt: text,
       keep_alive: "24h",
     }),
   });
@@ -78,7 +81,7 @@ async function gerarEmbedding(texto: string): Promise<number[]> {
  * Formata a query para o formato tsquery do PostgreSQL (FTS).
  * Remove caracteres especiais e substitui espaços por ' & '.
  */
-function formatarQueryFTS(query: string): string {
+function formatFTSQuery(query: string): string {
   // Remove tudo que não for letra, número ou espaço
   const queryLimpa = query.replace(/[^\p{L}\p{N}\s]/gu, " ").trim();
   if (!queryLimpa) return "dummy_fallback_query"; // Evita erro de sintaxe se ficar vazio
@@ -87,28 +90,29 @@ function formatarQueryFTS(query: string): string {
 }
 
 /**
- * Busca híbrida (vetorial + FTS) no pgvector usando Reciprocal Rank Fusion (RRF) e Limite de Corte.
+ * Busca híbrida (vetorial + FTS) no pgvector usando Reciprocal Rank Fusion (RRF),
+ * Limite de Corte e Penalização por Feedback Negativo.
  */
-async function buscarDocumentos(
+async function searchDocuments(
   embedding: number[],
-  queryTexto: string,
-  limite: number
-): Promise<{ conteudo: string; origem: string; similaridade: number }[]> {
+  queryText: string,
+  limit: number
+): Promise<{ id: number; content: string; source: string; similarity: number }[]> {
   const vectorStr = `[${embedding.join(",")}]`;
-  const ftsQuery = formatarQueryFTS(queryTexto);
+  const ftsQuery = formatFTSQuery(queryText);
 
   const result = await pool.query(
     `WITH
        semantic AS (
-         SELECT id, content AS conteudo, metadata->>'filename' AS origem,
-           1 - (embedding <=> $1::vector) AS similaridade,
+         SELECT id, content AS content, metadata->>'filename' AS source,
+           1 - (embedding <=> $1::vector) AS similarity,
            ROW_NUMBER() OVER (ORDER BY embedding <=> $1::vector) AS rank
          FROM documents
          ORDER BY embedding <=> $1::vector
          LIMIT 40
        ),
        lexical AS (
-         SELECT id, content AS conteudo, metadata->>'filename' AS origem,
+         SELECT id, content AS content, metadata->>'filename' AS source,
            ts_rank_cd(content_tsv, to_tsquery('portuguese_unaccent', $2::text)) AS ts_score,
            ROW_NUMBER() OVER (
              ORDER BY ts_rank_cd(content_tsv, to_tsquery('portuguese_unaccent', $2::text)) DESC
@@ -121,9 +125,9 @@ async function buscarDocumentos(
        hybrid_results AS (
          SELECT
            COALESCE(s.id, l.id) AS id,
-           COALESCE(s.conteudo, l.conteudo) AS conteudo,
-           COALESCE(s.origem, l.origem) AS origem,
-           COALESCE(s.similaridade, 0) AS similaridade,
+           COALESCE(s.content, l.content) AS content,
+           COALESCE(s.source, l.source) AS source,
+           COALESCE(s.similarity, 0) AS similarity,
            (
              ${RRF_ALPHA} * COALESCE(1.0 / (${RRF_K} + s.rank), 0.0) +
              ${1 - RRF_ALPHA} * COALESCE(1.0 / (${RRF_K} + l.rank), 0.0)
@@ -135,14 +139,64 @@ async function buscarDocumentos(
      WHERE rrf_score >= ${MIN_RRF_SCORE}
      ORDER BY rrf_score DESC
      LIMIT $3`,
-    [vectorStr, ftsQuery, limite]
+    [vectorStr, ftsQuery, limit]
   );
 
-  return result.rows.map((row) => ({
-    conteudo: row.conteudo,
-    origem: row.origem || "documento desconhecido",
-    similaridade: Number(row.rrf_score),
+  let documents = result.rows.map((row) => ({
+    id: Number(row.id),
+    content: row.content,
+    source: row.source || "documento desconhecido",
+    similarity: Number(row.rrf_score),
   }));
+
+  // ── Penalização por feedback negativo (ICL Dinâmico) ──
+  // Chunks com feedbacks negativos acumulados têm o score RRF reduzido:
+  //   Score_final = Score_RRF × 1 / (1 + β × N_negativos)
+  if (documents.length > 0) {
+    try {
+      const chunkIds = documents.map((d) => d.id);
+      const negResult = await pool.query(
+        `SELECT unnest(chunk_ids) AS chunk_id, COUNT(*) AS neg_count
+          FROM chat_feedbacks
+          WHERE feedback_type = 'negative'
+            AND chunk_ids && $1::integer[]
+          GROUP BY chunk_id`,
+        [chunkIds]
+      );
+
+      if (negResult.rows.length > 0) {
+        const negatives = new Map<number, number>();
+        for (const row of negResult.rows) {
+          negatives.set(Number(row.chunk_id), Number(row.neg_count));
+        }
+
+        for (const doc of documents) {
+          const negCount = negatives.get(doc.id) || 0;
+          if (negCount > 0) {
+            const originalScore = doc.similarity;
+            doc.similarity *= 1 / (1 + PENALTY_BETA * negCount);
+            console.error(
+              `⚠️  [MCP RRF] Chunk #${doc.id} penalizado: ` +
+              `${negCount} negativo(s), score ${originalScore.toFixed(4)} → ${doc.similarity.toFixed(4)}`
+            );
+          }
+        }
+
+        // Re-ordenar após penalização
+        documents.sort((a, b) => b.similarity - a.similarity);
+        documents = documents.slice(0, limit);
+      }
+    } catch (error) {
+      // Falha silenciosa: se a tabela chat_feedbacks não existir ainda,
+      // o pipeline continua sem penalização
+      console.error(
+        "⚠️  [MCP] Erro ao aplicar penalização por feedback negativo:",
+        error instanceof Error ? error.message : error
+      );
+    }
+  }
+
+  return documents;
 }
 
 // ---------------------------------------------------------------------------
@@ -208,19 +262,19 @@ server.registerTool(
 
     try {
       // 1. Vetorizar a query
-      const embedding = await gerarEmbedding(query);
+      const embedding = await generateEmbedding(query);
       console.error(
         `🔢 [MCP] Embedding gerado (${embedding.length} dimensões)`
       );
 
       // 2. Buscar no banco (Híbrida com Threshold)
-      const documentos = await buscarDocumentos(embedding, query, MAX_RESULTS);
+      const documents = await searchDocuments(embedding, query, MAX_RESULTS);
       console.error(
-        `📄 [MCP] ${documentos.length} trechos encontrados (acima da nota de corte)`
+        `📄 [MCP] ${documents.length} trechos encontrados (acima da nota de corte)`
       );
 
       // 3. Formatar resultado (Barreira contra alucinações)
-      if (documentos.length === 0) {
+      if (documents.length === 0) {
         console.error(`⚠️ [MCP] Nenhum documento superou o MIN_RRF_SCORE (${MIN_RRF_SCORE})`);
         return {
           content: [
@@ -232,19 +286,19 @@ server.registerTool(
         };
       }
 
-      const resultado = documentos
+      const result = documents
         .map(
           (doc, i) =>
-            `--- Trecho ${i + 1} (fonte: ${doc.origem}, score RRF: ${doc.similaridade.toFixed(4)}) ---\n${doc.conteudo}`
+            `--- Trecho ${i + 1} (fonte: ${doc.source}, score RRF: ${doc.similarity.toFixed(4)}) ---\n${doc.content}`
         )
         .join("\n\n");
 
       console.error(
-        `✅ [MCP] Retornando ${documentos.length} trechos ao agente`
+        `✅ [MCP] Retornando ${documents.length} trechos ao agente`
       );
 
       return {
-        content: [{ type: "text" as const, text: `[INTENÇÃO DA BUSCA: ${intent}]\n\n${resultado}` }],
+        content: [{ type: "text" as const, text: `[INTENÇÃO DA BUSCA: ${intent}]\n\n${result}` }],
       };
     } catch (error) {
       const msg =

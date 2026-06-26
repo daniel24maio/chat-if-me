@@ -1,9 +1,9 @@
 import { Router } from "express";
 import multer from "multer";
 import {
-  uploadDocumento,
-  listarDocumentos,
-  deletarDocumento,
+  uploadDocument,
+  listDocuments,
+  deleteDocument,
 } from "../controllers/embedding.controller.js";
 
 /**
@@ -16,10 +16,10 @@ import {
  */
 
 /** Extensões de arquivo aceitas */
-const EXTENSOES_ACEITAS = /\.(pdf|docx?|xlsx?|csv|txt|md|jpe?g|png)$/i;
+const ACCEPTED_EXTENSIONS = /\.(pdf|docx?|xlsx?|csv|txt|md|jpe?g|png)$/i;
 
 /** MIME types aceitos (validação dupla com extensão) */
-const MIMES_ACEITOS = new Set([
+const ACCEPTED_MIMES = new Set([
   "application/pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/msword",
@@ -39,8 +39,8 @@ const upload = multer({
     fileSize: 20 * 1024 * 1024, // 20 MB
   },
   fileFilter: (_req, file, cb) => {
-    const mimeOk = MIMES_ACEITOS.has(file.mimetype);
-    const extOk = EXTENSOES_ACEITAS.test(file.originalname);
+    const mimeOk = ACCEPTED_MIMES.has(file.mimetype);
+    const extOk = ACCEPTED_EXTENSIONS.test(file.originalname);
 
     if (mimeOk && extOk) {
       cb(null, true);
@@ -57,20 +57,20 @@ const embeddingRouter = Router();
  * Recebe um arquivo suportado e processa: extrai texto → chunking → embedding → gravação.
  *
  * Content-Type: multipart/form-data
- * Campo: "arquivo" (file)
+ * Campo: "file" (file)
  */
-embeddingRouter.post("/upload", upload.single("arquivo"), uploadDocumento);
+embeddingRouter.post("/upload", upload.single("file"), uploadDocument);
 
 /**
  * GET /api/embedding/documentos
  * Lista os documentos já processados com contagem de chunks.
  */
-embeddingRouter.get("/documentos", listarDocumentos);
+embeddingRouter.get("/documentos", listDocuments);
 
 /**
  * DELETE /api/embedding/documentos/:filename
  * Remove um documento e todos os seus chunks.
  */
-embeddingRouter.delete("/documentos/:filename", deletarDocumento);
+embeddingRouter.delete("/documentos/:filename", deleteDocument);
 
 export { embeddingRouter };
