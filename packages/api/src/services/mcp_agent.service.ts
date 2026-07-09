@@ -8,6 +8,7 @@ import {
   getOrCreateSession,
   updateSession,
   resolveReferences,
+  type SessionMessage,
 } from "./memory.service.js";
 import {
   detectGreetingBypass,
@@ -251,9 +252,15 @@ export async function processAgentQuestion(
     return;
   }
 
+  // Histórico das últimas 5 mensagens da sessão (contexto conversacional)
+  const historyMessages: Array<Record<string, unknown>> = (session?.messages ?? [] as SessionMessage[])
+    .slice(-5)
+    .map((m: SessionMessage) => ({ role: m.role, content: m.content }));
+
   // Monta as mensagens iniciais
   const messages: Array<Record<string, unknown>> = [
     { role: "system", content: AGENT_SYSTEM_PROMPT },
+    ...historyMessages,
     { role: "user", content: contextualizedQuestion },
   ];
 
@@ -451,6 +458,7 @@ export async function processAgentQuestion(
   const reader = streamResponse.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let fullText = "";
   let generatedTokens = false;
 
   try {
@@ -471,6 +479,7 @@ export async function processAgentQuestion(
 
           if (chunk.message?.content) {
             generatedTokens = true;
+            fullText += chunk.message.content;
             res.write(
               `data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`
             );
@@ -491,6 +500,7 @@ export async function processAgentQuestion(
         const chunk = JSON.parse(buffer.trim()) as OllamaChatResponse;
         if (chunk.message?.content) {
           generatedTokens = true;
+          fullText += chunk.message.content;
           res.write(
             `data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`
           );
@@ -519,7 +529,7 @@ export async function processAgentQuestion(
 
   // ── Atualizar memória da sessão ──
   if (session) {
-    updateSession(session.sessionId, question, "", "");
+    updateSession(session.sessionId, question, "", fullText);
   }
 
   console.log(`⏱️  [Agente] Pipeline streaming concluído em ${duration}s\n`);

@@ -51,7 +51,7 @@ export interface OllamaChatMessage {
  * * Previne o "Context Bloat" e o erro de Timeout garantindo que a GPU não seja
  * asfixiada com histórico irrelevante, mantendo SEMPRE o System Prompt intacto.
  */
-function pruneHistory(messages: OllamaChatMessage[], maxInteractions: number = 4): OllamaChatMessage[] {
+function pruneHistory(messages: OllamaChatMessage[], maxInteractions: number = 6): OllamaChatMessage[] {
   // Se o array já for pequeno, não faz nada
   if (messages.length <= maxInteractions + 1) return messages;
 
@@ -213,7 +213,7 @@ export async function streamOllamaResponse(
   messages: OllamaChatMessage[],
   res: Response,
   sources: string[]
-): Promise<void> {
+): Promise<string> {
   const url = `${OLLAMA_BASE_URL}/api/chat`;
   const safeMessages = pruneHistory(messages);
 
@@ -244,6 +244,7 @@ export async function streamOllamaResponse(
   const reader = ollamaResponse.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let fullText = "";
   let generatedTokens = false;
 
   try {
@@ -272,6 +273,7 @@ export async function streamOllamaResponse(
 
           if (chunk.message?.content) {
             generatedTokens = true;
+            fullText += chunk.message.content;
             res.write(`data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`);
           }
 
@@ -289,6 +291,7 @@ export async function streamOllamaResponse(
         const chunk = JSON.parse(buffer.trim()) as { message?: { content: string } };
         if (chunk.message?.content) {
           generatedTokens = true;
+          fullText += chunk.message.content;
           res.write(`data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`);
         }
       } catch {
@@ -309,4 +312,6 @@ export async function streamOllamaResponse(
   }
 
   res.write(`data: [DONE]\n\n`);
+
+  return fullText;
 }

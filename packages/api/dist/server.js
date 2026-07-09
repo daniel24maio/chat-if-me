@@ -726,7 +726,7 @@ import { Router } from "express";
 // src/config/database.ts
 import pg from "pg";
 var { Pool } = pg;
-var EMBEDDING_DIM_ESPERADA = 1024;
+var EXPECTED_EMBEDDING_DIM = 1024;
 var pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   max: 20,
@@ -736,12 +736,12 @@ var pool = new Pool({
   connectionTimeoutMillis: 6e4
   // Timeout para obter conexão do pool
 });
-async function testarConexaoDB() {
+async function testDBConnection() {
   try {
     const client2 = await pool.connect();
-    const result = await client2.query("SELECT NOW() as agora");
+    const result = await client2.query("SELECT NOW() as now");
     console.log(
-      `\u2705 [Database] Conectado ao PostgreSQL \u2014 ${result.rows[0].agora}`
+      `\u2705 [Database] Conectado ao PostgreSQL \u2014 ${result.rows[0].now}`
     );
     client2.release();
   } catch (error) {
@@ -751,15 +751,15 @@ async function testarConexaoDB() {
     );
   }
 }
-async function verificarDimensaoEmbedding() {
+async function verifyEmbeddingDimension() {
   try {
-    const tabelaExiste = await pool.query(`
+    const tableExists = await pool.query(`
       SELECT EXISTS (
         SELECT 1 FROM information_schema.tables
         WHERE table_name = 'documents'
-      ) AS existe
+      ) AS exists
     `);
-    if (!tabelaExiste.rows[0]?.existe) {
+    if (!tableExists.rows[0]?.exists) {
       console.log("\u23ED\uFE0F  [Database] Tabela 'documents' n\xE3o existe ainda. Pulando verifica\xE7\xE3o de dimens\xE3o.");
       return;
     }
@@ -773,36 +773,36 @@ async function verificarDimensaoEmbedding() {
       console.warn("\u26A0\uFE0F  [Database] Coluna 'embedding' n\xE3o encontrada na tabela 'documents'.");
       return;
     }
-    const dimAtual = result.rows[0].dim;
-    if (dimAtual === EMBEDDING_DIM_ESPERADA) {
-      console.log(`\u2705 [Database] Dimens\xE3o do embedding: ${dimAtual}d \u2713`);
+    const currentDim = result.rows[0].dim;
+    if (currentDim === EXPECTED_EMBEDDING_DIM) {
+      console.log(`\u2705 [Database] Dimens\xE3o do embedding: ${currentDim}d \u2713`);
       return;
     }
     console.warn(
-      `\u26A0\uFE0F  [Database] Dimens\xE3o incompat\xEDvel detectada: ${dimAtual}d (esperado: ${EMBEDDING_DIM_ESPERADA}d)`
+      `\u26A0\uFE0F  [Database] Dimens\xE3o incompat\xEDvel detectada: ${currentDim}d (esperado: ${EXPECTED_EMBEDDING_DIM}d)`
     );
-    console.log(`\u{1F504} [Database] Iniciando auto-migra\xE7\xE3o ${dimAtual}d \u2192 ${EMBEDDING_DIM_ESPERADA}d...`);
+    console.log(`\u{1F504} [Database] Iniciando auto-migra\xE7\xE3o ${currentDim}d \u2192 ${EXPECTED_EMBEDDING_DIM}d...`);
     const countResult = await pool.query(`SELECT COUNT(*) AS total FROM documents WHERE embedding IS NOT NULL`);
-    const registrosExistentes = Number(countResult.rows[0]?.total || 0);
-    if (registrosExistentes > 0) {
+    const existingRecords = Number(countResult.rows[0]?.total || 0);
+    if (existingRecords > 0) {
       console.warn(
-        `\u26A0\uFE0F  [Database] ${registrosExistentes} registro(s) com embeddings ser\xE3o invalidados. Re-uploade os documentos ap\xF3s a migra\xE7\xE3o.`
+        `\u26A0\uFE0F  [Database] ${existingRecords} registro(s) com embeddings ser\xE3o invalidados. Re-uploade os documentos ap\xF3s a migra\xE7\xE3o.`
       );
     }
     await pool.query(`DROP INDEX IF EXISTS idx_documents_embedding`);
     await pool.query(`ALTER TABLE documents DROP COLUMN IF EXISTS embedding`);
-    await pool.query(`ALTER TABLE documents ADD COLUMN embedding vector(${EMBEDDING_DIM_ESPERADA})`);
+    await pool.query(`ALTER TABLE documents ADD COLUMN embedding vector(${EXPECTED_EMBEDDING_DIM})`);
     await pool.query(`
       CREATE INDEX idx_documents_embedding
         ON documents USING hnsw (embedding vector_cosine_ops)
         WITH (m = 16, ef_construction = 200)
     `);
     console.log(
-      `\u2705 [Database] Auto-migra\xE7\xE3o conclu\xEDda! Embedding agora \xE9 ${EMBEDDING_DIM_ESPERADA}d (HNSW).`
+      `\u2705 [Database] Auto-migra\xE7\xE3o conclu\xEDda! Embedding agora \xE9 ${EXPECTED_EMBEDDING_DIM}d (HNSW).`
     );
-    if (registrosExistentes > 0) {
+    if (existingRecords > 0) {
       console.warn(
-        `\u26A0\uFE0F  [Database] A\xC7\xC3O NECESS\xC1RIA: Re-uploade os ${registrosExistentes} documento(s) via /api/embedding/upload`
+        `\u26A0\uFE0F  [Database] A\xC7\xC3O NECESS\xC1RIA: Re-uploade os ${existingRecords} documento(s) via /api/embedding/upload`
       );
     }
   } catch (error) {
@@ -820,15 +820,15 @@ var LLM_MODEL = process.env.OLLAMA_LLM_MODEL || "qwen3.5:4b";
 var REWRITE_MODEL = process.env.OLLAMA_REWRITE_MODEL || "qwen3.5:4b";
 var NUM_CTX = Number(process.env.OLLAMA_NUM_CTX) || 8192;
 var FETCH_TIMEOUT_MS = 18e4;
-function podarHistorico(mensagens, maxInteracoes = 4) {
-  if (mensagens.length <= maxInteracoes + 1)
-    return mensagens;
-  const systemPrompt = mensagens.find((m) => m.role === "system");
-  const outrasMensagens = mensagens.filter((m) => m.role !== "system");
-  const mensagensRecentes = outrasMensagens.slice(-maxInteracoes);
-  return systemPrompt ? [systemPrompt, ...mensagensRecentes] : mensagensRecentes;
+function pruneHistory(messages, maxInteractions = 6) {
+  if (messages.length <= maxInteractions + 1)
+    return messages;
+  const systemPrompt = messages.find((m) => m.role === "system");
+  const otherMessages = messages.filter((m) => m.role !== "system");
+  const recentMessages = otherMessages.slice(-maxInteractions);
+  return systemPrompt ? [systemPrompt, ...recentMessages] : recentMessages;
 }
-async function verificarOllama() {
+async function checkOllama() {
   try {
     const response = await fetch(`${OLLAMA_BASE_URL}/api/tags`, {
       signal: AbortSignal.timeout(1e4)
@@ -837,15 +837,15 @@ async function verificarOllama() {
     if (!response.ok)
       throw new Error(`Status ${response.status}`);
     const data = await response.json();
-    const modelos = data.models?.map((m) => m.name) || [];
+    const models = data.models?.map((m) => m.name) || [];
     console.log(`\u2705 [Ollama] Conectado em ${OLLAMA_BASE_URL}`);
-    console.log(`   Modelos dispon\xEDveis: ${modelos.join(", ") || "nenhum"}`);
+    console.log(`   Modelos dispon\xEDveis: ${models.join(", ") || "nenhum"}`);
   } catch (error) {
     console.error(`\u274C [Ollama] Servidor inacess\xEDvel em ${OLLAMA_BASE_URL}`);
     console.error("   Verifique se o Ollama est\xE1 rodando e a vari\xE1vel OLLAMA_BASE_URL");
   }
 }
-async function gerarEmbeddingOllama(texto) {
+async function generateOllamaEmbedding(text) {
   const url = `${OLLAMA_BASE_URL}/api/embeddings`;
   const response = await fetch(url, {
     method: "POST",
@@ -853,7 +853,7 @@ async function gerarEmbeddingOllama(texto) {
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     body: JSON.stringify({
       model: EMBED_MODEL,
-      prompt: texto,
+      prompt: text,
       keep_alive: "24h"
     })
   });
@@ -867,7 +867,7 @@ async function gerarEmbeddingOllama(texto) {
   }
   return data.embedding;
 }
-async function reescreverComLLM(systemPrompt, pergunta) {
+async function rewriteWithLLM(systemPrompt, question) {
   const url = `${OLLAMA_BASE_URL}/api/chat`;
   const response = await fetch(url, {
     method: "POST",
@@ -877,7 +877,7 @@ async function reescreverComLLM(systemPrompt, pergunta) {
       model: REWRITE_MODEL,
       messages: [
         { role: "system", content: systemPrompt },
-        { role: "user", content: pergunta }
+        { role: "user", content: question }
       ],
       stream: false,
       keep_alive: "24h",
@@ -902,10 +902,10 @@ async function reescreverComLLM(systemPrompt, pergunta) {
   }
   return data.message.content.trim();
 }
-async function streamRespostaOllama(mensagens, res, fontes) {
+async function streamOllamaResponse(messages, res, sources) {
   const url = `${OLLAMA_BASE_URL}/api/chat`;
-  const mensagensSeguras = podarHistorico(mensagens);
-  res.write(`data: ${JSON.stringify({ type: "fontes", fontes })}
+  const safeMessages = pruneHistory(messages);
+  res.write(`data: ${JSON.stringify({ type: "sources", sources })}
 
 `);
   const ollamaResponse = await fetch(url, {
@@ -914,7 +914,7 @@ async function streamRespostaOllama(mensagens, res, fontes) {
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     body: JSON.stringify({
       model: LLM_MODEL,
-      messages: mensagensSeguras,
+      messages: safeMessages,
       stream: true,
       keep_alive: "24h",
       options: { num_ctx: NUM_CTX }
@@ -930,7 +930,8 @@ async function streamRespostaOllama(mensagens, res, fontes) {
   const reader = ollamaResponse.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  let gerouTokens = false;
+  let fullText = "";
+  let generatedTokens = false;
   try {
     while (true) {
       const { done, value } = await reader.read();
@@ -949,7 +950,8 @@ async function streamRespostaOllama(mensagens, res, fontes) {
             console.error("\u274C [Ollama LLM Stream] Erro retornado no chunk:", chunk.error);
           }
           if (chunk.message?.content) {
-            gerouTokens = true;
+            generatedTokens = true;
+            fullText += chunk.message.content;
             res.write(`data: ${JSON.stringify({ type: "token", content: chunk.message.content })}
 
 `);
@@ -965,7 +967,8 @@ async function streamRespostaOllama(mensagens, res, fontes) {
       try {
         const chunk = JSON.parse(buffer.trim());
         if (chunk.message?.content) {
-          gerouTokens = true;
+          generatedTokens = true;
+          fullText += chunk.message.content;
           res.write(`data: ${JSON.stringify({ type: "token", content: chunk.message.content })}
 
 `);
@@ -976,7 +979,7 @@ async function streamRespostaOllama(mensagens, res, fontes) {
   } finally {
     reader.releaseLock();
   }
-  if (!gerouTokens) {
+  if (!generatedTokens) {
     console.warn("\u26A0\uFE0F [Ollama] Resposta vazia no streaming. Enviando fallback.");
     const fallbackMsg = "N\xE3o encontrei essa informa\xE7\xE3o nos documentos dispon\xEDveis. Recomendo consultar a coordena\xE7\xE3o do curso ou acessar o portal do IFMG.";
     res.write(
@@ -988,6 +991,7 @@ async function streamRespostaOllama(mensagens, res, fontes) {
   res.write(`data: [DONE]
 
 `);
+  return fullText;
 }
 
 // src/services/memory.service.ts
@@ -998,26 +1002,26 @@ var MAX_MESSAGES_PER_SESSION = 10;
 var sessions = /* @__PURE__ */ new Map();
 var expiredSessions = /* @__PURE__ */ new Map();
 var cleanupInterval = setInterval(() => {
-  const agora = Date.now();
-  let removidas = 0;
+  const now = Date.now();
+  let removed = 0;
   for (const [id, ctx] of sessions) {
-    if (agora - ctx.lastAccessedAt > SESSION_TTL_MS) {
+    if (now - ctx.lastAccessedAt > SESSION_TTL_MS) {
       sessions.delete(id);
-      expiredSessions.set(id, agora);
-      removidas++;
+      expiredSessions.set(id, now);
+      removed++;
       console.log(
-        `\u{1F9F9} [Mem\xF3ria] Sess\xE3o expirada e removida: ${id.substring(0, 8)}... (${ctx.messages.length} msgs, ${Math.round((agora - ctx.createdAt) / 1e3)}s de vida)`
+        `\u{1F9F9} [Mem\xF3ria] Sess\xE3o expirada e removida: ${id.substring(0, 8)}... (${ctx.messages.length} msgs, ${Math.round((now - ctx.createdAt) / 1e3)}s de vida)`
       );
     }
   }
   for (const [id, expiredAt] of expiredSessions) {
-    if (agora - expiredAt > 10 * 60 * 1e3) {
+    if (now - expiredAt > 10 * 60 * 1e3) {
       expiredSessions.delete(id);
     }
   }
-  if (removidas > 0) {
+  if (removed > 0) {
     console.log(
-      `\u{1F9F9} [Mem\xF3ria] ${removidas} sess\xE3o(\xF5es) removida(s). Ativas: ${sessions.size}`
+      `\u{1F9F9} [Mem\xF3ria] ${removed} sess\xE3o(\xF5es) removida(s). Ativas: ${sessions.size}`
     );
   }
 }, CLEANUP_INTERVAL_MS);
@@ -1029,10 +1033,10 @@ function isSessionExpired(sessionId) {
   return expiredSessions.has(sessionId);
 }
 function getOrCreateSession(sessionId) {
-  const existente = sessions.get(sessionId);
-  if (existente) {
-    existente.lastAccessedAt = Date.now();
-    return existente;
+  const existing = sessions.get(sessionId);
+  if (existing) {
+    existing.lastAccessedAt = Date.now();
+    return existing;
   }
   if (sessions.size >= MAX_SESSIONS) {
     let oldestId = "";
@@ -1050,39 +1054,39 @@ function getOrCreateSession(sessionId) {
       );
     }
   }
-  const novaSessao = {
+  const newSession = {
     sessionId,
     messages: [],
     entities: {
-      disciplinas: [],
-      periodos: [],
-      temas: [],
-      ultimoAssunto: ""
+      subjects: [],
+      periods: [],
+      topics: [],
+      lastTopic: ""
     },
     lastIntent: "",
     lastDocuments: [],
     createdAt: Date.now(),
     lastAccessedAt: Date.now()
   };
-  sessions.set(sessionId, novaSessao);
+  sessions.set(sessionId, newSession);
   console.log(
     `\u{1F9E0} [Mem\xF3ria] Nova sess\xE3o criada: ${sessionId.substring(0, 8)}... (total ativas: ${sessions.size})`
   );
-  return novaSessao;
+  return newSession;
 }
-function updateSession(sessionId, pergunta, intent, resposta) {
+function updateSession(sessionId, question, intent, response) {
   const session = sessions.get(sessionId);
   if (!session)
     return;
   session.messages.push({
     role: "user",
-    content: pergunta,
+    content: question,
     timestamp: Date.now()
   });
-  if (resposta) {
+  if (response) {
     session.messages.push({
       role: "assistant",
-      content: resposta,
+      content: response,
       timestamp: Date.now()
     });
   }
@@ -1090,44 +1094,44 @@ function updateSession(sessionId, pergunta, intent, resposta) {
     session.messages = session.messages.slice(-MAX_MESSAGES_PER_SESSION);
   }
   session.lastIntent = intent;
-  extrairEntidades(pergunta, session.entities);
+  extractEntities(question, session.entities);
   session.lastAccessedAt = Date.now();
 }
-function resolverReferencias(pergunta, session) {
+function resolveReferences(question, session) {
   const { entities, messages } = session;
   if (messages.length === 0)
-    return pergunta;
-  let perguntaResolvida = pergunta;
-  if (entities.disciplinas.length > 0) {
-    const ultimaDisciplina = entities.disciplinas[entities.disciplinas.length - 1];
-    perguntaResolvida = perguntaResolvida.replace(
+    return question;
+  let resolvedQuestion = question;
+  if (entities.subjects.length > 0) {
+    const lastSubject = entities.subjects[entities.subjects.length - 1];
+    resolvedQuestion = resolvedQuestion.replace(
       /\b(d?essa|nessa|desta|dela)\b/gi,
-      `de ${ultimaDisciplina}`
+      `de ${lastSubject}`
     );
   }
-  if (entities.periodos.length > 0) {
-    const ultimoPeriodo = entities.periodos[entities.periodos.length - 1];
-    perguntaResolvida = perguntaResolvida.replace(
+  if (entities.periods.length > 0) {
+    const lastPeriod = entities.periods[entities.periods.length - 1];
+    resolvedQuestion = resolvedQuestion.replace(
       /\b(d?esse|nesse|deste|dele)\b/gi,
-      `do ${ultimoPeriodo}\xBA per\xEDodo`
+      `do ${lastPeriod}\xBA per\xEDodo`
     );
-  } else if (entities.ultimoAssunto) {
-    perguntaResolvida = perguntaResolvida.replace(
+  } else if (entities.lastTopic) {
+    resolvedQuestion = resolvedQuestion.replace(
       /\b(d?esse|nesse|deste|dele)\b/gi,
-      `de ${entities.ultimoAssunto}`
+      `de ${entities.lastTopic}`
     );
   }
-  if (/^(e\s|e\s+sobre\s|também\s)/i.test(perguntaResolvida) && entities.ultimoAssunto) {
-    perguntaResolvida = `${perguntaResolvida} (contexto: ${entities.ultimoAssunto})`;
+  if (/^(e\s|e\s+sobre\s|também\s)/i.test(resolvedQuestion) && entities.lastTopic) {
+    resolvedQuestion = `${resolvedQuestion} (contexto: ${entities.lastTopic})`;
   }
-  if (perguntaResolvida !== pergunta) {
+  if (resolvedQuestion !== question) {
     console.log(
       `\u{1F517} [Mem\xF3ria] Pronomes resolvidos:
-   Original:  "${pergunta}"
-   Resolvida: "${perguntaResolvida}"`
+   Original:  "${question}"
+   Resolvida: "${resolvedQuestion}"`
     );
   }
-  return perguntaResolvida;
+  return resolvedQuestion;
 }
 function getSessionStats() {
   let totalMessages = 0;
@@ -1141,22 +1145,30 @@ function getSessionStats() {
     memoryEstimateKB: Math.round((totalMessages * 100 + sessions.size * 500) / 1024)
   };
 }
-function limparTodasSessoes() {
+function getSessionChunkIds(sessionId) {
+  if (!sessionId)
+    return [];
+  const session = sessions.get(sessionId);
+  if (!session || !session.lastDocuments)
+    return [];
+  return session.lastDocuments.filter((doc) => doc.id != null).map((doc) => doc.id);
+}
+function clearAllSessions() {
   const total = sessions.size;
   sessions.clear();
   expiredSessions.clear();
   console.log(`\u{1F9F9} [Mem\xF3ria] Todas as ${total} sess\xE3o(\xF5es) removidas (shutdown).`);
 }
-function extrairEntidades(texto, entities) {
-  const textoLower = texto.toLowerCase();
-  const periodoNumerico = texto.match(/(\d+)[ºª°]?\s*per[ií]odo/i);
-  if (periodoNumerico) {
-    const num = Number(periodoNumerico[1]);
-    if (!entities.periodos.includes(num)) {
-      entities.periodos.push(num);
+function extractEntities(text, entities) {
+  const textLower = text.toLowerCase();
+  const numericPeriod = text.match(/(\d+)[ºª°]?\s*per[ií]odo/i);
+  if (numericPeriod) {
+    const num = Number(numericPeriod[1]);
+    if (!entities.periods.includes(num)) {
+      entities.periods.push(num);
     }
   }
-  const periodosExtenso = {
+  const periodsInWords = {
     primeiro: 1,
     segundo: 2,
     terceiro: 3,
@@ -1168,12 +1180,12 @@ function extrairEntidades(texto, entities) {
     nono: 9,
     d\u00E9cimo: 10
   };
-  for (const [nome, num] of Object.entries(periodosExtenso)) {
-    if (textoLower.includes(`${nome} per\xEDodo`) && !entities.periodos.includes(num)) {
-      entities.periodos.push(num);
+  for (const [nome, num] of Object.entries(periodsInWords)) {
+    if (textLower.includes(`${nome} per\xEDodo`) && !entities.periods.includes(num)) {
+      entities.periods.push(num);
     }
   }
-  const disciplinas = [
+  const subjects = [
     "C\xE1lculo",
     "C\xE1lculo 1",
     "C\xE1lculo 2",
@@ -1206,14 +1218,14 @@ function extrairEntidades(texto, entities) {
     "Est\xE1gio Supervisionado",
     "Projeto Integrador"
   ];
-  for (const disciplina of disciplinas) {
-    if (textoLower.includes(disciplina.toLowerCase())) {
-      if (!entities.disciplinas.includes(disciplina)) {
-        entities.disciplinas.push(disciplina);
+  for (const subject of subjects) {
+    if (textLower.includes(subject.toLowerCase())) {
+      if (!entities.subjects.includes(subject)) {
+        entities.subjects.push(subject);
       }
     }
   }
-  const temas = {
+  const topics = {
     "pr\xE9-requisito": "pr\xE9-requisitos",
     "prerequisito": "pr\xE9-requisitos",
     "carga hor\xE1ria": "carga hor\xE1ria",
@@ -1237,17 +1249,17 @@ function extrairEntidades(texto, entities) {
     "grade curricular": "grade curricular",
     "matriz curricular": "grade curricular"
   };
-  for (const [termo, tema] of Object.entries(temas)) {
-    if (textoLower.includes(termo) && !entities.temas.includes(tema)) {
-      entities.temas.push(tema);
+  for (const [termo, tema] of Object.entries(topics)) {
+    if (textLower.includes(termo) && !entities.topics.includes(tema)) {
+      entities.topics.push(tema);
     }
   }
-  if (entities.disciplinas.length > 0) {
-    entities.ultimoAssunto = entities.disciplinas[entities.disciplinas.length - 1];
-  } else if (entities.periodos.length > 0) {
-    entities.ultimoAssunto = `${entities.periodos[entities.periodos.length - 1]}\xBA per\xEDodo`;
-  } else if (entities.temas.length > 0) {
-    entities.ultimoAssunto = entities.temas[entities.temas.length - 1];
+  if (entities.subjects.length > 0) {
+    entities.lastTopic = entities.subjects[entities.subjects.length - 1];
+  } else if (entities.periods.length > 0) {
+    entities.lastTopic = `${entities.periods[entities.periods.length - 1]}\xBA per\xEDodo`;
+  } else if (entities.topics.length > 0) {
+    entities.lastTopic = entities.topics[entities.topics.length - 1];
   }
 }
 
@@ -1314,8 +1326,95 @@ async function streamStaticGreeting(res) {
 `);
 }
 
+// src/services/feedback.service.ts
+var FEW_SHOT_SIMILARITY_THRESHOLD = 0.85;
+var MAX_FEW_SHOT_EXAMPLES = 3;
+var PENALTY_BETA = 0.3;
+async function saveFeedback(params) {
+  const { question, response, feedbackType, chunkIds, metadata } = params;
+  try {
+    const embedding = await generateOllamaEmbedding(question);
+    const vectorStr = `[${embedding.join(",")}]`;
+    await pool.query(
+      `INSERT INTO chat_feedbacks
+        (question, response, question_embedding, feedback_type, chunk_ids, metadata)
+       VALUES ($1, $2, $3::vector, $4, $5, $6)`,
+      [
+        question,
+        response,
+        vectorStr,
+        feedbackType,
+        chunkIds,
+        JSON.stringify(metadata || {})
+      ]
+    );
+    console.log(
+      `\u{1F4BE} [Feedback] Salvo com sucesso: ${feedbackType === "positive" ? "\u{1F44D}" : "\u{1F44E}"} (${chunkIds.length} chunk(s), ${embedding.length}d embedding)`
+    );
+  } catch (error) {
+    console.error(
+      "\u274C [Feedback] Erro ao salvar no banco:",
+      error instanceof Error ? error.message : error
+    );
+  }
+}
+async function getPositiveExamples(questionEmbedding, threshold = FEW_SHOT_SIMILARITY_THRESHOLD, maxExamples = MAX_FEW_SHOT_EXAMPLES) {
+  try {
+    const vectorStr = `[${questionEmbedding.join(",")}]`;
+    const result = await pool.query(
+      `SELECT question, response,
+              1 - (question_embedding <=> $1::vector) AS similarity
+       FROM chat_feedbacks
+       WHERE feedback_type = 'positive'
+         AND 1 - (question_embedding <=> $1::vector) > $2
+       ORDER BY question_embedding <=> $1::vector
+       LIMIT $3`,
+      [vectorStr, threshold, maxExamples]
+    );
+    if (result.rows.length === 0) {
+      return [];
+    }
+    return result.rows.map((row) => ({
+      question: row.question,
+      response: row.response,
+      similarity: Number(row.similarity)
+    }));
+  } catch (error) {
+    console.warn(
+      "\u26A0\uFE0F  [ICL] Erro ao buscar exemplos positivos:",
+      error instanceof Error ? error.message : error
+    );
+    return [];
+  }
+}
+async function countNegativesByChunk(chunkIds) {
+  const negatives = /* @__PURE__ */ new Map();
+  if (!chunkIds || chunkIds.length === 0) {
+    return negatives;
+  }
+  try {
+    const result = await pool.query(
+      `SELECT unnest(chunk_ids) AS chunk_id, COUNT(*) AS neg_count
+       FROM chat_feedbacks
+       WHERE feedback_type = 'negative'
+         AND chunk_ids && $1::integer[]
+       GROUP BY chunk_id`,
+      [chunkIds]
+    );
+    for (const row of result.rows) {
+      negatives.set(Number(row.chunk_id), Number(row.neg_count));
+    }
+  } catch (error) {
+    console.warn(
+      "\u26A0\uFE0F  [ICL] Erro ao contar negativos por chunk:",
+      error instanceof Error ? error.message : error
+    );
+  }
+  return negatives;
+}
+
 // src/services/rag.service.ts
-var REWRITE_SYSTEM_PROMPT = `Voc\xEA \xE9 um assistente de pr\xE9-processamento de consultas para um sistema de busca de documentos acad\xEAmicos do IFMG (Instituto Federal de Minas Gerais), Campus Ouro Branco.
+var REWRITE_SYSTEM_PROMPT = `Voc\xEA \xE9 um assistente de pr\xE9-processamento de consultas para um sistema de busca de documentos acad\xEAmicos do IFMG (Instituto Federal de Gerais), Campus Ouro Branco.
 
 Sua tarefa: reescrever a pergunta do usu\xE1rio para melhorar a busca sem\xE2ntica em documentos acad\xEAmicos.
 
@@ -1343,34 +1442,34 @@ REGRAS:
 4. Adicione contexto impl\xEDcito quando cab\xEDvel (ex: "reprovar" \u2192 "crit\xE9rios de reprova\xE7\xE3o").
 5. Mantenha o sentido original da pergunta.
 6. Responda APENAS com a Tag de Inten\xE7\xE3o seguida da pergunta reescrita, sem aspas. Exemplo: "[DISCIPLINA] qual \xE9 a carga hor\xE1ria de c\xE1lculo 1?"`;
-async function reescreverPergunta(pergunta) {
+async function rewriteQuestion(question) {
   try {
-    console.log(`\u270D\uFE0F  [Reescrita] Original: "${pergunta}"`);
-    const reescrita = await reescreverComLLM(REWRITE_SYSTEM_PROMPT, pergunta);
-    if (!reescrita || reescrita.length > 1e3) {
+    console.log(`\u270D\uFE0F  [Reescrita] Original: "${question}"`);
+    const rewritten = await rewriteWithLLM(REWRITE_SYSTEM_PROMPT, question);
+    if (!rewritten || rewritten.length > 1e3) {
       console.log(`\u270D\uFE0F  [Reescrita] Resultado inv\xE1lido, usando original.`);
-      return { intencao: "OUTRAS", perguntaReescrita: pergunta };
+      return { intention: "OUTRAS", rewrittenQuestion: question };
     }
-    const match = reescrita.trim().match(/^\[(.*?)\]\s*(.*)/);
+    const match = rewritten.trim().match(/^\[(.*?)\]\s*(.*)/);
     if (match) {
-      const intencao = match[1].toUpperCase();
-      const perguntaReescrita = match[2];
-      console.log(`\u270D\uFE0F  [Reescrita] Inten\xE7\xE3o: [${intencao}] | Reescrita: "${perguntaReescrita}"`);
-      return { intencao, perguntaReescrita };
+      const intention = match[1].toUpperCase();
+      const rewrittenQuestion = match[2];
+      console.log(`\u270D\uFE0F  [Reescrita] Inten\xE7\xE3o: [${intention}] | Reescrita: "${rewrittenQuestion}"`);
+      return { intention, rewrittenQuestion };
     }
-    console.log(`\u270D\uFE0F  [Reescrita] Resultado sem tag: "${reescrita}"`);
-    return { intencao: "OUTRAS", perguntaReescrita: reescrita };
+    console.log(`\u270D\uFE0F  [Reescrita] Resultado sem tag: "${rewritten}"`);
+    return { intention: "OUTRAS", rewrittenQuestion: rewritten };
   } catch (error) {
     console.warn(
       `\u26A0\uFE0F  [Reescrita] Falha na reescrita, usando pergunta original:`,
       error instanceof Error ? error.message : error
     );
-    return { intencao: "OUTRAS", perguntaReescrita: pergunta };
+    return { intention: "OUTRAS", rewrittenQuestion: question };
   }
 }
-async function gerarEmbedding(texto) {
-  console.log(`\u{1F522} [RAG] Vetorizando pergunta: "${texto.substring(0, 60)}..."`);
-  const embedding = await gerarEmbeddingOllama(texto);
+async function generateEmbedding(text) {
+  console.log(`\u{1F522} [RAG] Vetorizando pergunta: "${text.substring(0, 60)}..."`);
+  const embedding = await generateOllamaEmbedding(text);
   console.log(
     `\u{1F522} [RAG] Embedding gerado com sucesso (${embedding.length} dimens\xF5es)`
   );
@@ -1378,7 +1477,7 @@ async function gerarEmbedding(texto) {
 }
 var RRF_K = 60;
 var RRF_ALPHA = 0.5;
-async function buscarHibrido(embedding, queryTexto, limite = 5) {
+async function hybridSearch(embedding, queryText, limit = 5) {
   console.log(
     `\u{1F50D} [RAG] Busca h\xEDbrida: vetorial (\u03B1=${RRF_ALPHA}) + FTS (1-\u03B1=${1 - RRF_ALPHA}), k=${RRF_K}`
   );
@@ -1386,15 +1485,15 @@ async function buscarHibrido(embedding, queryTexto, limite = 5) {
   const result = await pool.query(
     `WITH
        semantic AS (
-         SELECT id, content AS conteudo, metadata->>'filename' AS origem,
-           1 - (embedding <=> $1::vector) AS similaridade,
+         SELECT id, content AS content, metadata->>'filename' AS source,
+           1 - (embedding <=> $1::vector) AS similarity,
            ROW_NUMBER() OVER (ORDER BY embedding <=> $1::vector) AS rank
          FROM documents
          ORDER BY embedding <=> $1::vector
          LIMIT 20
        ),
        lexical AS (
-         SELECT id, content AS conteudo, metadata->>'filename' AS origem,
+         SELECT id, content AS content, metadata->>'filename' AS source,
            ts_rank_cd(content_tsv, plainto_tsquery('portuguese_unaccent', $2)) AS ts_score,
            ROW_NUMBER() OVER (
              ORDER BY ts_rank_cd(content_tsv, plainto_tsquery('portuguese_unaccent', $2)) DESC
@@ -1406,9 +1505,9 @@ async function buscarHibrido(embedding, queryTexto, limite = 5) {
        )
      SELECT
        COALESCE(s.id, l.id) AS id,
-       COALESCE(s.conteudo, l.conteudo) AS conteudo,
-       COALESCE(s.origem, l.origem) AS origem,
-       COALESCE(s.similaridade, 0) AS similaridade,
+       COALESCE(s.content, l.content) AS content,
+       COALESCE(s.source, l.source) AS source,
+       COALESCE(s.similarity, 0) AS similarity,
        (
          ${RRF_ALPHA} * COALESCE(1.0 / (${RRF_K} + s.rank), 0.0) +
          ${1 - RRF_ALPHA} * COALESCE(1.0 / (${RRF_K} + l.rank), 0.0)
@@ -1417,38 +1516,72 @@ async function buscarHibrido(embedding, queryTexto, limite = 5) {
      FULL OUTER JOIN lexical l ON s.id = l.id
      ORDER BY rrf_score DESC
      LIMIT $3`,
-    [vectorStr, queryTexto, limite]
+    [vectorStr, queryText, limit]
   );
-  const documentos = result.rows.map((row) => ({
-    conteudo: row.conteudo,
-    origem: row.origem || "documento desconhecido",
-    similaridade: Number(row.rrf_score)
+  let documents = result.rows.map((row) => ({
+    id: Number(row.id),
+    content: row.content,
+    source: row.source || "documento desconhecido",
+    similarity: Number(row.rrf_score)
   }));
-  if (documentos.length === 0) {
+  if (documents.length > 0) {
+    const chunkIds = documents.map((d) => d.id);
+    const negatives = await countNegativesByChunk(chunkIds);
+    if (negatives.size > 0) {
+      for (const doc of documents) {
+        const negCount = negatives.get(doc.id) || 0;
+        if (negCount > 0) {
+          const originalScore = doc.similarity;
+          doc.similarity *= 1 / (1 + PENALTY_BETA * negCount);
+          console.log(
+            `\u26A0\uFE0F  [RRF] Chunk #${doc.id} penalizado: ${negCount} negativo(s), score ${originalScore.toFixed(4)} \u2192 ${doc.similarity.toFixed(4)}`
+          );
+        }
+      }
+      documents.sort((a, b) => b.similarity - a.similarity);
+      documents = documents.slice(0, limit);
+    }
+  }
+  if (documents.length === 0) {
     console.log(`\u{1F50D} [RAG] Nenhum documento encontrado (vetorial + FTS).`);
   } else {
-    console.log(`\u{1F50D} [RAG] ${documentos.length} documentos (RRF h\xEDbrido):`);
-    documentos.forEach((doc, i) => {
+    console.log(`\u{1F50D} [RAG] ${documents.length} documentos (RRF h\xEDbrido):`);
+    documents.forEach((doc, i) => {
       console.log(
-        `   ${i + 1}. [RRF: ${doc.similaridade.toFixed(4)}] ${doc.origem}: "${doc.conteudo.substring(0, 50)}..."`
+        `   ${i + 1}. [RRF: ${doc.similarity.toFixed(4)}] ${doc.source}: "${doc.content.substring(0, 50)}..."`
       );
     });
   }
-  return documentos;
+  return documents;
 }
-function montarMensagensRAG(pergunta, documentos, intencao) {
-  const contexto = documentos.length > 0 ? documentos.map(
-    (doc, i) => `--- Trecho ${i + 1} (fonte: ${doc.origem}, similaridade: ${doc.similaridade.toFixed(2)}) ---
-${doc.conteudo}`
+function buildRAGMessages(question, documents, intention, fewShotExamples = [], sessionMessages = []) {
+  const context = documents.length > 0 ? documents.map(
+    (doc, i) => `--- Trecho ${i + 1} (fonte: ${doc.source}, similaridade: ${doc.similarity.toFixed(2)}) ---
+${doc.content}`
   ).join("\n\n") : "Nenhum documento relevante foi encontrado na base de conhecimento.";
+  let fewShotBlock = "";
+  if (fewShotExamples.length > 0) {
+    const examples = fewShotExamples.map(
+      (ex, i) => `EXEMPLO ${i + 1}:
+PERGUNTA DO ALUNO: ${ex.question}
+SUA RESPOSTA (aprovada pelo usu\xE1rio): ${ex.response}`
+    ).join("\n\n");
+    fewShotBlock = `
+\u2550\u2550\u2550 EXEMPLOS DE SUCESSO (intera\xE7\xF5es anteriores avaliadas positivamente pelos usu\xE1rios) \u2550\u2550\u2550
+${examples}
+\u2550\u2550\u2550 FIM DOS EXEMPLOS \u2550\u2550\u2550
+
+Use os exemplos acima como REFER\xCANCIA DE TOM E FORMATO. Adapte o conte\xFAdo ao CONTEXTO abaixo.
+`;
+  }
   const systemPrompt = `Voc\xEA \xE9 o assistente virtual oficial do IFMG Campus Ouro Branco.
 
 Sua fun\xE7\xE3o \xE9 responder d\xFAvidas dos alunos sobre regulamentos, PPC (Projeto Pedag\xF3gico do Curso), grade curricular, normas acad\xEAmicas e informa\xE7\xF5es do campus.
 
-INTEN\xC7\xC3O DA PERGUNTA: [${intencao}] (Foque a sua resposta no contexto dessa inten\xE7\xE3o).
-
+INTEN\xC7\xC3O DA PERGUNTA: [${intention}] (Foque a sua resposta no contexto dessa inten\xE7\xE3o).
+${fewShotBlock}
 CONTEXTO (trechos dos documentos oficiais do curso):
-${contexto}
+${context}
 
 REGRAS OBRIGAT\xD3RIAS (siga rigorosamente):
 1. Use EXCLUSIVAMENTE as informa\xE7\xF5es do CONTEXTO acima.
@@ -1463,17 +1596,19 @@ DIRETIVAS OBRIGAT\xD3RIAS DE IDIOMA E FORMATA\xC7\xC3O:
 - Mantenha a formata\xE7\xE3o simples. Use listas ('* ') com UM \xDANICO N\xCDVEL de aninhamento. NUNCA coloque listas dentro de listas.
 - Use **negrito** para destacar nomes de disciplinas, c\xF3digos ou termos chaves.
 - Finalize com uma pergunta breve e proativa (Ex: "Gostaria que eu detalhasse a ementa de alguma dessas disciplinas?").`;
+  const historyMessages = sessionMessages.slice(-5).map((m) => ({ role: m.role, content: m.content }));
   return [
     { role: "system", content: systemPrompt },
-    { role: "user", content: pergunta }
+    ...historyMessages,
+    { role: "user", content: question }
   ];
 }
-async function processarPerguntaStream(pergunta, res, sessionId) {
+async function processQuestionStream(question, res, sessionId) {
   const dataHora = (/* @__PURE__ */ new Date()).toLocaleString("pt-BR");
   console.log(`
 ${"\u2500".repeat(50)}`);
-  console.log(`\u{1F4E8} [RAG] Nova pergunta (stream): "${pergunta}"`);
   console.log(`\u{1F4C5} [RAG] Data/Hora: ${dataHora}`);
+  console.log(`\u{1F4E8} [RAG] Nova pergunta (stream): "${question}"`);
   if (sessionId)
     console.log(`\u{1F9E0} [RAG] Sess\xE3o: ${sessionId.substring(0, 8)}...`);
   console.log(`${"\u2500".repeat(50)}`);
@@ -1488,12 +1623,12 @@ ${"\u2500".repeat(50)}`);
     return;
   }
   const session = sessionId ? getOrCreateSession(sessionId) : null;
-  const perguntaContextualizada = session ? resolverReferencias(pergunta, session) : pergunta;
+  const contextualizedQuestion = session ? resolveReferences(question, session) : question;
   res.write(`data: ${JSON.stringify({ type: "status", status: "Analisando pergunta..." })}
 
 `);
-  const inicio = Date.now();
-  if (detectGreetingBypass(perguntaContextualizada)) {
+  const start = Date.now();
+  if (detectGreetingBypass(contextualizedQuestion)) {
     console.log(`\u{1F680} [RAG] Fast-path ativado: sauda\xE7\xE3o detectada localmente.`);
     res.write(`data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}
 
@@ -1501,21 +1636,21 @@ ${"\u2500".repeat(50)}`);
     const t32 = Date.now();
     await streamStaticGreeting(res);
     const generationMs2 = Date.now() - t32;
-    const totalMs2 = Date.now() - inicio;
+    const totalMs2 = Date.now() - start;
     res.write(`data: ${JSON.stringify({ type: "metrics", timings: { rewrite: 0, embedding: 0, retrieval: 0, generation: generationMs2, total: totalMs2 } })}
 
 `);
     if (session) {
-      updateSession(session.sessionId, pergunta, "GREETING", STATIC_GREETING_RESPONSE);
+      updateSession(session.sessionId, question, "GREETING", STATIC_GREETING_RESPONSE);
     }
     console.log(`\u23F1\uFE0F  [RAG] Fast-path conclu\xEDdo em ${(totalMs2 / 1e3).toFixed(1)}s (sem busca)
 `);
     return;
   }
   const t0 = Date.now();
-  const { intencao, perguntaReescrita } = await reescreverPergunta(perguntaContextualizada);
+  const { intention, rewrittenQuestion } = await rewriteQuestion(contextualizedQuestion);
   const rewriteMs = Date.now() - t0;
-  if (intencao === "GREETING") {
+  if (intention === "GREETING") {
     console.log(`\u{1F680} [RAG] Fast-path ativado: reescrevedor classificou como GREETING.`);
     res.write(`data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}
 
@@ -1523,12 +1658,12 @@ ${"\u2500".repeat(50)}`);
     const t32 = Date.now();
     await streamStaticGreeting(res);
     const generationMs2 = Date.now() - t32;
-    const totalMs2 = Date.now() - inicio;
+    const totalMs2 = Date.now() - start;
     res.write(`data: ${JSON.stringify({ type: "metrics", timings: { rewrite: rewriteMs, embedding: 0, retrieval: 0, generation: generationMs2, total: totalMs2 } })}
 
 `);
     if (session) {
-      updateSession(session.sessionId, pergunta, "GREETING", STATIC_GREETING_RESPONSE);
+      updateSession(session.sessionId, question, "GREETING", STATIC_GREETING_RESPONSE);
     }
     console.log(`\u23F1\uFE0F  [RAG] Fast-path LLM conclu\xEDdo em ${(totalMs2 / 1e3).toFixed(1)}s (sem busca)
 `);
@@ -1538,22 +1673,34 @@ ${"\u2500".repeat(50)}`);
 
 `);
   const t1 = Date.now();
-  const embedding = await gerarEmbedding(perguntaReescrita);
+  const embedding = await generateEmbedding(rewrittenQuestion);
   const embedMs = Date.now() - t1;
   const t2 = Date.now();
-  const documentos = await buscarHibrido(embedding, perguntaReescrita);
+  const documents = await hybridSearch(embedding, rewrittenQuestion);
   const retrievalMs = Date.now() - t2;
-  const fontes = documentos.map(
-    (doc) => `${doc.origem} (similaridade: ${doc.similaridade.toFixed(2)})`
+  const sources = documents.map(
+    (doc) => `${doc.source} (similaridade: ${doc.similarity.toFixed(2)})`
   );
-  const mensagens = montarMensagensRAG(pergunta, documentos, intencao);
+  let fewShotExamples = [];
+  try {
+    fewShotExamples = await getPositiveExamples(embedding);
+    if (fewShotExamples.length > 0) {
+      console.log(`\u2728 [ICL] ${fewShotExamples.length} exemplo(s) positivo(s) encontrado(s)! Injetando few-shot...`);
+      fewShotExamples.forEach((ex, i) => {
+        console.log(`   ${i + 1}. [sim: ${ex.similarity.toFixed(4)}] "${ex.question.substring(0, 60)}..."`);
+      });
+    }
+  } catch (error) {
+    console.warn(`\u26A0\uFE0F  [ICL] Erro na busca few-shot, continuando sem exemplos:`, error instanceof Error ? error.message : error);
+  }
+  const messages = buildRAGMessages(question, documents, intention, fewShotExamples, session?.messages ?? []);
   console.log(
-    `\u{1F916} [RAG] Iniciando streaming com ${documentos.length} documentos de contexto...`
+    `\u{1F916} [RAG] Iniciar streaming com ${documents.length} documentos de contexto...`
   );
   const t3 = Date.now();
-  await streamRespostaOllama(mensagens, res, fontes);
+  const fullResponse = await streamOllamaResponse(messages, res, sources);
   const generationMs = Date.now() - t3;
-  const totalMs = Date.now() - inicio;
+  const totalMs = Date.now() - start;
   const timings = {
     rewrite: rewriteMs,
     embedding: embedMs,
@@ -1565,8 +1712,8 @@ ${"\u2500".repeat(50)}`);
 
 `);
   if (session) {
-    updateSession(session.sessionId, pergunta, intencao, "");
-    session.lastDocuments = documentos;
+    updateSession(session.sessionId, question, intention, fullResponse);
+    session.lastDocuments = documents;
   }
   console.log(
     `\u23F1\uFE0F  [RAG] Pipeline conclu\xEDdo em ${(totalMs / 1e3).toFixed(1)}s (rewrite: ${rewriteMs}ms, embed: ${embedMs}ms, retrieval: ${retrievalMs}ms, gen: ${generationMs}ms)
@@ -1622,7 +1769,7 @@ var OllamaSemaphore = class {
   }
 };
 var ollamaSemaphore = new OllamaSemaphore(MAX_CONCURRENT);
-async function comControleDeConcorrencia(fn) {
+async function withConcurrencyControl(fn) {
   await ollamaSemaphore.acquire();
   try {
     return await fn();
@@ -1632,25 +1779,25 @@ async function comControleDeConcorrencia(fn) {
 }
 
 // src/controllers/chat.controller.ts
-async function enviarPergunta(req, res) {
+async function sendQuestion(req, res) {
   try {
-    const { pergunta, sessionId } = req.body;
-    if (!pergunta || typeof pergunta !== "string") {
+    const { question, sessionId } = req.body;
+    if (!question || typeof question !== "string") {
       res.status(400).json({
-        erro: "O campo 'pergunta' \xE9 obrigat\xF3rio e deve ser uma string."
+        error: "O campo 'question' \xE9 obrigat\xF3rio e deve ser uma string."
       });
       return;
     }
-    const perguntaTrimmed = pergunta.trim();
-    if (perguntaTrimmed.length < 3) {
+    const questionTrimmed = question.trim();
+    if (questionTrimmed.length < 3) {
       res.status(400).json({
-        erro: "A pergunta deve ter pelo menos 3 caracteres."
+        error: "A pergunta deve ter pelo menos 3 caracteres."
       });
       return;
     }
-    if (perguntaTrimmed.length > 1e3) {
+    if (questionTrimmed.length > 1e3) {
       res.status(400).json({
-        erro: "A pergunta deve ter no m\xE1ximo 1000 caracteres."
+        error: "A pergunta deve ter no m\xE1ximo 1000 caracteres."
       });
       return;
     }
@@ -1664,33 +1811,39 @@ async function enviarPergunta(req, res) {
     req.on("close", () => {
       console.log("\u{1F50C} [SSE] Cliente desconectou durante o stream");
     });
-    await comControleDeConcorrencia(async () => {
-      await processarPerguntaStream(perguntaTrimmed, res, sessionId);
+    await withConcurrencyControl(async () => {
+      await processQuestionStream(questionTrimmed, res, sessionId);
     });
     res.end();
   } catch (error) {
     console.error("[ChatController] Erro ao processar pergunta:", error);
     if (res.headersSent) {
-      const mensagemErro = error instanceof Error && error.message.includes("Ollama") ? "O servidor de IA ficou inacess\xEDvel durante a gera\xE7\xE3o. Tente novamente." : "Ocorreu um erro durante a gera\xE7\xE3o da resposta.";
+      const errorMessage = error instanceof Error && error.message.includes("Ollama") ? "O servidor de IA ficou inacess\xEDvel durante a gera\xE7\xE3o. Tente novamente." : "Ocorreu um erro durante a gera\xE7\xE3o da resposta.";
       res.write(
-        `data: ${JSON.stringify({ type: "erro", mensagem: mensagemErro })}
+        `data: ${JSON.stringify({ type: "error", message: errorMessage })}
 
 `
       );
       res.end();
     } else {
       res.status(500).json({
-        erro: "Ocorreu um erro interno ao processar sua pergunta. Tente novamente mais tarde."
+        error: "Ocorreu um erro interno ao processar sua pergunta. Tente novamente mais tarde."
       });
     }
   }
 }
 async function registerFeedback(req, res) {
   try {
-    const { sessionId, messageId, feedback, question, response } = req.body;
+    const { sessionId, messageId, feedback, question, response: aiResponse } = req.body;
     if (!feedback || feedback !== "up" && feedback !== "down") {
       res.status(400).json({
-        erro: "O campo 'feedback' \xE9 obrigat\xF3rio e deve ser 'up' ou 'down'."
+        error: "O campo 'feedback' \xE9 obrigat\xF3rio e deve ser 'up' ou 'down'."
+      });
+      return;
+    }
+    if (!question || !aiResponse) {
+      res.status(400).json({
+        error: "Os campos 'question' e 'response' s\xE3o obrigat\xF3rios para o registro do feedback."
       });
       return;
     }
@@ -1701,21 +1854,32 @@ async function registerFeedback(req, res) {
     console.log(`   Voto: ${feedback === "up" ? "\u{1F44D} \xDAtil" : "\u{1F44E} N\xE3o \xDAtil"}`);
     if (question)
       console.log(`   Pergunta: "${question}"`);
-    if (response)
-      console.log(`   Resposta: "${response.substring(0, 150)}..."`);
+    if (aiResponse)
+      console.log(`   Resposta: "${aiResponse.substring(0, 150)}..."`);
     console.log(`${"\u2500".repeat(40)}`);
-    res.status(200).json({ sucesso: true });
+    const chunkIds = getSessionChunkIds(sessionId);
+    console.log(`   Chunks associados: [${chunkIds.join(", ") || "nenhum"}]`);
+    saveFeedback({
+      question,
+      response: aiResponse,
+      feedbackType: feedback === "up" ? "positive" : "negative",
+      chunkIds,
+      metadata: { sessionId, messageId }
+    }).catch((err) => {
+      console.error("\u274C [Feedback] Erro ao salvar no banco:", err);
+    });
+    res.status(200).json({ success: true });
   } catch (error) {
     console.error("[ChatController] Erro ao registrar feedback:", error);
     res.status(500).json({
-      erro: "Ocorreu um erro interno ao registrar o feedback."
+      error: "Ocorreu um erro interno ao registrar o feedback."
     });
   }
 }
 
 // src/routes/chat.routes.ts
 var chatRouter = Router();
-chatRouter.post("/", enviarPergunta);
+chatRouter.post("/", sendQuestion);
 chatRouter.post("/feedback", registerFeedback);
 
 // src/routes/embedding.routes.ts
@@ -26356,20 +26520,20 @@ import * as fs from "fs";
 import * as path2 from "path";
 
 // src/services/sanitization.service.ts
-function limparOCR(texto) {
-  let r = texto;
-  r = r.replace(/\uFEFF/g, "");
-  r = r.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
-  r = r.replace(/\uFFFD/g, "");
-  r = r.replace(/\u00AD/g, "");
-  r = r.replace(/[\u200B-\u200D\u2060\uFE0F]/g, "");
-  r = r.replace(/\f/g, "\n");
-  return r;
+function cleanOCR(text) {
+  let resultText = text;
+  resultText = resultText.replace(/\uFEFF/g, "");
+  resultText = resultText.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+  resultText = resultText.replace(/\uFFFD/g, "");
+  resultText = resultText.replace(/\u00AD/g, "");
+  resultText = resultText.replace(/[\u200B-\u200D\u2060\uFE0F]/g, "");
+  resultText = resultText.replace(/\f/g, "\n");
+  return resultText;
 }
-function juntarHifenizacao(texto) {
-  return texto.replace(/(\w)-\n([a-záàâãéêíóôõúüç])/gi, (_, antes, depois) => {
-    const prefixos = /(?:pr[eé]|p[oó]s|semi|anti|auto|contra|extra|infra|inter|intra|macro|micro|mini|multi|neo|proto|pseudo|sobre|sub|super|supra|ultra)$/i;
-    if (prefixos.test(antes)) {
+function joinHyphenation(text) {
+  return text.replace(/(\w)-\n([a-záàâãéêíóôõúüç])/gi, (_, antes, depois) => {
+    const prefixes = /(?:pr[eé]|p[oó]s|semi|anti|auto|contra|extra|infra|inter|intra|macro|micro|mini|multi|neo|proto|pseudo|sobre|sub|super|supra|ultra)$/i;
+    if (prefixes.test(antes)) {
       return `${antes}-${depois}`;
     }
     return `${antes}${depois}`;
@@ -26397,39 +26561,39 @@ var RE_CABECALHOS = [
   /P[aá]gina\s+\d+\s+de\s+\d+/gi,
   /^\s*\d{1,4}\s*\/\s*\d{1,4}\s*$/gm
 ];
-function removerCabecalhosRodapes(texto) {
-  let r = texto;
+function removeHeadersFooters(text) {
+  let resultText = text;
   for (const regex2 of RE_CABECALHOS) {
     regex2.lastIndex = 0;
-    r = r.replace(regex2, "");
+    resultText = resultText.replace(regex2, "");
   }
-  return r;
+  return resultText;
 }
-function podarAnexos(texto) {
-  const match = texto.match(
+function pruneAppendices(text) {
+  const match = text.match(
     /^[\t ]*(?:ANEXO|AP[EÊ]NDICE)\s+[IVXLCDM\dA-Z]+/im
   );
   if (match && match.index !== void 0) {
-    const textoPodado = texto.slice(0, match.index).trim();
-    const descartado = texto.length - textoPodado.length;
+    const prunedText = text.slice(0, match.index).trim();
+    const discarded = text.length - prunedText.length;
     console.log(
-      `\u2702\uFE0F  [Sanitiza\xE7\xE3o] Anexo detectado ("${match[0].trim()}"). Descartados ${descartado} chars de formul\xE1rios/anexos.`
+      `\u2702\uFE0F  [Sanitiza\xE7\xE3o] Anexo detectado ("${match[0].trim()}"). Descartados ${discarded} chars de formul\xE1rios/anexos.`
     );
-    return textoPodado;
+    return prunedText;
   }
-  return texto;
+  return text;
 }
-function prepararChunkingJuridico(texto) {
-  let r = texto;
-  r = r.replace(/([^\n])\n(?!\n)([^\n])/g, (_, antes, depois) => {
-    if (/^(?:Art\.\s|CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o|RESOLU[CÇ])/i.test(depois + r.charAt(0))) {
+function prepareJuridicalChunking(text) {
+  let resultText = text;
+  resultText = resultText.replace(/([^\n])\n(?!\n)([^\n])/g, (_, antes, depois) => {
+    if (/^(?:Art\.\s|CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o|RESOLU[CÇ])/i.test(depois + resultText.charAt(0))) {
       return `${antes}
 
 ${depois}`;
     }
     return `${antes} ${depois}`;
   });
-  const marcadores = [
+  const markers = [
     /(?<!\n\n)(?=^[\t ]*Art\.\s)/gm,
     // Art. 1º, Art. 2º, ...
     /(?<!\n\n)(?=^[\t ]*CAP[IÍ]TULO\s)/gm,
@@ -26451,86 +26615,86 @@ ${depois}`;
     /(?<!\n\n)(?=^[\t ]*DOS?\s+DEVERES?\s)/gm
     // DOS DEVERES ...
   ];
-  for (const regex2 of marcadores) {
-    r = r.replace(regex2, "\n\n");
+  for (const regex2 of markers) {
+    resultText = resultText.replace(regex2, "\n\n");
   }
-  return r;
+  return resultText;
 }
-var RE = {
+var PATTERNS = {
   // Marcadores de página inseridos pela extração: "--- Página 5 ---"
-  marcadorPagina: /---\s*P[aá]gina\s+\d+\s*---/gi,
+  pageMarker: /---\s*P[aá]gina\s+\d+\s*---/gi,
   // Pilcrow (¶) e símbolos de parágrafo PDF
   pilcrow: /[¶§]/g,
   // Superíndices e subíndices numéricos unicode (notas de rodapé)
   superSubIndices: /[\u00B9\u00B2\u00B3\u2070-\u2079\u2080-\u2089]/g,
   // Separadores decorativos de linha: "||", "| |", "___", "---", "==="
-  separadoresDecorativos: /^[\s|_\-=]{3,}$/gm,
+  decorativeSeparators: /^[\s|_\-=]{3,}$/gm,
   // Linhas que são só pipe e espaço (resíduo de tabela sem conteúdo)
-  linhasSoPipe: /^\s*\|[\s|]*\|\s*$/gm,
+  linesOnlyPipe: /^\s*\|[\s|]*\|\s*$/gm,
   // Número de página solto: linha com apenas 1-4 dígitos
-  numeroPaginaSolto: /^\s*\d{1,4}\s*$/gm,
+  loosePageNumber: /^\s*\d{1,4}\s*$/gm,
   // Sequências de pontuação repetida decorativa: ".....", "-----"
-  pontuacaoRepetida: /([.!?=\-_])\1{3,}/g,
+  repeatedPunctuation: /([.!?=\-_])\1{3,}/g,
   // Aspas tipográficas → ASCII
-  aspasCurvas: /[\u201C\u201D]/g,
-  aspasSimples: /[\u2018\u2019]/g,
-  travessao: /[\u2013\u2014]/g,
+  curlyQuotes: /[\u201C\u201D]/g,
+  singleQuotes: /[\u2018\u2019]/g,
+  dash: /[\u2013\u2014]/g,
   // Múltiplos espaços e tabs → espaço único
-  espacosMultiplos: /[ \t]{2,}/g,
+  multipleSpaces: /[ \t]{2,}/g,
   // Mais de 2 quebras de linha consecutivas → parágrafo duplo
-  quebrasDeLinhaTriplas: /\n{3,}/g,
+  tripleLineBreaks: /\n{3,}/g,
   // Linhas com menos de 3 caracteres não-espaço (ruído puro)
-  linhasRuido: /^.{0,2}\n/gm
+  noiseLines: /^.{0,2}\n/gm
 };
-function tabelaMarkdownParaTexto(linha) {
-  if (!linha.includes("|"))
-    return linha;
-  if (/^\|[\s\-:|]+\|/.test(linha))
+function markdownTableToText(line) {
+  if (!line.includes("|"))
+    return line;
+  if (/^\|[\s\-:|]+\|/.test(line))
     return "";
-  return linha.split("|").map((c) => c.trim()).filter((c) => c.length > 0 && !/^[-:]+$/.test(c)).join(" ");
+  return line.split("|").map((c) => c.trim()).filter((c) => c.length > 0 && !/^[-:]+$/.test(c)).join(" ");
 }
-function normalizarLinhasTabela(texto) {
-  return texto.split("\n").map(
-    (linha) => linha.includes("|") ? tabelaMarkdownParaTexto(linha) : linha
+function normalizeTableLines(text) {
+  return text.split("\n").map(
+    (line) => line.includes("|") ? markdownTableToText(line) : line
   ).filter((l) => l.trim().length > 0).join("\n");
 }
-function sanitizarTexto(texto) {
-  const tamanhoOriginal = texto.length;
-  let r = texto;
-  r = limparOCR(r);
-  r = juntarHifenizacao(r);
-  r = removerCabecalhosRodapes(r);
-  r = podarAnexos(r);
-  r = r.replace(RE.marcadorPagina, "");
-  r = r.replace(RE.pilcrow, "");
-  r = r.replace(RE.superSubIndices, "");
-  r = r.replace(RE.separadoresDecorativos, "");
-  r = r.replace(RE.linhasSoPipe, "");
-  r = normalizarLinhasTabela(r);
-  r = r.replace(RE.numeroPaginaSolto, "");
-  r = r.replace(RE.pontuacaoRepetida, "$1");
-  r = r.replace(RE.aspasCurvas, '"');
-  r = r.replace(RE.aspasSimples, "'");
-  r = r.replace(RE.travessao, "-");
-  r = prepararChunkingJuridico(r);
-  r = r.replace(RE.espacosMultiplos, " ");
-  r = r.replace(RE.linhasRuido, "");
-  r = r.replace(RE.quebrasDeLinhaTriplas, "\n\n");
-  r = r.trim();
-  const reducao = ((tamanhoOriginal - r.length) / tamanhoOriginal * 100).toFixed(1);
+function sanitizeText(text) {
+  const originalSize = text.length;
+  let resultText = text;
+  resultText = cleanOCR(resultText);
+  resultText = joinHyphenation(resultText);
+  resultText = removeHeadersFooters(resultText);
+  resultText = pruneAppendices(resultText);
+  resultText = resultText.replace(PATTERNS.pageMarker, "");
+  resultText = resultText.replace(PATTERNS.pilcrow, "");
+  resultText = resultText.replace(PATTERNS.superSubIndices, "");
+  resultText = resultText.replace(PATTERNS.decorativeSeparators, "");
+  resultText = resultText.replace(PATTERNS.linesOnlyPipe, "");
+  resultText = normalizeTableLines(resultText);
+  resultText = resultText.replace(PATTERNS.loosePageNumber, "");
+  resultText = resultText.replace(PATTERNS.repeatedPunctuation, "$1");
+  resultText = resultText.replace(PATTERNS.curlyQuotes, '"');
+  resultText = resultText.replace(PATTERNS.singleQuotes, "'");
+  resultText = resultText.replace(PATTERNS.dash, "-");
+  resultText = prepareJuridicalChunking(resultText);
+  resultText = resultText.replace(PATTERNS.multipleSpaces, " ");
+  resultText = resultText.replace(PATTERNS.noiseLines, "");
+  resultText = resultText.replace(PATTERNS.tripleLineBreaks, "\n\n");
+  resultText = resultText.trim();
+  const reduction = ((originalSize - resultText.length) / originalSize * 100).toFixed(1);
   console.log(
-    `\u{1F9F9} [Sanitiza\xE7\xE3o] ${tamanhoOriginal} \u2192 ${r.length} chars (redu\xE7\xE3o: ${reducao}%)`
+    `\u{1F9F9} [Sanitiza\xE7\xE3o] ${originalSize} \u2192 ${resultText.length} chars (redu\xE7\xE3o: ${reduction}%)`
   );
-  return r;
+  return resultText;
 }
 
 // src/services/embedding.service.ts
 var EMBEDDING_MAX_CHARS = 4e3;
-var CHUNK_SIZE_GERAL = 2048;
-var CHUNK_OVERLAP_GERAL = 256;
-var TABELA_MAX_LINHAS_POR_CHUNK = 30;
+var CHUNK_SIZE_GENERAL = 2048;
+var CHUNK_OVERLAP_GENERAL = 256;
+var TABLE_MAX_ROWS_PER_CHUNK = 30;
 var BATCH_SIZE = 32;
-async function extrairTextoPDF(buffer, filename) {
+async function extractTextFromPDF(buffer, filename) {
   console.log(`\u{1F4C4} [Extra\xE7\xE3o] Iniciando extra\xE7\xE3o avan\xE7ada com LiteParse em "${filename}"...`);
   const tempFilename = `temp_${Date.now()}_${filename.replace(/[^a-zA-Z0-9.]/g, "_")}`;
   const tempPath = path2.resolve(tempFilename);
@@ -26538,9 +26702,9 @@ async function extrairTextoPDF(buffer, filename) {
   try {
     const parser = new LiteParse();
     const result = await parser.parse(tempPath);
-    const textoFinal = result.text || JSON.stringify(result);
-    console.log(`\u{1F4C4} [Extra\xE7\xE3o] Conclu\xEDdo via LiteParse: ${textoFinal.length} caracteres extra\xEDdos de "${filename}"`);
-    return textoFinal;
+    const finalText = result.text || JSON.stringify(result);
+    console.log(`\u{1F4C4} [Extra\xE7\xE3o] Conclu\xEDdo via LiteParse: ${finalText.length} caracteres extra\xEDdos de "${filename}"`);
+    return finalText;
   } catch (error) {
     console.error(`\u274C [Extra\xE7\xE3o] Erro no LiteParse ao processar "${filename}":`, error);
     throw error;
@@ -26548,7 +26712,7 @@ async function extrairTextoPDF(buffer, filename) {
     await fs.promises.unlink(tempPath).catch(() => console.warn(`\u26A0\uFE0F N\xE3o foi poss\xEDvel apagar o arquivo tempor\xE1rio: ${tempPath}`));
   }
 }
-async function extrairTextoImagem(buffer, filename) {
+async function extractTextFromImage(buffer, filename) {
   console.log(`\u{1F50D} [OCR] Iniciando OCR de "${filename}"...`);
   const worker = await createWorker("por");
   try {
@@ -26559,15 +26723,15 @@ async function extrairTextoImagem(buffer, filename) {
     await worker.terminate();
   }
 }
-async function extrairTextoWord(buffer, filename) {
+async function extractTextFromWord(buffer, filename) {
   console.log(`\u{1F4DD} [Extra\xE7\xE3o] Iniciando extra\xE7\xE3o de documento Word "${filename}"...`);
   const result = await mammoth.extractRawText({ buffer });
   return result.value;
 }
-async function extrairTextoPlanilha(buffer, filename) {
+async function extractTextFromSpreadsheet(buffer, filename) {
   console.log(`\u{1F4CA} [Extra\xE7\xE3o] Iniciando extra\xE7\xE3o de planilha "${filename}"...`);
   const workbook = xlsx.read(buffer, { type: "buffer" });
-  const planilhas = [];
+  const spreadsheets = [];
   for (const sheetName of workbook.SheetNames) {
     const worksheet = workbook.Sheets[sheetName];
     const data = xlsx.utils.sheet_to_json(worksheet, { header: 1 });
@@ -26585,58 +26749,58 @@ async function extrairTextoPlanilha(buffer, filename) {
         result.push(`| ${formattedRow.map(() => "---").join(" | ")} |`);
       }
     }
-    planilhas.push(`--- Planilha: ${sheetName} ---
+    spreadsheets.push(`--- Planilha: ${sheetName} ---
 ${result.join("\n")}`);
   }
-  return planilhas.join("\n\n");
+  return spreadsheets.join("\n\n");
 }
-async function extrairTexto(buffer, filename, mimetype) {
-  const nomeLower = filename.toLowerCase();
-  if (mimetype === "application/pdf" || nomeLower.endsWith(".pdf")) {
-    return extrairTextoPDF(buffer, filename);
+async function extractText(buffer, filename, mimetype) {
+  const nameLower = filename.toLowerCase();
+  if (mimetype === "application/pdf" || nameLower.endsWith(".pdf")) {
+    return extractTextFromPDF(buffer, filename);
   }
-  if (mimetype.startsWith("image/") || nomeLower.match(/\.(png|jpe?g)$/)) {
-    return extrairTextoImagem(buffer, filename);
+  if (mimetype.startsWith("image/") || nameLower.match(/\.(png|jpe?g)$/)) {
+    return extractTextFromImage(buffer, filename);
   }
-  if (mimetype === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || mimetype === "application/msword" || nomeLower.endsWith(".docx") || nomeLower.endsWith(".doc")) {
-    return extrairTextoWord(buffer, filename);
+  if (mimetype === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || mimetype === "application/msword" || nameLower.endsWith(".docx") || nameLower.endsWith(".doc")) {
+    return extractTextFromWord(buffer, filename);
   }
-  if (mimetype === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" || mimetype === "application/vnd.ms-excel" || mimetype === "text/csv" || nomeLower.endsWith(".xlsx") || nomeLower.endsWith(".xls") || nomeLower.endsWith(".csv")) {
-    return extrairTextoPlanilha(buffer, filename);
+  if (mimetype === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" || mimetype === "application/vnd.ms-excel" || mimetype === "text/csv" || nameLower.endsWith(".xlsx") || nameLower.endsWith(".xls") || nameLower.endsWith(".csv")) {
+    return extractTextFromSpreadsheet(buffer, filename);
   }
-  if (mimetype === "text/plain" || mimetype === "text/markdown" || nomeLower.endsWith(".txt") || nomeLower.endsWith(".md")) {
+  if (mimetype === "text/plain" || mimetype === "text/markdown" || nameLower.endsWith(".txt") || nameLower.endsWith(".md")) {
     return buffer.toString("utf-8");
   }
   throw new Error(`Formato n\xE3o suportado: ${mimetype}`);
 }
-function gerarNomeDocumento(filename) {
+function generateDocumentName(filename) {
   return filename.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").replace(/\s{2,}/g, " ").trim();
 }
-function injetarContexto(texto, nomeDocumento, contextoSecao) {
-  const partes = [`Documento: ${nomeDocumento}`];
-  if (contextoSecao) {
-    partes.push(`Contexto: ${contextoSecao}`);
+function injectContext(text, documentName, sectionContext) {
+  const parts = [`Documento: ${documentName}`];
+  if (sectionContext) {
+    parts.push(`Contexto: ${sectionContext}`);
   }
-  return `[${partes.join(" | ")}]
+  return `[${parts.join(" | ")}]
 
-${texto}`;
+${text}`;
 }
-function detectarTipoChunking(texto, filename) {
-  const separadoresTabela = (texto.match(/\|[\s-]+\|/g) || []).length;
-  const linhasComPipe = (texto.match(/^\|.+\|$/gm) || []).length;
-  if (separadoresTabela >= 1 && linhasComPipe >= 5)
-    return "tabela";
-  const artigos = (texto.match(/\bArt\.\s+\d+/g) || []).length;
-  const capitulos = (texto.match(/\bCAP[IÍ]TULO\s+[IVXLCDM\d]+/gi) || []).length;
-  if (artigos >= 3 || capitulos >= 2)
-    return "juridico";
+function detectChunkingType(text, filename) {
+  const tableSeparators = (text.match(/\|[\s-]+\|/g) || []).length;
+  const pipeLines = (text.match(/^\|.+\|$/gm) || []).length;
+  if (tableSeparators >= 1 && pipeLines >= 5)
+    return "table";
+  const articles = (text.match(/\bArt\.\s+\d+/g) || []).length;
+  const chapters = (text.match(/\bCAP[IÍ]TULO\s+[IVXLCDM\d]+/gi) || []).length;
+  if (articles >= 3 || chapters >= 2)
+    return "juridical";
   if (/regulament|norma|resolu[çc]|portaria|edital|delibera|estatut|regimento/i.test(filename)) {
-    return "juridico";
+    return "juridical";
   }
-  return "geral";
+  return "general";
 }
-async function chunkingJuridico(texto, filename) {
-  const nomeDocumento = gerarNomeDocumento(filename);
+async function juridicalChunking(text, filename) {
+  const documentName = generateDocumentName(filename);
   const chunks = [];
   const splitter = new RecursiveCharacterTextSplitter({
     chunkSize: EMBEDDING_MAX_CHARS - 300,
@@ -26645,175 +26809,175 @@ async function chunkingJuridico(texto, filename) {
     separators: ["\nCAP\xCDTULO ", "\nT\xCDTULO ", "\nSe\xE7\xE3o ", "\nArt. ", "\n\n", "\n", ". ", " "],
     keepSeparator: true
   });
-  const partes = await splitter.splitText(texto);
-  let contextoAtual = "";
-  for (const parte of partes) {
-    const parteTrimmed = parte.trim();
-    if (parteTrimmed.length === 0)
+  const parts = await splitter.splitText(text);
+  let currentContext = "";
+  for (const part of parts) {
+    const partTrimmed = part.trim();
+    if (partTrimmed.length === 0)
       continue;
-    const matchHierarquia = parteTrimmed.match(/^(?:CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o)\s+[IVXLCDM\d]+.*?(?:\n|$)/i);
-    if (matchHierarquia) {
-      contextoAtual = matchHierarquia[0].trim();
+    const hierarchyMatch = partTrimmed.match(/^(?:CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o)\s+[IVXLCDM\d]+.*?(?:\n|$)/i);
+    if (hierarchyMatch) {
+      currentContext = hierarchyMatch[0].trim();
     }
-    const conteudoComContexto = injetarContexto(parteTrimmed, nomeDocumento, contextoAtual);
+    const contentWithContext = injectContext(partTrimmed, documentName, currentContext);
     chunks.push({
-      conteudo: conteudoComContexto,
+      content: contentWithContext,
       metadata: {
         filename,
         chunkIndex: chunks.length,
         totalChunks: 0,
-        nomeDocumento,
-        tipoChunking: "juridico",
-        contextoSecao: contextoAtual
+        documentName,
+        chunkingType: "juridical",
+        sectionContext: currentContext
       }
     });
   }
   return chunks;
 }
-async function chunkingTabela(texto, filename) {
-  const nomeDocumento = gerarNomeDocumento(filename);
+async function tableChunking(text, filename) {
+  const documentName = generateDocumentName(filename);
   const chunks = [];
-  const blocos = separarBlocosTabela(texto);
-  for (const bloco of blocos) {
-    if (bloco.tipo === "texto") {
-      const subChunks = await chunkingGeral(bloco.conteudo, filename, "tabela");
+  const blocks = separateTableBlocks(text);
+  for (const block of blocks) {
+    if (block.type === "texto") {
+      const subChunks = await generalChunking(block.content, filename, "table");
       chunks.push(...subChunks);
       continue;
     }
-    const linhas = bloco.conteudo.split("\n").filter((l) => l.trim().length > 0);
-    if (linhas.length === 0)
+    const lines = block.content.split("\n").filter((l) => l.trim().length > 0);
+    if (lines.length === 0)
       continue;
-    let cabecalho = "";
-    let linhasDados = [];
-    if (linhas.length >= 2 && /^\|[\s\-:|]+\|/.test(linhas[1])) {
-      cabecalho = linhas[0] + "\n" + linhas[1];
-      linhasDados = linhas.slice(2);
+    let header = "";
+    let dataLines = [];
+    if (lines.length >= 2 && /^\|[\s\-:|]+\|/.test(lines[1])) {
+      header = lines[0] + "\n" + lines[1];
+      dataLines = lines.slice(2);
     } else {
-      linhasDados = linhas;
+      dataLines = lines;
     }
-    if (linhasDados.length <= TABELA_MAX_LINHAS_POR_CHUNK) {
-      const conteudo = injetarContexto(bloco.conteudo.trim(), nomeDocumento, "Tabela/Matriz");
+    if (dataLines.length <= TABLE_MAX_ROWS_PER_CHUNK) {
+      const content = injectContext(block.content.trim(), documentName, "Tabela/Matriz");
       chunks.push({
-        conteudo,
+        content,
         metadata: {
           filename,
           chunkIndex: chunks.length,
           totalChunks: 0,
-          nomeDocumento,
-          tipoChunking: "tabela",
-          contextoSecao: "Tabela/Matriz"
+          documentName,
+          chunkingType: "table",
+          sectionContext: "Tabela/Matriz"
         }
       });
       continue;
     }
-    for (let i = 0; i < linhasDados.length; i += TABELA_MAX_LINHAS_POR_CHUNK) {
-      const fatia = linhasDados.slice(i, i + TABELA_MAX_LINHAS_POR_CHUNK);
-      const parteNum = Math.floor(i / TABELA_MAX_LINHAS_POR_CHUNK) + 1;
-      const totalPartes = Math.ceil(linhasDados.length / TABELA_MAX_LINHAS_POR_CHUNK);
-      const contexto = `Tabela/Matriz (parte ${parteNum}/${totalPartes})`;
-      const tabelaChunk = cabecalho ? `${cabecalho}
-${fatia.join("\n")}` : fatia.join("\n");
-      const conteudo = injetarContexto(tabelaChunk, nomeDocumento, contexto);
+    for (let i = 0; i < dataLines.length; i += TABLE_MAX_ROWS_PER_CHUNK) {
+      const slice = dataLines.slice(i, i + TABLE_MAX_ROWS_PER_CHUNK);
+      const partNum = Math.floor(i / TABLE_MAX_ROWS_PER_CHUNK) + 1;
+      const totalPartes = Math.ceil(dataLines.length / TABLE_MAX_ROWS_PER_CHUNK);
+      const context = `Tabela/Matriz (parte ${partNum}/${totalPartes})`;
+      const tableChunk = header ? `${header}
+${slice.join("\n")}` : slice.join("\n");
+      const content = injectContext(tableChunk, documentName, context);
       chunks.push({
-        conteudo,
+        content,
         metadata: {
           filename,
           chunkIndex: chunks.length,
           totalChunks: 0,
-          nomeDocumento,
-          tipoChunking: "tabela",
-          contextoSecao: contexto
+          documentName,
+          chunkingType: "table",
+          sectionContext: context
         }
       });
     }
   }
   return chunks;
 }
-function separarBlocosTabela(texto) {
-  const linhas = texto.split("\n");
-  const blocos = [];
-  let blocoAtual = [];
-  let tipoAtual = null;
-  for (const linha of linhas) {
-    const ehLinhaPipe = /^\s*\|.+\|\s*$/.test(linha);
-    const tipo = ehLinhaPipe ? "tabela" : "texto";
-    if (tipoAtual !== null && tipo !== tipoAtual) {
-      const conteudo = blocoAtual.join("\n").trim();
-      if (conteudo.length > 0)
-        blocos.push({ tipo: tipoAtual, conteudo });
-      blocoAtual = [];
+function separateTableBlocks(text) {
+  const lines = text.split("\n");
+  const blocks = [];
+  let currentBlock = [];
+  let currentType = null;
+  for (const line of lines) {
+    const isPipeLine = /^\s*\|.+\|\s*$/.test(line);
+    const type = isPipeLine ? "tabela" : "texto";
+    if (currentType !== null && type !== currentType) {
+      const content = currentBlock.join("\n").trim();
+      if (content.length > 0)
+        blocks.push({ type: currentType, content });
+      currentBlock = [];
     }
-    tipoAtual = tipo;
-    blocoAtual.push(linha);
+    currentType = type;
+    currentBlock.push(line);
   }
-  if (blocoAtual.length > 0 && tipoAtual !== null) {
-    const conteudo = blocoAtual.join("\n").trim();
-    if (conteudo.length > 0)
-      blocos.push({ tipo: tipoAtual, conteudo });
+  if (currentBlock.length > 0 && currentType !== null) {
+    const content = currentBlock.join("\n").trim();
+    if (content.length > 0)
+      blocks.push({ type: currentType, content });
   }
-  return blocos;
+  return blocks;
 }
-async function chunkingGeral(texto, filename, tipoOverride) {
-  const nomeDocumento = gerarNomeDocumento(filename);
+async function generalChunking(text, filename, typeOverride) {
+  const documentName = generateDocumentName(filename);
   const chunks = [];
-  const tipo = tipoOverride || "geral";
+  const type = typeOverride || "general";
   const splitter = new RecursiveCharacterTextSplitter({
-    chunkSize: CHUNK_SIZE_GERAL,
-    chunkOverlap: CHUNK_OVERLAP_GERAL,
+    chunkSize: CHUNK_SIZE_GENERAL,
+    chunkOverlap: CHUNK_OVERLAP_GENERAL,
     separators: ["\n\n", "\n", ". ", " "]
   });
-  const partes = await splitter.splitText(texto);
-  for (const parte of partes) {
-    if (parte.trim().length === 0)
+  const parts = await splitter.splitText(text);
+  for (const part of parts) {
+    if (part.trim().length === 0)
       continue;
-    const conteudo = injetarContexto(parte.trim(), nomeDocumento, "");
+    const content = injectContext(part.trim(), documentName, "");
     chunks.push({
-      conteudo,
+      content,
       metadata: {
         filename,
         chunkIndex: chunks.length,
         totalChunks: 0,
-        nomeDocumento,
-        tipoChunking: tipo,
-        contextoSecao: ""
+        documentName,
+        chunkingType: type,
+        sectionContext: ""
       }
     });
   }
   return chunks;
 }
-async function dividirEmChunks(texto, filename) {
-  const tipoChunking = detectarTipoChunking(texto, filename);
-  console.log(`\u{1F500} [Roteamento] "${filename}" \u2192 estrat\xE9gia: ${tipoChunking.toUpperCase()}`);
+async function splitIntoChunks(text, filename) {
+  const chunkingType = detectChunkingType(text, filename);
+  console.log(`\u{1F500} [Roteamento] "${filename}" \u2192 estrat\xE9gia: ${chunkingType.toUpperCase()}`);
   let chunks;
-  switch (tipoChunking) {
-    case "juridico":
-      chunks = await chunkingJuridico(texto, filename);
+  switch (chunkingType) {
+    case "juridical":
+      chunks = await juridicalChunking(text, filename);
       break;
-    case "tabela":
-      chunks = await chunkingTabela(texto, filename);
+    case "table":
+      chunks = await tableChunking(text, filename);
       break;
-    case "geral":
+    case "general":
     default:
-      chunks = await chunkingGeral(texto, filename);
+      chunks = await generalChunking(text, filename);
       break;
   }
   for (const chunk of chunks) {
     chunk.metadata.totalChunks = chunks.length;
   }
-  console.log(`\u2702\uFE0F  [Chunking] "${filename}" \u2192 ${chunks.length} chunks (tipo: ${tipoChunking})`);
+  console.log(`\u2702\uFE0F  [Chunking] "${filename}" \u2192 ${chunks.length} chunks (tipo: ${chunkingType})`);
   return chunks;
 }
-function truncarParaEmbedding(texto) {
-  if (texto.length <= EMBEDDING_MAX_CHARS)
-    return texto;
-  console.warn(`\u26A0\uFE0F [Embedding] Chunk com ${texto.length} chars excede o limite. Truncando.`);
-  const corte = texto.lastIndexOf(". ", EMBEDDING_MAX_CHARS);
-  return corte > EMBEDDING_MAX_CHARS * 0.5 ? texto.slice(0, corte + 1).trim() : texto.slice(0, EMBEDDING_MAX_CHARS).trim();
+function truncateForEmbedding(text) {
+  if (text.length <= EMBEDDING_MAX_CHARS)
+    return text;
+  console.warn(`\u26A0\uFE0F [Embedding] Chunk com ${text.length} chars excede o limite. Truncando.`);
+  const cut = text.lastIndexOf(". ", EMBEDDING_MAX_CHARS);
+  return cut > EMBEDDING_MAX_CHARS * 0.5 ? text.slice(0, cut + 1).trim() : text.slice(0, EMBEDDING_MAX_CHARS).trim();
 }
-async function vetorizarEGravar(chunks) {
-  let gravados = 0;
-  let errosDimensao = 0;
-  let outrosErros = 0;
+async function vectorizeAndSave(chunks) {
+  let saved = 0;
+  let dimensionErrors = 0;
+  let otherErrors = 0;
   for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
     const batch = chunks.slice(i, i + BATCH_SIZE);
     const batchLabel = `[Lote ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(chunks.length / BATCH_SIZE)}]`;
@@ -26822,75 +26986,75 @@ async function vetorizarEGravar(chunks) {
       batch.map(async (chunk, j) => {
         const idx = i + j;
         const progresso = `[${idx + 1}/${chunks.length}]`;
-        const conteudoSeguro = truncarParaEmbedding(chunk.conteudo);
-        const embedding = await gerarEmbeddingOllama(conteudoSeguro);
+        const safeContent = truncateForEmbedding(chunk.content);
+        const embedding = await generateOllamaEmbedding(safeContent);
         const vectorStr = `[${embedding.join(",")}]`;
         await pool.query(
           `INSERT INTO documents (content, metadata, embedding) VALUES ($1, $2, $3)`,
-          [conteudoSeguro, JSON.stringify(chunk.metadata), vectorStr]
+          [safeContent, JSON.stringify(chunk.metadata), vectorStr]
         );
         console.log(`\u{1F4BE} [Banco] ${progresso} Chunk gravado (${embedding.length} dimens\xF5es)`);
       })
     );
     for (const result of results) {
       if (result.status === "fulfilled") {
-        gravados++;
+        saved++;
       } else {
         const errMsg = result.reason?.message || String(result.reason);
         if (errMsg.includes("expected") && errMsg.includes("dimensions")) {
-          errosDimensao++;
-          if (errosDimensao === 1) {
+          dimensionErrors++;
+          if (dimensionErrors === 1) {
             console.error(`\u274C [Embedding] ERRO DE DIMENS\xC3O...`);
           }
         } else {
-          outrosErros++;
+          otherErrors++;
           console.error(`\u274C [Embedding] Erro no lote: ${errMsg}`);
         }
       }
     }
-    if (errosDimensao > 0 && gravados === 0 && i + BATCH_SIZE >= chunks.length)
+    if (dimensionErrors > 0 && saved === 0 && i + BATCH_SIZE >= chunks.length)
       break;
   }
-  return gravados;
+  return saved;
 }
-async function processarDocumento(buffer, filename, mimetype = "application/pdf") {
+async function processDocument(buffer, filename, mimetype = "application/pdf") {
   console.log(`
 ${"=".repeat(60)}`);
   console.log(`\u{1F680} [Ingest\xE3o] Processando "${filename}" (${mimetype})`);
   console.log(`${"=".repeat(60)}
 `);
-  const inicio = Date.now();
-  const textoRaw = await extrairTexto(buffer, filename, mimetype);
-  if (textoRaw.trim().length === 0) {
-    return { mensagem: "O arquivo n\xE3o cont\xE9m texto extra\xEDvel.", arquivo: filename, totalChunks: 0, chunksGravados: 0 };
+  const start = Date.now();
+  const rawText = await extractText(buffer, filename, mimetype);
+  if (rawText.trim().length === 0) {
+    return { message: "O arquivo n\xE3o cont\xE9m texto extra\xEDvel.", file: filename, totalChunks: 0, savedChunks: 0 };
   }
-  const texto = sanitizarTexto(textoRaw);
-  const chunks = await dividirEmChunks(texto, filename);
-  const chunksGravados = await vetorizarEGravar(chunks);
-  const duracao = ((Date.now() - inicio) / 1e3).toFixed(1);
-  const falhas = chunks.length - chunksGravados;
-  if (chunksGravados === 0 && chunks.length > 0) {
-    console.error(`\u274C [Ingest\xE3o] "${filename}" FALHOU em ${duracao}s \u2014 0/${chunks.length} chunks gravados`);
+  const text = sanitizeText(rawText);
+  const chunks = await splitIntoChunks(text, filename);
+  const savedChunks = await vectorizeAndSave(chunks);
+  const duration2 = ((Date.now() - start) / 1e3).toFixed(1);
+  const failures = chunks.length - savedChunks;
+  if (savedChunks === 0 && chunks.length > 0) {
+    console.error(`\u274C [Ingest\xE3o] "${filename}" FALHOU em ${duration2}s \u2014 0/${chunks.length} chunks gravados`);
     return {
-      mensagem: `Falha na ingest\xE3o: nenhum chunk foi gravado (0/${chunks.length}). Poss\xEDvel causa de dimens\xE3o.`,
-      arquivo: filename,
+      message: `Falha na ingest\xE3o: nenhum chunk foi gravado (0/${chunks.length}). Poss\xEDvel causa de dimens\xE3o.`,
+      file: filename,
       totalChunks: chunks.length,
-      chunksGravados: 0
+      savedChunks: 0
     };
   }
-  if (falhas > 0) {
-    console.warn(`\u26A0\uFE0F  [Ingest\xE3o] "${filename}" conclu\xEDdo com erros em ${duracao}s \u2014 ${chunksGravados}/${chunks.length} chunks (${falhas} falhas)`);
+  if (failures > 0) {
+    console.warn(`\u26A0\uFE0F  [Ingest\xE3o] "${filename}" conclu\xEDdo com erros em ${duration2}s \u2014 ${savedChunks}/${chunks.length} chunks (${failures} falhas)`);
   } else {
-    console.log(`\u2705 [Ingest\xE3o] "${filename}" conclu\xEDdo em ${duracao}s \u2014 ${chunksGravados}/${chunks.length} chunks`);
+    console.log(`\u2705 [Ingest\xE3o] "${filename}" conclu\xEDdo em ${duration2}s \u2014 ${savedChunks}/${chunks.length} chunks`);
   }
   return {
-    mensagem: falhas > 0 ? `Documento processado parcialmente em ${duracao}s. ${falhas} chunk(s) falharam.` : `Documento processado com sucesso em ${duracao}s.`,
-    arquivo: filename,
+    message: failures > 0 ? `Documento processado parcialmente em ${duration2}s. ${failures} chunk(s) falharam.` : `Documento processado com sucesso em ${duration2}s.`,
+    file: filename,
     totalChunks: chunks.length,
-    chunksGravados
+    savedChunks
   };
 }
-async function listarDocumentosProcessados() {
+async function listProcessedDocuments() {
   try {
     const result = await pool.query(`
       SELECT metadata->>'filename' AS filename, COUNT(*) AS total_chunks, MAX(created_at) AS ultima_atualizacao
@@ -26902,16 +27066,16 @@ async function listarDocumentosProcessados() {
     return [];
   }
 }
-async function removerDocumento(filename) {
+async function removeDocument(filename) {
   console.log(`\u{1F5D1}\uFE0F  [Remo\xE7\xE3o] Removendo "${filename}" do banco...`);
   const result = await pool.query(`DELETE FROM documents WHERE metadata->>'filename' = $1`, [filename]);
-  const removidos = result.rowCount ?? 0;
-  console.log(`\u{1F5D1}\uFE0F  [Remo\xE7\xE3o] ${removidos} chunks removidos`);
-  return removidos;
+  const removed = result.rowCount ?? 0;
+  console.log(`\u{1F5D1}\uFE0F  [Remo\xE7\xE3o] ${removed} chunks removidos`);
+  return removed;
 }
 
 // src/controllers/embedding.controller.ts
-var TIPOS_ACEITOS = [
+var ACCEPTED_TYPES = [
   "application/pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   // .docx
@@ -26932,77 +27096,77 @@ var TIPOS_ACEITOS = [
   "image/png"
   // .png
 ];
-async function uploadDocumento(req, res) {
+async function uploadDocument(req, res) {
   try {
-    const arquivo = req.file;
-    if (!arquivo) {
+    const file = req.file;
+    if (!file) {
       res.status(400).json({
-        erro: "Nenhum arquivo foi enviado. Envie um PDF no campo 'arquivo'."
+        error: "Nenhum arquivo foi enviado. Envie um arquivo no campo 'file'."
       });
       return;
     }
-    if (!TIPOS_ACEITOS.includes(arquivo.mimetype)) {
+    if (!ACCEPTED_TYPES.includes(file.mimetype)) {
       res.status(400).json({
-        erro: `Tipo de arquivo n\xE3o suportado: ${arquivo.mimetype}. Aceitos: PDF, Word, Excel, CSV, TXT, MD, Imagens.`
+        error: `Tipo de arquivo n\xE3o suportado: ${file.mimetype}. Aceitos: PDF, Word, Excel, CSV, TXT, MD, Imagens.`
       });
       return;
     }
     const MAX_SIZE = 20 * 1024 * 1024;
-    if (arquivo.size > MAX_SIZE) {
+    if (file.size > MAX_SIZE) {
       res.status(400).json({
-        erro: `Arquivo muito grande (${(arquivo.size / 1024 / 1024).toFixed(1)} MB). M\xE1ximo: 20 MB.`
+        error: `Arquivo muito grande (${(file.size / 1024 / 1024).toFixed(1)} MB). M\xE1ximo: 20 MB.`
       });
       return;
     }
     console.log(
-      `\u{1F4E4} [Upload] Recebido: "${arquivo.originalname}" (${(arquivo.size / 1024).toFixed(0)} KB)`
+      `\u{1F4E4} [Upload] Recebido: "${file.originalname}" (${(file.size / 1024).toFixed(0)} KB)`
     );
-    const resultado = await processarDocumento(
-      arquivo.buffer,
-      arquivo.originalname,
-      arquivo.mimetype
+    const result = await processDocument(
+      file.buffer,
+      file.originalname,
+      file.mimetype
     );
-    res.status(200).json(resultado);
+    res.status(200).json(result);
   } catch (error) {
     console.error("[EmbeddingController] Erro no upload:", error);
-    const mensagemErro = error instanceof Error && error.message.includes("Ollama") ? "O servidor Ollama est\xE1 offline. Verifique se est\xE1 rodando e tente novamente." : "Erro interno ao processar o documento. Tente novamente.";
-    res.status(500).json({ erro: mensagemErro });
+    const errorMessage = error instanceof Error && error.message.includes("Ollama") ? "O servidor Ollama est\xE1 offline. Verifique se est\xE1 rodando e tente novamente." : "Erro interno ao processar o documento. Tente novamente.";
+    res.status(500).json({ error: errorMessage });
   }
 }
-async function listarDocumentos(_req, res) {
+async function listDocuments(_req, res) {
   try {
-    const documentos = await listarDocumentosProcessados();
-    res.status(200).json({ documentos });
+    const documents = await listProcessedDocuments();
+    res.status(200).json({ documents });
   } catch (error) {
     console.error("[EmbeddingController] Erro ao listar documentos:", error);
-    res.status(500).json({ erro: "Erro ao listar documentos processados." });
+    res.status(500).json({ error: "Erro ao listar documentos processados." });
   }
 }
-async function deletarDocumento(req, res) {
+async function deleteDocument(req, res) {
   try {
     const { filename } = req.params;
     if (!filename) {
-      res.status(400).json({ erro: "Nome do arquivo n\xE3o fornecido." });
+      res.status(400).json({ error: "Nome do arquivo n\xE3o fornecido." });
       return;
     }
-    const removidos = await removerDocumento(filename);
-    if (removidos === 0) {
-      res.status(404).json({ erro: "Documento n\xE3o encontrado no banco." });
+    const removed = await removeDocument(filename);
+    if (removed === 0) {
+      res.status(404).json({ error: "Documento n\xE3o encontrado no banco." });
       return;
     }
     res.status(200).json({
-      mensagem: `Documento '${filename}' removido com sucesso.`,
-      chunksRemovidos: removidos
+      message: `Documento '${filename}' removido com sucesso.`,
+      removedChunks: removed
     });
   } catch (error) {
     console.error("[EmbeddingController] Erro ao deletar documento:", error);
-    res.status(500).json({ erro: "Erro ao excluir o documento." });
+    res.status(500).json({ error: "Erro ao excluir o documento." });
   }
 }
 
 // src/routes/embedding.routes.ts
-var EXTENSOES_ACEITAS = /\.(pdf|docx?|xlsx?|csv|txt|md|jpe?g|png)$/i;
-var MIMES_ACEITOS = /* @__PURE__ */ new Set([
+var ACCEPTED_EXTENSIONS = /\.(pdf|docx?|xlsx?|csv|txt|md|jpe?g|png)$/i;
+var ACCEPTED_MIMES = /* @__PURE__ */ new Set([
   "application/pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/msword",
@@ -27021,8 +27185,8 @@ var upload = multer({
     // 20 MB
   },
   fileFilter: (_req, file, cb) => {
-    const mimeOk = MIMES_ACEITOS.has(file.mimetype);
-    const extOk = EXTENSOES_ACEITAS.test(file.originalname);
+    const mimeOk = ACCEPTED_MIMES.has(file.mimetype);
+    const extOk = ACCEPTED_EXTENSIONS.test(file.originalname);
     if (mimeOk && extOk) {
       cb(null, true);
     } else {
@@ -27031,9 +27195,9 @@ var upload = multer({
   }
 });
 var embeddingRouter = Router2();
-embeddingRouter.post("/upload", upload.single("arquivo"), uploadDocumento);
-embeddingRouter.get("/documentos", listarDocumentos);
-embeddingRouter.delete("/documentos/:filename", deletarDocumento);
+embeddingRouter.post("/upload", upload.single("file"), uploadDocument);
+embeddingRouter.get("/documentos", listDocuments);
+embeddingRouter.delete("/documentos/:filename", deleteDocument);
 
 // src/routes/agent.routes.ts
 import { Router as Router3 } from "express";
@@ -27080,7 +27244,7 @@ DIRETIVAS DE IDIOMA E FORMATA\xC7\xC3O:
 - Use **negrito** para destacar os termos principais (Ex: nomes das mat\xE9rias).`;
 var mcpClient = null;
 var ollamaTools = [];
-async function inicializarMCPClient() {
+async function initializeMCPClient() {
   try {
     const __filename = fileURLToPath(import.meta.url);
     const __dirname = dirname(__filename);
@@ -27128,20 +27292,20 @@ async function inicializarMCPClient() {
     throw error;
   }
 }
-async function encerrarMCPClient() {
+async function closeMCPClient() {
   if (mcpClient) {
     await mcpClient.close();
     console.log("\u{1F50C} [MCP Client] Desconectado");
   }
 }
-async function processarPerguntaAgente(pergunta, res, sessionId) {
+async function processAgentQuestion(question, res, sessionId) {
   if (!mcpClient) {
     throw new Error("[Agente] MCP Client n\xE3o inicializado");
   }
   const dataHora = (/* @__PURE__ */ new Date()).toLocaleString("pt-BR");
   console.log(`
 ${"\u2500".repeat(50)}`);
-  console.log(`\u{1F916} [Agente] Nova pergunta: "${pergunta}"`);
+  console.log(`\u{1F916} [Agente] Nova pergunta: "${question}"`);
   console.log(`\u{1F4C5} [Agente] Data/Hora: ${dataHora}`);
   if (sessionId)
     console.log(`\u{1F9E0} [Agente] Sess\xE3o: ${sessionId.substring(0, 8)}...`);
@@ -27157,28 +27321,30 @@ ${"\u2500".repeat(50)}`);
     return;
   }
   const session = sessionId ? getOrCreateSession(sessionId) : null;
-  const perguntaContextualizada = session ? resolverReferencias(pergunta, session) : pergunta;
-  const inicio = Date.now();
+  const contextualizedQuestion = session ? resolveReferences(question, session) : question;
+  const start = Date.now();
   res.write(`data: ${JSON.stringify({ type: "status", status: "Analisando pergunta..." })}
 
 `);
-  if (detectGreetingBypass(perguntaContextualizada)) {
+  if (detectGreetingBypass(contextualizedQuestion)) {
     console.log(`\u{1F680} [Agente] Fast-path ativado: sauda\xE7\xE3o detectada localmente.`);
     res.write(`data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}
 
 `);
     await streamStaticGreeting(res);
     if (session) {
-      updateSession(session.sessionId, pergunta, "GREETING", STATIC_GREETING_RESPONSE);
+      updateSession(session.sessionId, question, "GREETING", STATIC_GREETING_RESPONSE);
     }
-    const duracao2 = ((Date.now() - inicio) / 1e3).toFixed(1);
-    console.log(`\u23F1\uFE0F  [Agente] Fast-path conclu\xEDdo em ${duracao2}s (sem busca/ferramentas)
+    const duration3 = ((Date.now() - start) / 1e3).toFixed(1);
+    console.log(`\u23F1\uFE0F  [Agente] Fast-path conclu\xEDdo em ${duration3}s (sem busca/ferramentas)
 `);
     return;
   }
+  const historyMessages = (session?.messages ?? []).slice(-5).map((m) => ({ role: m.role, content: m.content }));
   const messages = [
     { role: "system", content: AGENT_SYSTEM_PROMPT },
-    { role: "user", content: perguntaContextualizada }
+    ...historyMessages,
+    { role: "user", content: contextualizedQuestion }
   ];
   console.log(
     `\u{1F9E0} [Agente] Passo 1: Enviando ao Ollama com ${ollamaTools.length} ferramenta(s)...`
@@ -27221,7 +27387,7 @@ ${"\u2500".repeat(50)}`);
       content: assistantMessage.content || "",
       tool_calls: assistantMessage.tool_calls
     });
-    const fontes = [];
+    const sources = [];
     res.write(`data: ${JSON.stringify({ type: "status", status: "Buscando nos documentos..." })}
 
 `);
@@ -27239,14 +27405,14 @@ ${"\u2500".repeat(50)}`);
         console.log(
           `   \u2705 [Agente] Resultado: ${resultText.substring(0, 80)}...`
         );
-        const fontesMatch = resultText.match(
+        const sourcesMatch = resultText.match(
           /\(fonte: ([^,]+), similaridade/g
         );
-        if (fontesMatch) {
-          fontesMatch.forEach((f3) => {
+        if (sourcesMatch) {
+          sourcesMatch.forEach((f3) => {
             const match = f3.match(/fonte: ([^,]+)/);
             if (match)
-              fontes.push(match[1]);
+              sources.push(match[1]);
           });
         }
         messages.push({
@@ -27264,7 +27430,7 @@ ${"\u2500".repeat(50)}`);
         });
       }
     }
-    res.write(`data: ${JSON.stringify({ type: "fontes", fontes })}
+    res.write(`data: ${JSON.stringify({ type: "sources", sources })}
 
 `);
   } else {
@@ -27279,7 +27445,7 @@ ${"\u2500".repeat(50)}`);
       content: assistantMessage.content || ""
     });
     res.write(
-      `data: ${JSON.stringify({ type: "fontes", fontes: [] })}
+      `data: ${JSON.stringify({ type: "sources", sources: [] })}
 
 `
     );
@@ -27292,13 +27458,13 @@ ${"\u2500".repeat(50)}`);
       res.write(`data: [DONE]
 
 `);
-      const duracao2 = ((Date.now() - inicio) / 1e3).toFixed(1);
+      const duration3 = ((Date.now() - start) / 1e3).toFixed(1);
       console.log(
-        `\u23F1\uFE0F  [Agente] Pipeline conclu\xEDdo em ${duracao2}s (sem ferramentas)
+        `\u23F1\uFE0F  [Agente] Pipeline conclu\xEDdo em ${duration3}s (sem ferramentas)
 `
       );
       if (session) {
-        updateSession(session.sessionId, pergunta, "", assistantMessage.content);
+        updateSession(session.sessionId, question, "", assistantMessage.content);
       }
       return;
     }
@@ -27335,7 +27501,8 @@ ${"\u2500".repeat(50)}`);
   const reader = streamResponse.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  let gerouTokens = false;
+  let fullText = "";
+  let generatedTokens = false;
   try {
     while (true) {
       const { done, value } = await reader.read();
@@ -27351,7 +27518,8 @@ ${"\u2500".repeat(50)}`);
         try {
           const chunk = JSON.parse(trimmed);
           if (chunk.message?.content) {
-            gerouTokens = true;
+            generatedTokens = true;
+            fullText += chunk.message.content;
             res.write(
               `data: ${JSON.stringify({ type: "token", content: chunk.message.content })}
 
@@ -27369,7 +27537,8 @@ ${"\u2500".repeat(50)}`);
       try {
         const chunk = JSON.parse(buffer.trim());
         if (chunk.message?.content) {
-          gerouTokens = true;
+          generatedTokens = true;
+          fullText += chunk.message.content;
           res.write(
             `data: ${JSON.stringify({ type: "token", content: chunk.message.content })}
 
@@ -27382,7 +27551,7 @@ ${"\u2500".repeat(50)}`);
   } finally {
     reader.releaseLock();
   }
-  if (!gerouTokens) {
+  if (!generatedTokens) {
     console.warn("\u26A0\uFE0F [Agente] Resposta vazia no streaming. Enviando fallback.");
     const fallbackMsg = "N\xE3o encontrei essa informa\xE7\xE3o nos documentos dispon\xEDveis. Recomendo consultar a coordena\xE7\xE3o do curso ou acessar o portal do IFMG.";
     res.write(
@@ -27394,34 +27563,34 @@ ${"\u2500".repeat(50)}`);
   res.write(`data: [DONE]
 
 `);
-  const duracao = ((Date.now() - inicio) / 1e3).toFixed(1);
+  const duration2 = ((Date.now() - start) / 1e3).toFixed(1);
   if (session) {
-    updateSession(session.sessionId, pergunta, "", "");
+    updateSession(session.sessionId, question, "", fullText);
   }
-  console.log(`\u23F1\uFE0F  [Agente] Pipeline streaming conclu\xEDdo em ${duracao}s
+  console.log(`\u23F1\uFE0F  [Agente] Pipeline streaming conclu\xEDdo em ${duration2}s
 `);
 }
 
 // src/controllers/agent.controller.ts
-async function enviarPerguntaAgente(req, res) {
+async function sendAgentQuestion(req, res) {
   try {
-    const { pergunta, sessionId } = req.body;
-    if (!pergunta || typeof pergunta !== "string") {
+    const { question, sessionId } = req.body;
+    if (!question || typeof question !== "string") {
       res.status(400).json({
-        erro: "O campo 'pergunta' \xE9 obrigat\xF3rio e deve ser uma string."
+        error: "O campo 'question' \xE9 obrigat\xF3rio e deve ser uma string."
       });
       return;
     }
-    const perguntaTrimmed = pergunta.trim();
-    if (perguntaTrimmed.length < 3) {
+    const questionTrimmed = question.trim();
+    if (questionTrimmed.length < 3) {
       res.status(400).json({
-        erro: "A pergunta deve ter pelo menos 3 caracteres."
+        error: "A pergunta deve ter pelo menos 3 caracteres."
       });
       return;
     }
-    if (perguntaTrimmed.length > 1e3) {
+    if (questionTrimmed.length > 1e3) {
       res.status(400).json({
-        erro: "A pergunta deve ter no m\xE1ximo 1000 caracteres."
+        error: "A pergunta deve ter no m\xE1ximo 1000 caracteres."
       });
       return;
     }
@@ -27434,23 +27603,23 @@ async function enviarPerguntaAgente(req, res) {
     req.on("close", () => {
       console.log("\u{1F50C} [SSE Agent] Cliente desconectou");
     });
-    await comControleDeConcorrencia(async () => {
-      await processarPerguntaAgente(perguntaTrimmed, res, sessionId);
+    await withConcurrencyControl(async () => {
+      await processAgentQuestion(questionTrimmed, res, sessionId);
     });
     res.end();
   } catch (error) {
     console.error("[AgentController] Erro:", error);
     if (res.headersSent) {
-      const mensagemErro = error instanceof Error && error.message.includes("Ollama") ? "O servidor de IA ficou inacess\xEDvel. Tente novamente." : "Ocorreu um erro durante a gera\xE7\xE3o da resposta.";
+      const errorMessage = error instanceof Error && error.message.includes("Ollama") ? "O servidor de IA ficou inacess\xEDvel. Tente novamente." : "Ocorreu um erro durante a gera\xE7\xE3o da resposta.";
       res.write(
-        `data: ${JSON.stringify({ type: "erro", mensagem: mensagemErro })}
+        `data: ${JSON.stringify({ type: "error", message: errorMessage })}
 
 `
       );
       res.end();
     } else {
       res.status(500).json({
-        erro: "Erro interno ao processar sua pergunta."
+        error: "Erro interno ao processar sua pergunta."
       });
     }
   }
@@ -27458,7 +27627,7 @@ async function enviarPerguntaAgente(req, res) {
 
 // src/routes/agent.routes.ts
 var agentRouter = Router3();
-agentRouter.post("/", enviarPerguntaAgente);
+agentRouter.post("/", sendAgentQuestion);
 
 // src/middlewares/rateLimiter.ts
 import rateLimit from "express-rate-limit";
@@ -27468,7 +27637,7 @@ var chatLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: {
-    erro: "Muitas requisi\xE7\xF5es. Aguarde um momento e tente novamente."
+    error: "Muitas requisi\xE7\xF5es. Aguarde um momento e tente novamente."
   }
 });
 var uploadLimiter = rateLimit({
@@ -27477,7 +27646,7 @@ var uploadLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: {
-    erro: "Limite de uploads atingido. Tente novamente em 1 minuto."
+    error: "Limite de uploads atingido. Tente novamente em 1 minuto."
   }
 });
 
@@ -27495,7 +27664,7 @@ function adminAuth(req, res, next) {
   const provided = req.headers["x-api-key"];
   if (!provided || provided !== apiKey) {
     res.status(401).json({
-      erro: "Acesso n\xE3o autorizado. Chave de API inv\xE1lida ou ausente."
+      error: "Acesso n\xE3o autorizado. Chave de API inv\xE1lida ou ausente."
     });
     return;
   }
@@ -27565,11 +27734,11 @@ var server = app.listen(PORT, async () => {
   console.log(`\u{1F4CB} Documentos:         GET  /api/embedding/documentos`);
   console.log(`\u{1F49A} Health check:       GET  /api/health
 `);
-  await testarConexaoDB();
-  await verificarDimensaoEmbedding();
-  await verificarOllama();
+  await testDBConnection();
+  await verifyEmbeddingDimension();
+  await checkOllama();
   try {
-    await inicializarMCPClient();
+    await initializeMCPClient();
   } catch (error) {
     console.error("\u26A0\uFE0F  MCP Client n\xE3o dispon\xEDvel \u2014 rota /api/agent inoperante");
   }
@@ -27588,13 +27757,13 @@ server.on("error", (err) => {
   throw err;
 });
 process.on("SIGINT", async () => {
-  limparTodasSessoes();
-  await encerrarMCPClient();
+  clearAllSessions();
+  await closeMCPClient();
   process.exit(0);
 });
 process.on("SIGTERM", async () => {
-  limparTodasSessoes();
-  await encerrarMCPClient();
+  clearAllSessions();
+  await closeMCPClient();
   process.exit(0);
 });
 /*! Bundled license information:

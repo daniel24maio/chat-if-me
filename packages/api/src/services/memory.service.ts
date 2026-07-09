@@ -39,7 +39,7 @@ const MAX_MESSAGES_PER_SESSION = 10;
 // ---------------------------------------------------------------------------
 
 /** Mensagem armazenada na memória da sessão */
-interface SessionMessage {
+export interface SessionMessage {
   role: "user" | "assistant";
   content: string;
   timestamp: number;

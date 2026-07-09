@@ -61,13 +61,15 @@ Pipeline determinístico onde toda consulta segue um fluxo linear e estruturado 
      $$Score_{RRF} = \alpha \times \frac{1}{k + rank_{sem\hat{a}ntico}} + (1 - \alpha) \times \frac{1}{k + rank_{lexical}}$$
      Configurado com $k = 60$ (constante de suavização) e $\alpha = 0.5$ (equilíbrio idêntico entre busca semântica e lexical). Os 5 melhores trechos resultantes são passados como contexto.
 
-4. **Etapa 3 — Montagem do Prompt RAG & Diretivas Anti-Alucinação:**
+4. **Etapa 3 — Montagem do Prompt RAG, Histórico & Diretivas Anti-Alucinação:**
    - O sistema constrói o prompt final de sistema inserindo os trechos de documentos retornados na busca híbrida e a tag de intenção classificada.
+   - **Histórico Conversacional:** Injeta as últimas 5 mensagens da sessão (armazenadas na memória RAM) entre o prompt de sistema e a pergunta atual.
    - Aplica regras estritas de segurança (*guardrails*): o LLM é instruído a responder exclusivamente com base no contexto, não inventar informações acadêmicas, citar as fontes (arquivos de origem) e responder obrigatoriamente em português do Brasil (`pt-BR`).
-   - A pergunta final submetida ao chat é a **pergunta original** enviada pelo usuário, enquanto o contexto e a tag de intenção derivam da versão reescrita, preservando a naturalidade da conversa.
+   - A pergunta final submetida ao chat é a **pergunta original** enviada pelo usuário, enquanto o contexto, o histórico de conversa e a tag de intenção derivam da versão contextualizada e reescrita, preservando a naturalidade e coesão da conversa.
 
-5. **Etapa 4 — LLM Streaming (SSE) & Métricas de Desempenho:**
+5. **Etapa 4 — LLM Streaming (SSE), Métricas & Persistência:**
    - Realiza o streaming da resposta gerada pelo LLM token a token para o frontend via Server-Sent Events (SSE).
+   - Acumula a resposta completa transmitida e a persiste no histórico da sessão RAM ao final.
    - No encerramento da transmissão, envia um objeto com as métricas detalhadas de latência de cada fase em milissegundos (`rewrite`, `embedding`, `retrieval`, `generation` e `total`).
 
 #### 🤖 Agentic RAG com MCP (`/api/agent`)
@@ -85,9 +87,9 @@ Nessa arquitetura agêntica baseada no protocolo MCP (**Model Context Protocol**
    - Na subida do servidor Express, o backend inicializa o `mcpClient` e estabelece um canal de comunicação (`StdioClientTransport`) com o servidor MCP (`packages/mcp-server/dist/index.js`), que é executado como um subprocesso em background do Node.js.
    - O client executa `listTools()` para descobrir dinamicamente as ferramentas exportadas pelo servidor e as traduz para a especificação de *Function Calling* (`tools[]`) esperada pela API de Chat do Ollama.
 
-2. **Passo 1 — Primeira Chamada (Decisão e Tool Calling):**
-   - O Express envia a pergunta original do aluno para o Ollama com a lista de ferramentas declaradas (sem streaming).
-   - O LLM analisa o prompt e decide de forma autônoma se precisa executar uma busca nos documentos. 
+2. **Passo 1 — Primeira Chamada (Histórico, Decisão e Tool Calling):**
+   - O Express recupera a sessão do usuário, resolve as referências anafóricas na pergunta e injeta as últimas 5 mensagens da conversa no array de mensagens enviado ao Ollama.
+   - O LLM analisa o prompt (incluindo o histórico conversacional recente) e decide de forma autônoma se precisa executar uma busca nos documentos. 
      - Para saudações e interações simples, o pipeline detecta localmente no fast-path e envia a mensagem de apresentação estática, encerrando o fluxo.
      - Para perguntas acadêmicas, ele gera um objeto `tool_calls` solicitando a invocação da ferramenta `search_ifmg_knowledge`. Ele deve obrigatoriamente preencher dois parâmetros: `query` (termos chaves/nomes próprios limpos e com siglas expandidas) e `intent` (uma das 10 categorias de intenção acadêmica).
 
@@ -96,10 +98,11 @@ Nessa arquitetura agêntica baseada no protocolo MCP (**Model Context Protocol**
    - Dentro do MCP Server, é executada uma busca híbrida no PostgreSQL associando `pgvector` HNSW (similaridade de cosseno com peso $\alpha = 0.4$) e Full-Text Search com `tsvector` + `portuguese_unaccent`.
    - **Filtro de Lixo Semântico:** Diferente do RAG clássico, o servidor MCP aplica uma nota de corte estrita **`MIN_RRF_SCORE = 0.002`** para descartar trechos irrelevantes de baixo ranking, retornando até 5 resultados para o agente (limite `MAX_RESULTS = 5` para evitar saturação e estouro de contexto na GPU de homelabs).
 
-4. **Passo 3 — Segunda Chamada & Geração Final:**
+4. **Passo 3 — Segunda Chamada, Geração Final & Persistência:**
    - O backend anexa os trechos retornados pela busca ao histórico de mensagens na conversa com a role `tool` e envia o histórico completo de volta ao Ollama.
    - É injetado um prompt de sistema final para reforçar as regras do idioma e a proibição de responder com base em conhecimento externo.
    - O Ollama processa as mensagens sob uma janela de contexto restrita a **2048 tokens** (`num_ctx: 2048`) para economizar VRAM e gera a resposta em streaming SSE direta para o frontend.
+   - **Persistência de Memória**: À medida que os tokens são gerados e transmitidos via streaming, o backend acumula a resposta completa e atualiza a sessão de memória do usuário para que o assistente mantenha consistência histórica em perguntas subsequentes.
 
 ### 🗄️ Modelagem do Banco de Dados
 
@@ -245,7 +248,7 @@ DIRETIVAS DE IDIOMA E FORMATAÇÃO:
 ### Chat (Frontend)
 - 💬 Interface de chat com identidade visual IFMG (verde `#2F9E41` / vermelho `#CD191E`)
 - ⚡ **Streaming de respostas** via Server-Sent Events (SSE) — token a token
-- 🧠 **Memória de Sessão em RAM** — Mantém o contexto de diálogo e resolve pronomes/referências anafóricas entre perguntas seguidas.
+- 🧠 **Memória de Sessão em RAM** — Mantém o contexto de diálogo, resolve referências anafóricas/pronomes entre perguntas seguidas e injeta as últimas 5 mensagens da conversa como histórico direto no prompt do LLM.
 - ⏰ **Modal de Expiração por Inatividade** — Ao atingir 5 minutos de inatividade, o chat bloqueia a digitação (campo de texto e botão de envio) e exibe um modal overlay (com desfoque de fundo e animação suave) para iniciar uma "Nova Conversa" de forma segura.
 - 💬 **Status Dinâmicos em Tempo Real** — Exibe o status dinâmico do pipeline ("Analisando pergunta...", "Buscando nos documentos...", "Preparando resposta...") na bolha de digitação.
 - 👍/👎 **Feedback de Respostas** — Botões interativos de feedback integrados com o servidor (ocultados na mensagem inicial e avisos do sistema).
@@ -282,7 +285,7 @@ DIRETIVAS DE IDIOMA E FORMATAÇÃO:
 - 🗑️ Exclusão de documentos e de todos os seus fragmentos associados
 
 ### Backend (API)
-- 🧠 **Memória Conversacional em RAM** (`memory.service.ts`) — Serviço estruturado com `Map` e expiração de TTL a cada 5 minutos, monitorado por garbage collector de ciclo de 30s. Possui proteção de limite de 100 sessões ativas (evicção LRU) e suporte à resolução de pronomes.
+- 🧠 **Memória Conversacional em RAM** (`memory.service.ts`) — Serviço estruturado com `Map` e expiração de TTL a cada 5 minutos, monitorado por garbage collector de ciclo de 30s. Mantém uma janela deslizante das últimas 10 mensagens por sessão (evitando estouro de contexto/VRAM através do `pruneHistory` ajustado para 6 interações no Ollama), resolve referências anafóricas e injeta as 5 últimas mensagens no prompt tanto do RAG Clássico quanto do Agente MCP, acumulando também as respostas parciais de streaming para consistência do histórico. Possui proteção de limite de 100 sessões ativas (evicção LRU).
 - 🚀 **Otimização de Saudações (Fast-Path Bypass)** (`fast_path.util.ts`) — Dupla camada de detecção (Local Regex + LLM intent `[GREETING]`) que intercepta saudações/ajuda e responde instantaneamente com uma mensagem de apresentação pré-definida (`STATIC_GREETING_RESPONSE`) simulando digitação, sem acionar o LLM no homelab. (Aplicado no Agente MCP).
 - 🔄 **Query Rewriting & Roteamento de Intenção** — reescrita com expansão de siglas e extração da Tag de Intenção (`[CURSO]`, `[DISCIPLINA]`, etc) para guiar o contexto.
 - 🤖 **Agentic RAG (MCP)** — LLM decide autonomamente quando buscar via Tool Calling (agora com suporte à classificação de intenção no prompt).

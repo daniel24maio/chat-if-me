@@ -12,6 +12,7 @@ import {
   getOrCreateSession,
   updateSession,
   resolveReferences,
+  type SessionMessage,
 } from "./memory.service.js";
 import {
   detectGreetingBypass,
@@ -284,7 +285,8 @@ function buildRAGMessages(
   question: string,
   documents: RetrievedDocument[],
   intention: string,
-  fewShotExamples: FewShotExample[] = []
+  fewShotExamples: FewShotExample[] = [],
+  sessionMessages: SessionMessage[] = []
 ): OllamaChatMessage[] {
   // Monta o contexto a partir dos documentos recuperados
   const context =
@@ -336,8 +338,14 @@ DIRETIVAS OBRIGATÓRIAS DE IDIOMA E FORMATAÇÃO:
 - Use **negrito** para destacar nomes de disciplinas, códigos ou termos chaves.
 - Finalize com uma pergunta breve e proativa (Ex: "Gostaria que eu detalhasse a ementa de alguma dessas disciplinas?").`;
 
+  // Histórico das últimas 5 mensagens da sessão (contexto conversacional)
+  const historyMessages: OllamaChatMessage[] = sessionMessages
+    .slice(-5)
+    .map((m) => ({ role: m.role, content: m.content }));
+
   return [
     { role: "system", content: systemPrompt },
+    ...historyMessages,
     { role: "user", content: question },
   ];
 }
@@ -476,7 +484,7 @@ export async function processQuestionStream(
   // a intenção e os exemplos few-shot (se encontrados).
   // Isso garante que a resposta do LLM soe natural e responda exatamente
   // o que o aluno perguntou, sem a formalização artificial da reescrita.
-  const messages = buildRAGMessages(question, documents, intention, fewShotExamples);
+  const messages = buildRAGMessages(question, documents, intention, fewShotExamples, session?.messages ?? []);
 
   console.log(
     `🤖 [RAG] Iniciar streaming com ${documents.length} documentos de contexto...`
@@ -484,7 +492,7 @@ export async function processQuestionStream(
 
   // Etapa 4: Stream da resposta do LLM diretamente para o frontend
   const t3 = Date.now();
-  await streamOllamaResponse(messages, res, sources);
+  const fullResponse = await streamOllamaResponse(messages, res, sources);
   const generationMs = Date.now() - t3;
 
   const totalMs = Date.now() - start;
@@ -502,7 +510,7 @@ export async function processQuestionStream(
 
   // ── Atualizar memória da sessão ──
   if (session) {
-    updateSession(session.sessionId, question, intention, "");
+    updateSession(session.sessionId, question, intention, fullResponse);
     session.lastDocuments = documents;
   }
 
