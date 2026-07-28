@@ -494,12 +494,12 @@ export async function processAgentQuestion(
             done?: boolean;
           };
 
-          const tokenContent = chunk.message?.content || chunk.message?.reasoning_content || chunk.message?.thinking;
-          if (tokenContent) {
+          // Filtra: envia apenas o conteúdo final da resposta (ignora o raciocínio interno do modelo)
+          if (chunk.message?.content) {
             generatedTokens = true;
-            fullText += tokenContent;
+            fullText += chunk.message.content;
             res.write(
-              `data: ${JSON.stringify({ type: "token", content: tokenContent })}\n\n`
+              `data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`
             );
           }
 
@@ -518,12 +518,11 @@ export async function processAgentQuestion(
         const chunk = JSON.parse(buffer.trim()) as {
           message?: { content?: string; thinking?: string; reasoning_content?: string };
         };
-        const tokenContent = chunk.message?.content || chunk.message?.reasoning_content || chunk.message?.thinking;
-        if (tokenContent) {
+        if (chunk.message?.content) {
           generatedTokens = true;
-          fullText += tokenContent;
+          fullText += chunk.message.content;
           res.write(
-            `data: ${JSON.stringify({ type: "token", content: tokenContent })}\n\n`
+            `data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`
           );
         }
       } catch {

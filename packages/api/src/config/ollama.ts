@@ -275,11 +275,11 @@ export async function streamOllamaResponse(
             console.error("❌ [Ollama LLM Stream] Erro retornado no chunk:", chunk.error);
           }
 
-          const tokenContent = chunk.message?.content || chunk.message?.reasoning_content || chunk.message?.thinking;
-          if (tokenContent) {
+          // Ignora campos de raciocínio interno (reasoning_content / thinking) para não vazar a análise do LLM no frontend
+          if (chunk.message?.content) {
             generatedTokens = true;
-            fullText += tokenContent;
-            res.write(`data: ${JSON.stringify({ type: "token", content: tokenContent })}\n\n`);
+            fullText += chunk.message.content;
+            res.write(`data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`);
           }
 
           if (chunk.done) {
@@ -296,11 +296,10 @@ export async function streamOllamaResponse(
         const chunk = JSON.parse(buffer.trim()) as {
           message?: { content?: string; thinking?: string; reasoning_content?: string };
         };
-        const tokenContent = chunk.message?.content || chunk.message?.reasoning_content || chunk.message?.thinking;
-        if (tokenContent) {
+        if (chunk.message?.content) {
           generatedTokens = true;
-          fullText += tokenContent;
-          res.write(`data: ${JSON.stringify({ type: "token", content: tokenContent })}\n\n`);
+          fullText += chunk.message.content;
+          res.write(`data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`);
         }
       } catch {
         // Ignora
