@@ -18,8 +18,8 @@ import type {
  */
 
 const EMBEDDING_MAX_CHARS = 4000;
-const CHUNK_SIZE_GENERAL = 2048;
-const CHUNK_OVERLAP_GENERAL = 256;
+const CHUNK_SIZE_GENERAL = 1000;
+const CHUNK_OVERLAP_GENERAL = 200;
 const TABLE_MAX_ROWS_PER_CHUNK = 30;
 
 const BATCH_SIZE = 32;
@@ -174,11 +174,26 @@ async function juridicalChunking(text: string, filename: string): Promise<ChunkD
   const documentName = generateDocumentName(filename);
   const chunks: ChunkData[] = [];
 
-  // LangChain Splitter configurado com hierarquia jurídica
+  // LangChain Splitter configurado com hierarquia jurídica e seções do PPC
   const splitter = new RecursiveCharacterTextSplitter({
-    chunkSize: EMBEDDING_MAX_CHARS - 300, // Margem para o prefixo de contexto
+    chunkSize: 1000,
     chunkOverlap: 200,
-    separators: ["\nCAPÍTULO ", "\nTÍTULO ", "\nSeção ", "\nArt. ", "\n\n", "\n", ". ", " "],
+    separators: [
+      "\nCAPÍTULO ",
+      "\nTÍTULO ",
+      "\nSeção ",
+      "\nArt. ",
+      "\n8.1.2 ",
+      "\n8.1.3 ",
+      "\n8.3. ",
+      "\nEmenta:",
+      "\nObjetivo(s):",
+      "\nCódigo:",
+      "\n\n",
+      "\n",
+      ". ",
+      " "
+    ],
     keepSeparator: true
   });
 
@@ -190,7 +205,7 @@ async function juridicalChunking(text: string, filename: string): Promise<ChunkD
     if (partTrimmed.length === 0) continue;
 
     // Atualiza o contexto se a parte contiver um marcador de hierarquia
-    const hierarchyMatch = partTrimmed.match(/^(?:CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o)\s+[IVXLCDM\d]+.*?(?:\n|$)/i);
+    const hierarchyMatch = partTrimmed.match(/^(?:CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o|8\.\d+(?:\.\d+)?)\s+[IVXLCDM\d\w\s]+.*?(?:\n|$)/i);
     if (hierarchyMatch) {
       currentContext = hierarchyMatch[0].trim();
     }

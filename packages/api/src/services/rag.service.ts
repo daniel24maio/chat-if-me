@@ -176,7 +176,7 @@ const RRF_ALPHA = 0.5;
 async function hybridSearch(
   embedding: number[],
   queryText: string,
-  limit: number = 5
+  limit: number = 8
 ): Promise<RetrievedDocument[]> {
   console.log(
     `🔍 [RAG] Busca híbrida: vetorial (α=${RRF_ALPHA}) + FTS (1-α=${1 - RRF_ALPHA}), k=${RRF_K}`
