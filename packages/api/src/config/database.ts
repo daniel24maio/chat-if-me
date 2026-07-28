@@ -141,6 +141,7 @@ export async function verifyEmbeddingDimension(): Promise<void> {
  */
 export async function verifyFeedbacksTable(): Promise<void> {
   try {
+    // Verifica se a tabela chat_feedbacks existe
     const tableExists = await pool.query(`
       SELECT EXISTS (
         SELECT 1 FROM information_schema.tables
@@ -148,13 +149,39 @@ export async function verifyFeedbacksTable(): Promise<void> {
       ) AS exists
     `);
 
+    let needsMigration = false;
+    let dropOldTable = false;
+
     if (!tableExists.rows[0]?.exists) {
       console.log("🔄 [Database] Tabela 'chat_feedbacks' não encontrada. Criando...");
+      needsMigration = true;
+    } else {
+      // Verifica se a tabela tem a coluna "chunk_ids" e "question"
+      const colExists = await pool.query(`
+        SELECT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'chat_feedbacks' AND column_name = 'chunk_ids'
+        ) AS exists
+      `);
       
+      if (!colExists.rows[0]?.exists) {
+        console.warn("⚠️  [Database] Tabela 'chat_feedbacks' existe, mas está no formato antigo (faltam colunas).");
+        console.log("🔄 [Database] Recriando tabela 'chat_feedbacks' para o formato ICL...");
+        dropOldTable = true;
+        needsMigration = true;
+      } else {
+        console.log("✅ [Database] Tabela 'chat_feedbacks' já está no formato correto ✓");
+      }
+    }
+
+    if (needsMigration) {
+      if (dropOldTable) {
+        await pool.query("DROP TABLE chat_feedbacks CASCADE");
+      }
+
       const fs = await import("fs");
       const path = await import("path");
       
-      // O caminho é relativo à execução (geralmente raiz do pacote api ou src)
       const sqlPath = path.resolve(process.cwd(), "migrate_feedbacks.sql");
       
       try {
@@ -164,8 +191,6 @@ export async function verifyFeedbacksTable(): Promise<void> {
       } catch (err) {
         console.error(`❌ [Database] Falha ao ler/executar migrate_feedbacks.sql em ${sqlPath}:`, err);
       }
-    } else {
-      console.log("✅ [Database] Tabela 'chat_feedbacks' já existe ✓");
     }
   } catch (error) {
     console.error(
