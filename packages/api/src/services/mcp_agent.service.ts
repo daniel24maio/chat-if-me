@@ -451,7 +451,7 @@ export async function processAgentQuestion(
       options: {
         num_ctx: NUM_CTX,
         temperature: 0.2,
-        num_predict: 768,
+        num_predict: 2048,
       },
     }),
   });
@@ -488,13 +488,17 @@ export async function processAgentQuestion(
         if (!trimmed) continue;
 
         try {
-          const chunk = JSON.parse(trimmed) as OllamaChatResponse;
+          const chunk = JSON.parse(trimmed) as {
+            message?: { content?: string; thinking?: string; reasoning_content?: string };
+            done?: boolean;
+          };
 
-          if (chunk.message?.content) {
+          const tokenContent = chunk.message?.content || chunk.message?.reasoning_content || chunk.message?.thinking;
+          if (tokenContent) {
             generatedTokens = true;
-            fullText += chunk.message.content;
+            fullText += tokenContent;
             res.write(
-              `data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`
+              `data: ${JSON.stringify({ type: "token", content: tokenContent })}\n\n`
             );
           }
 
@@ -510,12 +514,15 @@ export async function processAgentQuestion(
     // Processa resto do buffer
     if (buffer.trim()) {
       try {
-        const chunk = JSON.parse(buffer.trim()) as OllamaChatResponse;
-        if (chunk.message?.content) {
+        const chunk = JSON.parse(buffer.trim()) as {
+          message?: { content?: string; thinking?: string; reasoning_content?: string };
+        };
+        const tokenContent = chunk.message?.content || chunk.message?.reasoning_content || chunk.message?.thinking;
+        if (tokenContent) {
           generatedTokens = true;
-          fullText += chunk.message.content;
+          fullText += tokenContent;
           res.write(
-            `data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`
+            `data: ${JSON.stringify({ type: "token", content: tokenContent })}\n\n`
           );
         }
       } catch {

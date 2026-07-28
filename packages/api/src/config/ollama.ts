@@ -231,7 +231,7 @@ export async function streamOllamaResponse(
       options: {
         num_ctx: NUM_CTX,
         temperature: 0.2,
-        num_predict: 768,
+        num_predict: 2048,
       },
     }),
   });
@@ -266,7 +266,7 @@ export async function streamOllamaResponse(
 
         try {
           const chunk = JSON.parse(trimmed) as {
-            message?: { content: string };
+            message?: { content?: string; thinking?: string; reasoning_content?: string };
             error?: string;
             done?: boolean;
           };
@@ -275,10 +275,11 @@ export async function streamOllamaResponse(
             console.error("❌ [Ollama LLM Stream] Erro retornado no chunk:", chunk.error);
           }
 
-          if (chunk.message?.content) {
+          const tokenContent = chunk.message?.content || chunk.message?.reasoning_content || chunk.message?.thinking;
+          if (tokenContent) {
             generatedTokens = true;
-            fullText += chunk.message.content;
-            res.write(`data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`);
+            fullText += tokenContent;
+            res.write(`data: ${JSON.stringify({ type: "token", content: tokenContent })}\n\n`);
           }
 
           if (chunk.done) {
@@ -292,11 +293,14 @@ export async function streamOllamaResponse(
 
     if (buffer.trim()) {
       try {
-        const chunk = JSON.parse(buffer.trim()) as { message?: { content: string } };
-        if (chunk.message?.content) {
+        const chunk = JSON.parse(buffer.trim()) as {
+          message?: { content?: string; thinking?: string; reasoning_content?: string };
+        };
+        const tokenContent = chunk.message?.content || chunk.message?.reasoning_content || chunk.message?.thinking;
+        if (tokenContent) {
           generatedTokens = true;
-          fullText += chunk.message.content;
-          res.write(`data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`);
+          fullText += tokenContent;
+          res.write(`data: ${JSON.stringify({ type: "token", content: tokenContent })}\n\n`);
         }
       } catch {
         // Ignora
