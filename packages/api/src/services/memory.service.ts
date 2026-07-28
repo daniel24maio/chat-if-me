@@ -22,8 +22,8 @@ import type { RetrievedDocument } from "../interfaces/chat.interfaces.js";
 // Configuração
 // ---------------------------------------------------------------------------
 
-/** Tempo máximo de inatividade antes de expirar a sessão (5 minutos) */
-const SESSION_TTL_MS = 5 * 60 * 1000;
+/** Tempo máximo de inatividade antes de expirar a sessão (12 minutos) */
+const SESSION_TTL_MS = 12 * 60 * 1000;
 
 /** Intervalo do garbage collector (30 segundos) */
 const CLEANUP_INTERVAL_MS = 30 * 1000;

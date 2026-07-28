@@ -461,7 +461,7 @@ const ChatInterface: React.FC = () => {
           <div className="modal-content">
             <span className="modal-icon">⏰</span>
             <h2>Sua sessão expirou</h2>
-            <p>Por inatividade de 5 minutos, sua sessão foi encerrada de forma segura.</p>
+            <p>Por inatividade de 12 minutos, sua sessão foi encerrada de forma segura.</p>
             <button onClick={handleResetSession} className="modal-btn" aria-label="Iniciar nova conversa">
               Nova Conversa
             </button>
