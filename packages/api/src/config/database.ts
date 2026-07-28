@@ -179,17 +179,27 @@ export async function verifyFeedbacksTable(): Promise<void> {
         await pool.query("DROP TABLE chat_feedbacks CASCADE");
       }
 
-      const fs = await import("fs");
-      const path = await import("path");
-      
-      const sqlPath = path.resolve(process.cwd(), "migrate_feedbacks.sql");
+      const sql = `
+        CREATE TABLE chat_feedbacks (
+          id SERIAL PRIMARY KEY,
+          question TEXT NOT NULL,
+          response TEXT NOT NULL,
+          question_embedding vector(1024) NOT NULL,
+          feedback_type VARCHAR(10) NOT NULL CHECK (feedback_type IN ('positive', 'negative')),
+          chunk_ids INTEGER[] NOT NULL DEFAULT '{}',
+          metadata JSONB NOT NULL DEFAULT '{}',
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
+        CREATE INDEX idx_feedbacks_question_embedding ON chat_feedbacks USING hnsw (question_embedding vector_cosine_ops) WITH (m = 16, ef_construction = 100);
+        CREATE INDEX idx_feedbacks_positive ON chat_feedbacks (feedback_type) WHERE feedback_type = 'positive';
+        CREATE INDEX idx_feedbacks_chunk_ids ON chat_feedbacks USING GIN (chunk_ids);
+      `;
       
       try {
-        const sql = fs.readFileSync(sqlPath, "utf-8");
         await pool.query(sql);
-        console.log("✅ [Database] Migração 'migrate_feedbacks.sql' executada com sucesso!");
+        console.log("✅ [Database] Migração (chat_feedbacks) executada com sucesso!");
       } catch (err) {
-        console.error(`❌ [Database] Falha ao ler/executar migrate_feedbacks.sql em ${sqlPath}:`, err);
+        console.error("❌ [Database] Falha ao executar migração da tabela:", err);
       }
     }
   } catch (error) {
