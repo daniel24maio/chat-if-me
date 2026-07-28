@@ -135,3 +135,43 @@ export async function verifyEmbeddingDimension(): Promise<void> {
   }
 }
 
+/**
+ * Garante que a tabela chat_feedbacks (ICL Dinâmico) exista no banco.
+ * Se não existir, executa o script de migração.
+ */
+export async function verifyFeedbacksTable(): Promise<void> {
+  try {
+    const tableExists = await pool.query(`
+      SELECT EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_name = 'chat_feedbacks'
+      ) AS exists
+    `);
+
+    if (!tableExists.rows[0]?.exists) {
+      console.log("🔄 [Database] Tabela 'chat_feedbacks' não encontrada. Criando...");
+      
+      const fs = await import("fs");
+      const path = await import("path");
+      
+      // O caminho é relativo à execução (geralmente raiz do pacote api ou src)
+      const sqlPath = path.resolve(process.cwd(), "migrate_feedbacks.sql");
+      
+      try {
+        const sql = fs.readFileSync(sqlPath, "utf-8");
+        await pool.query(sql);
+        console.log("✅ [Database] Migração 'migrate_feedbacks.sql' executada com sucesso!");
+      } catch (err) {
+        console.error(`❌ [Database] Falha ao ler/executar migrate_feedbacks.sql em ${sqlPath}:`, err);
+      }
+    } else {
+      console.log("✅ [Database] Tabela 'chat_feedbacks' já existe ✓");
+    }
+  } catch (error) {
+    console.error(
+      "❌ [Database] Falha na verificação da tabela chat_feedbacks:",
+      error instanceof Error ? error.message : error
+    );
+  }
+}
+

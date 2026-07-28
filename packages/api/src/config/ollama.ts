@@ -35,7 +35,7 @@ const NUM_CTX = Number(process.env.OLLAMA_NUM_CTX) || 8192;
  * Impede o erro UND_ERR_HEADERS_TIMEOUT liberando a thread do Node.js
  * caso a GPU demore muito tempo a processar o prompt.
  */
-const FETCH_TIMEOUT_MS = 180000; // 3 minutos
+const FETCH_TIMEOUT_MS = 300000; // 5 minutos
 
 // ---------------------------------------------------------------------------
 // Utilitários de Contexto

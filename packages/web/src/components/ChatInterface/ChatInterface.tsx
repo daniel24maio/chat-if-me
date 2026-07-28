@@ -216,7 +216,9 @@ const ChatInterface: React.FC = () => {
           m.id === aiMessageId
             ? {
                 ...m,
-                text: '⚠️ Não foi possível conectar ao servidor. Verifique se a API está rodando.',
+                text: error instanceof Error && error.message.includes('timeout') 
+                  ? '⚠️ O servidor demorou muito para responder (timeout). Tente novamente.'
+                  : '⚠️ Não foi possível conectar ao servidor. Verifique se a API está rodando.',
                 isStreaming: false,
               }
             : m

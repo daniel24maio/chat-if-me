@@ -4,7 +4,7 @@ import cors from "cors";
 import { chatRouter } from "./routes/chat.routes.js";
 import { embeddingRouter } from "./routes/embedding.routes.js";
 import { agentRouter } from "./routes/agent.routes.js";
-import { pool, testDBConnection, verifyEmbeddingDimension } from "./config/database.js";
+import { pool, testDBConnection, verifyEmbeddingDimension, verifyFeedbacksTable } from "./config/database.js";
 import { checkOllama } from "./config/ollama.js";
 import { chatLimiter, uploadLimiter } from "./middlewares/rateLimiter.js";
 import { adminAuth } from "./middlewares/adminAuth.js";
@@ -135,6 +135,7 @@ const server = app.listen(PORT, async () => {
   // Testa conexões externas (não bloqueia a subida do servidor)
   await testDBConnection();
   await verifyEmbeddingDimension(); // Auto-migra 768→1024 se necessário
+  await verifyFeedbacksTable(); // Garante tabela de feedback (ICL)
   await checkOllama();
 
   // Inicializa o MCP Client (conecta ao servidor como subprocesso)
