@@ -35,7 +35,7 @@ const NUM_CTX = Number(process.env.OLLAMA_NUM_CTX) || 8192;
  * Impede o erro UND_ERR_HEADERS_TIMEOUT liberando a thread do Node.js
  * caso a GPU demore muito tempo a processar o prompt.
  */
-const FETCH_TIMEOUT_MS = 300000; // 5 minutos
+const FETCH_TIMEOUT_MS = 600000; // 10 minutos
 
 // ---------------------------------------------------------------------------
 // Utilitários de Contexto
@@ -228,7 +228,11 @@ export async function streamOllamaResponse(
       messages: safeMessages,
       stream: true,
       keep_alive: "24h",
-      options: { num_ctx: NUM_CTX },
+      options: {
+        num_ctx: NUM_CTX,
+        temperature: 0.2,
+        num_predict: 768,
+      },
     }),
   });
 
