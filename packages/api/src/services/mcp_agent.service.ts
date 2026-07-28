@@ -380,16 +380,28 @@ export async function processAgentQuestion(
     res.write(`data: ${JSON.stringify({ type: "sources", sources })}\n\n`);
   } else {
     // Sem tool_calls — resposta direta (ex: saudações)
-    console.log(
-      "💬 [Agente] Passo 2: Sem tool_calls — resposta direta"
-    );
+    console.log("💬 [Agente] Passo 2: Sem tool_calls — resposta direta");
+
+    // Se não retornou tool_calls E não retornou texto, o modelo falhou em gerar saída útil
+    if (!assistantMessage.content) {
+      console.warn("⚠️ [Agente] O modelo não retornou tools nem texto no Passo 1. Abortando.");
+      const fallbackMsg = "Desculpe, não consegui processar a sua pergunta neste momento. Pode tentar reformular?";
+      res.write(`data: ${JSON.stringify({ type: "status", status: "Erro de geração..." })}\n\n`);
+      res.write(`data: ${JSON.stringify({ type: "sources", sources: [] })}\n\n`);
+      res.write(`data: ${JSON.stringify({ type: "token", content: fallbackMsg })}\n\n`);
+      res.write(`data: [DONE]\n\n`);
+      if (session) {
+        updateSession(session.sessionId, question, "", fallbackMsg);
+      }
+      return;
+    }
 
     res.write(`data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}\n\n`);
 
     // Adiciona a mensagem do assistente ao histórico
     messages.push({
       role: "assistant",
-      content: assistantMessage.content || "",
+      content: assistantMessage.content,
     });
 
     // Envia fontes vazias
@@ -397,25 +409,22 @@ export async function processAgentQuestion(
       `data: ${JSON.stringify({ type: "sources", sources: [] })}\n\n`
     );
 
-    // Se já tem conteúdo na resposta direta, envia como tokens
-    if (assistantMessage.content) {
-      res.write(
-        `data: ${JSON.stringify({ type: "token", content: assistantMessage.content })}\n\n`
-      );
-      res.write(`data: [DONE]\n\n`);
+    res.write(
+      `data: ${JSON.stringify({ type: "token", content: assistantMessage.content })}\n\n`
+    );
+    res.write(`data: [DONE]\n\n`);
 
-      const duration = ((Date.now() - start) / 1000).toFixed(1);
-      console.log(
-        `⏱️  [Agente] Pipeline concluído em ${duration}s (sem ferramentas)\n`
-      );
+    const duration = ((Date.now() - start) / 1000).toFixed(1);
+    console.log(
+      `⏱️  [Agente] Pipeline concluído em ${duration}s (sem ferramentas)\n`
+    );
 
-      // Atualizar memória com a resposta direta
-      if (session) {
-        updateSession(session.sessionId, question, "", assistantMessage.content);
-      }
-
-      return;
+    // Atualizar memória com a resposta direta
+    if (session) {
+      updateSession(session.sessionId, question, "", assistantMessage.content);
     }
+
+    return;
   }
 
   // ── Passo 3: Segunda chamada ao Ollama com streaming ──
