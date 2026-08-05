@@ -1508,6 +1508,22 @@ REGRAS:
 4. Adicione contexto impl\xEDcito quando cab\xEDvel (ex: "reprovar" \u2192 "crit\xE9rios de reprova\xE7\xE3o").
 5. Mantenha o sentido original da pergunta.
 6. Responda APENAS com a Tag de Inten\xE7\xE3o seguida da pergunta reescrita, sem aspas. Exemplo: "[DISCIPLINA] qual \xE9 a carga hor\xE1ria de c\xE1lculo 1?"`;
+function inferIntentionFromKeywords(text) {
+  const t = text.toLowerCase();
+  if (/matriz|grade|periodo|semestre|ppc|curso/i.test(t))
+    return "CURSO";
+  if (/ementa|pre-requisito|disciplina/i.test(t))
+    return "DISCIPLINA";
+  if (/tcc|trabalho de conclusao/i.test(t))
+    return "ESTAGIO_TCC";
+  if (/estagio/i.test(t))
+    return "ESTAGIO_TCC";
+  if (/matricula|ingresso|sisu|vestibular/i.test(t))
+    return "INGRESSO_MATRICULA";
+  if (/frequencia|falta|nota|abono|atestado|prova|exame/i.test(t))
+    return "AVALIACAO_FREQUENCIA";
+  return "OUTRAS";
+}
 async function rewriteQuestion(question) {
   try {
     console.log(`\u270D\uFE0F  [Reescrita] Original: "${question}"`);

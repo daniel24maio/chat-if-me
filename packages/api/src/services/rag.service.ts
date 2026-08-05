@@ -80,6 +80,20 @@ REGRAS:
 6. Responda APENAS com a Tag de Intenção seguida da pergunta reescrita, sem aspas. Exemplo: "[DISCIPLINA] qual é a carga horária de cálculo 1?"`;
 
 /**
+ * Infere a intenção da pergunta com base em palavras-chave quando a reescrita do LLM falha ou retorna "OUTRAS".
+ */
+function inferIntentionFromKeywords(text: string): string {
+  const t = text.toLowerCase();
+  if (/matriz|grade|periodo|semestre|ppc|curso/i.test(t)) return "CURSO";
+  if (/ementa|pre-requisito|disciplina/i.test(t)) return "DISCIPLINA";
+  if (/tcc|trabalho de conclusao/i.test(t)) return "ESTAGIO_TCC";
+  if (/estagio/i.test(t)) return "ESTAGIO_TCC";
+  if (/matricula|ingresso|sisu|vestibular/i.test(t)) return "INGRESSO_MATRICULA";
+  if (/frequencia|falta|nota|abono|atestado|prova|exame/i.test(t)) return "AVALIACAO_FREQUENCIA";
+  return "OUTRAS";
+}
+
+/**
  * Reescreve a pergunta do aluno para melhorar a qualidade da busca semântica.
  *
  * Usa um LLM leve (qwen3.5) para expandir siglas e formalizar a linguagem,
