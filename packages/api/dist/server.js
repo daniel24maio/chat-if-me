@@ -1637,7 +1637,9 @@ function formatFTSQuery(query, intent) {
     INFRA_CAMPUS: "biblioteca | laboratorio",
     DIREITOS_DEVERES: "direitos | deveres"
   };
-  if (effectiveIntent && intentKeywords[effectiveIntent]) {
+  if (effectiveIntent && (effectiveIntent === "DISCIPLINA_EMENTA" || effectiveIntent === "DISCIPLINA" || effectiveIntent === "CONTEUDO")) {
+    mainFTS = `(${mainFTS}) & (ementa | ementario | conteudo)`;
+  } else if (effectiveIntent && intentKeywords[effectiveIntent]) {
     mainFTS = `(${mainFTS}) | (${intentKeywords[effectiveIntent]})`;
   }
   return mainFTS;
@@ -1656,7 +1658,7 @@ async function hybridSearch(embedding, queryText, limit = 5, intention) {
            ROW_NUMBER() OVER (ORDER BY embedding <=> $1::vector) AS rank
          FROM documents
          ORDER BY embedding <=> $1::vector
-         LIMIT 20
+         LIMIT 40
        ),
        lexical AS (
          SELECT id, content AS content, metadata->>'filename' AS source,
@@ -1667,7 +1669,7 @@ async function hybridSearch(embedding, queryText, limit = 5, intention) {
          FROM documents
          WHERE content_tsv @@ to_tsquery('portuguese_unaccent', $2::text)
          ORDER BY ts_score DESC
-         LIMIT 20
+         LIMIT 40
        )
      SELECT
        COALESCE(s.id, l.id) AS id,
@@ -1690,6 +1692,15 @@ async function hybridSearch(embedding, queryText, limit = 5, intention) {
     source: row.source || "documento desconhecido",
     similarity: Number(row.rrf_score)
   }));
+  const effectiveIntent = !intention || intention === "OUTRAS" ? inferIntentionFromKeywords(queryText) : intention;
+  if (effectiveIntent && (effectiveIntent === "DISCIPLINA_EMENTA" || effectiveIntent === "DISCIPLINA" || effectiveIntent === "CONTEUDO")) {
+    for (const doc of documents) {
+      if (/ementa:/i.test(doc.content) || /conteudo programatico/i.test(doc.content)) {
+        doc.similarity += 0.05;
+      }
+    }
+    documents.sort((a, b) => b.similarity - a.similarity);
+  }
   if (documents.length > 0) {
     const chunkIds = documents.map((d) => d.id);
     const negatives = await countNegativesByChunk(chunkIds);

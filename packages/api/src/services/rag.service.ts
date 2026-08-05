@@ -237,7 +237,9 @@ function formatFTSQuery(query: string, intent?: string): string {
     DIREITOS_DEVERES: "direitos | deveres",
   };
 
-  if (effectiveIntent && intentKeywords[effectiveIntent]) {
+  if (effectiveIntent && (effectiveIntent === "DISCIPLINA_EMENTA" || effectiveIntent === "DISCIPLINA" || effectiveIntent === "CONTEUDO")) {
+    mainFTS = `(${mainFTS}) & (ementa | ementario | conteudo)`;
+  } else if (effectiveIntent && intentKeywords[effectiveIntent]) {
     mainFTS = `(${mainFTS}) | (${intentKeywords[effectiveIntent]})`;
   }
 
@@ -276,7 +278,7 @@ async function hybridSearch(
            ROW_NUMBER() OVER (ORDER BY embedding <=> $1::vector) AS rank
          FROM documents
          ORDER BY embedding <=> $1::vector
-         LIMIT 20
+         LIMIT 40
        ),
        lexical AS (
          SELECT id, content AS content, metadata->>'filename' AS source,
@@ -287,7 +289,7 @@ async function hybridSearch(
          FROM documents
          WHERE content_tsv @@ to_tsquery('portuguese_unaccent', $2::text)
          ORDER BY ts_score DESC
-         LIMIT 20
+         LIMIT 40
        )
      SELECT
        COALESCE(s.id, l.id) AS id,
@@ -311,6 +313,17 @@ async function hybridSearch(
     source: row.source || "documento desconhecido",
     similarity: Number(row.rrf_score),
   }));
+
+  // ── Boost para trechos de Ementa quando a intenção for busca de ementa ──
+  const effectiveIntent = (!intention || intention === "OUTRAS") ? inferIntentionFromKeywords(queryText) : intention;
+  if (effectiveIntent && (effectiveIntent === "DISCIPLINA_EMENTA" || effectiveIntent === "DISCIPLINA" || effectiveIntent === "CONTEUDO")) {
+    for (const doc of documents) {
+      if (/ementa:/i.test(doc.content) || /conteudo programatico/i.test(doc.content)) {
+        doc.similarity += 0.05; // Boost de prioridade no RRF para trazer a ementa como Documento 1
+      }
+    }
+    documents.sort((a, b) => b.similarity - a.similarity);
+  }
 
   // ── Penalização por feedback negativo (ICL Dinâmico) ──
   // Chunks com feedbacks negativos acumulados têm o score RRF reduzido:

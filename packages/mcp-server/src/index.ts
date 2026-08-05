@@ -119,7 +119,7 @@ function formatFTSQuery(query: string, intent?: string): string {
 
   const intentKeywords: Record<string, string> = {
     ESTRUTURA_CURSOS: "matriz | curricular | periodo",
-    DISCIPLINA_EMENTA: "ementa | ementario",
+    DISCIPLINA_EMENTA: "ementa",
     INGRESSO_MATRICULA: "matricula | ingresso",
     AVALIACAO_FREQUENCIA: "frequencia | faltas | nota",
     ESTAGIO_TCC: "tcc | estagio",
@@ -129,7 +129,9 @@ function formatFTSQuery(query: string, intent?: string): string {
     DIREITOS_DEVERES: "direitos | deveres",
   };
 
-  if (intent && intentKeywords[intent]) {
+  if (intent && (intent === "DISCIPLINA_EMENTA" || intent === "DISCIPLINA" || intent === "CONTEUDO")) {
+    mainFTS = `(${mainFTS}) & (ementa | ementario | conteudo)`;
+  } else if (intent && intentKeywords[intent]) {
     mainFTS = `(${mainFTS}) | (${intentKeywords[intent]})`;
   }
 
@@ -200,6 +202,16 @@ async function searchDocuments(
     source: row.source || "documento desconhecido",
     similarity: Number(row.rrf_score),
   }));
+
+  // ── Boost para trechos de Ementa quando a intenção for busca de ementa ──
+  if (intent && (intent === "DISCIPLINA_EMENTA" || intent === "DISCIPLINA" || intent === "CONTEUDO")) {
+    for (const doc of documents) {
+      if (/ementa:/i.test(doc.content) || /conteudo programatico/i.test(doc.content)) {
+        doc.similarity += 0.05; // Boost de prioridade no RRF para trazer a ementa como Documento 1
+      }
+    }
+    documents.sort((a, b) => b.similarity - a.similarity);
+  }
 
   // ── Penalização por feedback negativo (ICL Dinâmico) ──
   // Chunks com feedbacks negativos acumulados têm o score RRF reduzido:
