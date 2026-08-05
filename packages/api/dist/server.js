@@ -1543,11 +1543,65 @@ async function generateEmbedding(text) {
 }
 var RRF_K = 60;
 var RRF_ALPHA = 0.5;
-async function hybridSearch(embedding, queryText, limit = 5) {
+function formatFTSQuery(query, intent) {
+  const stopWords = /* @__PURE__ */ new Set([
+    "qual",
+    "quais",
+    "como",
+    "onde",
+    "quando",
+    "para",
+    "sobre",
+    "entre",
+    "este",
+    "esta",
+    "esses",
+    "essas",
+    "pode",
+    "podia",
+    "poderia",
+    "favor",
+    "voce",
+    "curso",
+    "ifmg",
+    "campus",
+    "ouro",
+    "branco",
+    "sao",
+    "tem",
+    "ter",
+    "quaisquer"
+  ]);
+  const queryLimpa = query.replace(/[^\p{L}\p{N}\s]/gu, " ").toLowerCase().trim();
+  if (!queryLimpa)
+    return "dummy_fallback_query";
+  const terms = queryLimpa.split(/\s+/).filter((w) => w.length > 2 && !stopWords.has(w));
+  let mainFTS = terms.length > 0 ? terms.join(" & ") : "dummy_fallback_query";
+  const intentKeywords = {
+    CURSO: "matriz | curricular | periodo",
+    ESTRUTURA_CURSOS: "matriz | curricular | periodo",
+    DISCIPLINA: "ementa | ementario | pre-requisito",
+    DISCIPLINA_EMENTA: "ementa | ementario",
+    CONTEUDO: "ementa | conteudo",
+    INGRESSO_MATRICULA: "matricula | ingresso",
+    AVALIACAO_FREQUENCIA: "frequencia | faltas | nota",
+    ESTAGIO_TCC: "tcc | estagio",
+    ATIVIDADES_EXTRAS: "complementares | extensao",
+    ASSISTENCIA_BOLSAS: "bolsa | auxilio",
+    INFRA_CAMPUS: "biblioteca | laboratorio",
+    DIREITOS_DEVERES: "direitos | deveres"
+  };
+  if (intent && intentKeywords[intent]) {
+    mainFTS = `(${mainFTS}) | (${intentKeywords[intent]})`;
+  }
+  return mainFTS;
+}
+async function hybridSearch(embedding, queryText, limit = 5, intention) {
   console.log(
-    `\u{1F50D} [RAG] Busca h\xEDbrida: vetorial (\u03B1=${RRF_ALPHA}) + FTS (1-\u03B1=${1 - RRF_ALPHA}), k=${RRF_K}`
+    `\u{1F50D} [RAG] Busca h\xEDbrida: vetorial (\u03B1=${RRF_ALPHA}) + FTS (1-\u03B1=${1 - RRF_ALPHA}), k=${RRF_K} | Inten\xE7\xE3o: [${intention || "N/A"}]`
   );
   const vectorStr = `[${embedding.join(",")}]`;
+  const ftsQuery = formatFTSQuery(queryText, intention);
   const result = await pool.query(
     `WITH
        semantic AS (
@@ -1560,12 +1614,12 @@ async function hybridSearch(embedding, queryText, limit = 5) {
        ),
        lexical AS (
          SELECT id, content AS content, metadata->>'filename' AS source,
-           ts_rank_cd(content_tsv, plainto_tsquery('portuguese_unaccent', $2)) AS ts_score,
+           ts_rank_cd(content_tsv, to_tsquery('portuguese_unaccent', $2::text)) AS ts_score,
            ROW_NUMBER() OVER (
-             ORDER BY ts_rank_cd(content_tsv, plainto_tsquery('portuguese_unaccent', $2)) DESC
+             ORDER BY ts_rank_cd(content_tsv, to_tsquery('portuguese_unaccent', $2::text)) DESC
            ) AS rank
          FROM documents
-         WHERE content_tsv @@ plainto_tsquery('portuguese_unaccent', $2)
+         WHERE content_tsv @@ to_tsquery('portuguese_unaccent', $2::text)
          ORDER BY ts_score DESC
          LIMIT 20
        )
@@ -1582,7 +1636,7 @@ async function hybridSearch(embedding, queryText, limit = 5) {
      FULL OUTER JOIN lexical l ON s.id = l.id
      ORDER BY rrf_score DESC
      LIMIT $3`,
-    [vectorStr, queryText, limit]
+    [vectorStr, ftsQuery, limit]
   );
   let documents = result.rows.map((row) => ({
     id: Number(row.id),
@@ -1743,7 +1797,7 @@ ${"\u2500".repeat(50)}`);
   const embedding = await generateEmbedding(rewrittenQuestion);
   const embedMs = Date.now() - t1;
   const t2 = Date.now();
-  const documents = await hybridSearch(embedding, rewrittenQuestion);
+  const documents = await hybridSearch(embedding, rewrittenQuestion, 5, intention);
   const retrievalMs = Date.now() - t2;
   const sources = documents.map(
     (doc) => `${doc.source} (similaridade: ${doc.similarity.toFixed(2)})`
