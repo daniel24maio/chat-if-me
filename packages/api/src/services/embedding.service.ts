@@ -399,7 +399,7 @@ async function splitIntoChunks(text: string, filename: string): Promise<ChunkDat
     chunk.metadata.totalChunks = chunks.length;
   }
 
-  console.log(`✂️  [Chunking] "${filename}" → ${chunks.length} chunks (tipo: ${chunkingType})`);
+  console.log(`✂️  [Chunking] "${filename}" → ${chunks.length} chunks (tipo: ${chunkingType}, maxChars: ${CHUNK_SIZE_GENERAL})`);
   return chunks;
 }
 

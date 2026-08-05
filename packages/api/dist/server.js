@@ -27141,7 +27141,7 @@ async function splitIntoChunks(text, filename) {
   for (const chunk of chunks) {
     chunk.metadata.totalChunks = chunks.length;
   }
-  console.log(`\u2702\uFE0F  [Chunking] "${filename}" \u2192 ${chunks.length} chunks (tipo: ${chunkingType})`);
+  console.log(`\u2702\uFE0F  [Chunking] "${filename}" \u2192 ${chunks.length} chunks (tipo: ${chunkingType}, maxChars: ${CHUNK_SIZE_GENERAL})`);
   return chunks;
 }
 function truncateForEmbedding(text) {

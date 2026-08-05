@@ -149,6 +149,10 @@ async function searchDocuments(
   const vectorStr = `[${embedding.join(",")}]`;
   const ftsQuery = formatFTSQuery(queryText, intent);
 
+  console.error(
+    `🔍 [MCP] Busca híbrida (α=${RRF_ALPHA}, k=${RRF_K}) | Intenção: [${intent || "N/A"}] | FTS: "${ftsQuery}"`
+  );
+
   const result = await pool.query(
     `WITH
        semantic AS (
@@ -224,7 +228,7 @@ async function searchDocuments(
             const originalScore = doc.similarity;
             doc.similarity *= 1 / (1 + PENALTY_BETA * negCount);
             console.error(
-              `⚠️  [MCP RRF] Chunk #${doc.id} penalizado: ` +
+              `⚠️  [MCP RRF] Chunk #${doc.id} penalizado (β=${PENALTY_BETA}): ` +
               `${negCount} negativo(s), score ${originalScore.toFixed(4)} → ${doc.similarity.toFixed(4)}`
             );
           }
