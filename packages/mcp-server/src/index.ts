@@ -42,7 +42,7 @@ const MIN_RRF_SCORE = 0.002;
 const MAX_RESULTS = 5;
 
 /** Fator de sensibilidade à penalização por feedback negativo (ICL Dinâmico) */
-const PENALTY_BETA = 0.3;
+const PENALTY_BETA = 0.08;
 
 // ---------------------------------------------------------------------------
 // PostgreSQL
@@ -79,14 +79,33 @@ async function generateEmbedding(text: string): Promise<number[]> {
 
 /**
  * Formata a query para o formato tsquery do PostgreSQL (FTS).
- * Remove caracteres especiais e substitui espaços por ' & '.
+ * Remove caracteres especiais, junta os termos com '&' e adiciona palavras de apoio da intenção (intent).
  */
-function formatFTSQuery(query: string): string {
+function formatFTSQuery(query: string, intent?: string): string {
   // Remove tudo que não for letra, número ou espaço
   const queryLimpa = query.replace(/[^\p{L}\p{N}\s]/gu, " ").trim();
   if (!queryLimpa) return "dummy_fallback_query"; // Evita erro de sintaxe se ficar vazio
 
-  return queryLimpa.split(/\s+/).join(" & ");
+  const terms = queryLimpa.split(/\s+/).filter(Boolean);
+  let mainFTS = terms.join(" & ");
+
+  const intentKeywords: Record<string, string> = {
+    ESTRUTURA_CURSOS: "matriz | curricular | periodo",
+    DISCIPLINA_EMENTA: "ementa | ementario",
+    INGRESSO_MATRICULA: "matricula | ingresso",
+    AVALIACAO_FREQUENCIA: "frequencia | faltas | nota",
+    ESTAGIO_TCC: "tcc | estagio",
+    ATIVIDADES_EXTRAS: "complementares | extensao",
+    ASSISTENCIA_BOLSAS: "bolsa | auxilio",
+    INFRA_CAMPUS: "biblioteca | laboratorio",
+    DIREITOS_DEVERES: "direitos | deveres",
+  };
+
+  if (intent && intentKeywords[intent]) {
+    mainFTS = `(${mainFTS}) | (${intentKeywords[intent]})`;
+  }
+
+  return mainFTS;
 }
 
 /**
@@ -96,10 +115,11 @@ function formatFTSQuery(query: string): string {
 async function searchDocuments(
   embedding: number[],
   queryText: string,
-  limit: number
+  limit: number,
+  intent?: string
 ): Promise<{ id: number; content: string; source: string; similarity: number }[]> {
   const vectorStr = `[${embedding.join(",")}]`;
-  const ftsQuery = formatFTSQuery(queryText);
+  const ftsQuery = formatFTSQuery(queryText, intent);
 
   const result = await pool.query(
     `WITH
@@ -251,7 +271,7 @@ server.registerTool(
         "- ESTAGIO_TCC: Regras de estágio obrigatório/não obrigatório, documentação, orientadores e bancas de Trabalho de Conclusão de Curso.\n" +
         "- ATIVIDADES_EXTRAS: Horas complementares (AAC), pesquisa, extensão, monitoria e eventos acadêmicos.\n" +
         "- ASSISTENCIA_BOLSAS: Editais de assistência estudantil, auxílio moradia/transporte/alimentação e bolsas de estudo.\n" +
-        "- INFRA_CAMPUS: Regras de uso da biblioteca, laboratórios, restaurante, setores administrativos e horários de funcionamento.\n" +
+        "- INFRA_CAMPUS: Regras de uso da biblioteca, laboratórios, restaurante, horários de funcionamento, setores administrativos.\n" +
         "- DIREITOS_DEVERES: Regime disciplinar, sanções, advertências, infrações e direitos do corpo discente.\n" +
         "- OUTRAS: Assuntos que não se encaixam em nenhuma categoria acima."
       ),
@@ -267,8 +287,8 @@ server.registerTool(
         `🔢 [MCP] Embedding gerado (${embedding.length} dimensões)`
       );
 
-      // 2. Buscar no banco (Híbrida com Threshold)
-      const documents = await searchDocuments(embedding, query, MAX_RESULTS);
+      // 2. Buscar no banco (Híbrida com Threshold e Intent)
+      const documents = await searchDocuments(embedding, query, MAX_RESULTS, intent);
       console.error(
         `📄 [MCP] ${documents.length} trechos encontrados (acima da nota de corte)`
       );

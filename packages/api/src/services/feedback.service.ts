@@ -37,9 +37,9 @@ const MAX_FEW_SHOT_EXAMPLES = 3;
  * Fator de sensibilidade à penalização por feedback negativo.
  * Score_final = Score_RRF × 1 / (1 + PENALTY_BETA × N_negativos)
  *
- * β = 0.3 → penalização suave e progressiva
+ * β = 0.08 → penalização equilibrada sem desqualificar chunks legítimos
  */
-export const PENALTY_BETA = 0.3;
+export const PENALTY_BETA = 0.08;
 
 // ---------------------------------------------------------------------------
 // Interfaces

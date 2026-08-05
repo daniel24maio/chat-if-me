@@ -812,6 +812,68 @@ async function verifyEmbeddingDimension() {
     );
   }
 }
+async function verifyFeedbacksTable() {
+  try {
+    const tableExists = await pool.query(`
+      SELECT EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_name = 'chat_feedbacks'
+      ) AS exists
+    `);
+    let needsMigration = false;
+    let dropOldTable = false;
+    if (!tableExists.rows[0]?.exists) {
+      console.log("\u{1F504} [Database] Tabela 'chat_feedbacks' n\xE3o encontrada. Criando...");
+      needsMigration = true;
+    } else {
+      const colExists = await pool.query(`
+        SELECT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'chat_feedbacks' AND column_name = 'chunk_ids'
+        ) AS exists
+      `);
+      if (!colExists.rows[0]?.exists) {
+        console.warn("\u26A0\uFE0F  [Database] Tabela 'chat_feedbacks' existe, mas est\xE1 no formato antigo (faltam colunas).");
+        console.log("\u{1F504} [Database] Recriando tabela 'chat_feedbacks' para o formato ICL...");
+        dropOldTable = true;
+        needsMigration = true;
+      } else {
+        console.log("\u2705 [Database] Tabela 'chat_feedbacks' j\xE1 est\xE1 no formato correto \u2713");
+      }
+    }
+    if (needsMigration) {
+      if (dropOldTable) {
+        await pool.query("DROP TABLE chat_feedbacks CASCADE");
+      }
+      const sql = `
+        CREATE TABLE chat_feedbacks (
+          id SERIAL PRIMARY KEY,
+          question TEXT NOT NULL,
+          response TEXT NOT NULL,
+          question_embedding vector(1024) NOT NULL,
+          feedback_type VARCHAR(10) NOT NULL CHECK (feedback_type IN ('positive', 'negative')),
+          chunk_ids INTEGER[] NOT NULL DEFAULT '{}',
+          metadata JSONB NOT NULL DEFAULT '{}',
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
+        CREATE INDEX idx_feedbacks_question_embedding ON chat_feedbacks USING hnsw (question_embedding vector_cosine_ops) WITH (m = 16, ef_construction = 100);
+        CREATE INDEX idx_feedbacks_positive ON chat_feedbacks (feedback_type) WHERE feedback_type = 'positive';
+        CREATE INDEX idx_feedbacks_chunk_ids ON chat_feedbacks USING GIN (chunk_ids);
+      `;
+      try {
+        await pool.query(sql);
+        console.log("\u2705 [Database] Migra\xE7\xE3o (chat_feedbacks) executada com sucesso!");
+      } catch (err) {
+        console.error("\u274C [Database] Falha ao executar migra\xE7\xE3o da tabela:", err);
+      }
+    }
+  } catch (error) {
+    console.error(
+      "\u274C [Database] Falha na verifica\xE7\xE3o da tabela chat_feedbacks:",
+      error instanceof Error ? error.message : error
+    );
+  }
+}
 
 // src/config/ollama.ts
 var OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
@@ -819,7 +881,7 @@ var EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || "bge-m3";
 var LLM_MODEL = process.env.OLLAMA_LLM_MODEL || "qwen3.5:4b";
 var REWRITE_MODEL = process.env.OLLAMA_REWRITE_MODEL || "qwen3.5:4b";
 var NUM_CTX = Number(process.env.OLLAMA_NUM_CTX) || 8192;
-var FETCH_TIMEOUT_MS = 18e4;
+var FETCH_TIMEOUT_MS = 6e5;
 function pruneHistory(messages, maxInteractions = 6) {
   if (messages.length <= maxInteractions + 1)
     return messages;
@@ -917,7 +979,11 @@ async function streamOllamaResponse(messages, res, sources) {
       messages: safeMessages,
       stream: true,
       keep_alive: "24h",
-      options: { num_ctx: NUM_CTX }
+      options: {
+        num_ctx: NUM_CTX,
+        temperature: 0.2,
+        num_predict: 2048
+      }
     })
   });
   if (!ollamaResponse.ok) {
@@ -995,7 +1061,7 @@ async function streamOllamaResponse(messages, res, sources) {
 }
 
 // src/services/memory.service.ts
-var SESSION_TTL_MS = 5 * 60 * 1e3;
+var SESSION_TTL_MS = 12 * 60 * 1e3;
 var CLEANUP_INTERVAL_MS = 30 * 1e3;
 var MAX_SESSIONS = 100;
 var MAX_MESSAGES_PER_SESSION = 10;
@@ -1329,7 +1395,7 @@ async function streamStaticGreeting(res) {
 // src/services/feedback.service.ts
 var FEW_SHOT_SIMILARITY_THRESHOLD = 0.85;
 var MAX_FEW_SHOT_EXAMPLES = 3;
-var PENALTY_BETA = 0.3;
+var PENALTY_BETA = 0.08;
 async function saveFeedback(params) {
   const { question, response, feedbackType, chunkIds, metadata } = params;
   try {
@@ -1590,12 +1656,13 @@ REGRAS OBRIGAT\xD3RIAS (siga rigorosamente):
 4. Cite a fonte (nome do documento) quando poss\xEDvel.
 
 DIRETIVAS OBRIGAT\xD3RIAS DE IDIOMA E FORMATA\xC7\xC3O:
-- REGRA ABSOLUTA: Voc\xEA deve responder EXCLUSIVAMENTE em Portugu\xEAs do Brasil (pt-BR). Traduza qualquer termo do contexto que esteja em ingl\xEAs. \xC9 proibido responder em ingl\xEAs ou qualquer outro idioma.
-- Seja DIRETO E CONCISO. N\xE3o copie longos trechos de texto (como ementas completas ou bibliografias) a menos que o usu\xE1rio tenha solicitado especificamente.
-- Se a inten\xE7\xE3o for [DISCIPLINA] e o usu\xE1rio pedir uma lista de disciplinas de um per\xEDodo, cite APENAS os nomes das disciplinas e seus c\xF3digos.
+- REGRA ABSOLUTA: Responda EXCLUSIVAMENTE em Portugu\xEAs do Brasil (pt-BR). Traduza qualquer termo do contexto que esteja em ingl\xEAs. \xC9 proibido responder em ingl\xEAs ou qualquer outro idioma.
+- REGRA PROIBITIVA: NUNCA exiba blocos de racioc\xEDnio como 'Thinking Process:', 'Analyze the Request:', 'Scan Context' ou passos internos de an\xE1lise. Escreva APENAS a resposta final diretamente para o aluno.
+- REGRA DE EMENTAS E DETALHAMENTO: Se o usu\xE1rio solicitar a EMENTA de uma disciplina ou detalhes de regras acad\xEAmicas (ex: porcentagem de frequ\xEAncia, nota de aprova\xE7\xE3o, TCC, est\xE1gio), forne\xE7a a resposta COMPLETA E INTEGRAL como consta nos documentos, sem omitir t\xF3picos ou resumir a ementa.
+- Se o usu\xE1rio pedir a LISTA DE DISCIPLINAS de um per\xEDodo, cite os nomes das disciplinas e seus c\xF3digos.
 - Mantenha a formata\xE7\xE3o simples. Use listas ('* ') com UM \xDANICO N\xCDVEL de aninhamento. NUNCA coloque listas dentro de listas.
 - Use **negrito** para destacar nomes de disciplinas, c\xF3digos ou termos chaves.
-- Finalize com uma pergunta breve e proativa (Ex: "Gostaria que eu detalhasse a ementa de alguma dessas disciplinas?").`;
+- Finalize com uma pergunta breve e proativa (Ex: "Gostaria de saber a ementa ou os pr\xE9-requisitos de alguma dessas disciplinas?").`;
   const historyMessages = sessionMessages.slice(-5).map((m) => ({ role: m.role, content: m.content }));
   return [
     { role: "system", content: systemPrompt },
@@ -26690,8 +26757,8 @@ function sanitizeText(text) {
 
 // src/services/embedding.service.ts
 var EMBEDDING_MAX_CHARS = 4e3;
-var CHUNK_SIZE_GENERAL = 2048;
-var CHUNK_OVERLAP_GENERAL = 256;
+var CHUNK_SIZE_GENERAL = 2200;
+var CHUNK_OVERLAP_GENERAL = 300;
 var TABLE_MAX_ROWS_PER_CHUNK = 30;
 var BATCH_SIZE = 32;
 async function extractTextFromPDF(buffer, filename) {
@@ -26794,7 +26861,7 @@ function detectChunkingType(text, filename) {
   const chapters = (text.match(/\bCAP[IÍ]TULO\s+[IVXLCDM\d]+/gi) || []).length;
   if (articles >= 3 || chapters >= 2)
     return "juridical";
-  if (/regulament|norma|resolu[çc]|portaria|edital|delibera|estatut|regimento/i.test(filename)) {
+  if (/regulament|norma|resolu[çc]|portaria|edital|delibera|estatut|regimento|ppc/i.test(filename)) {
     return "juridical";
   }
   return "general";
@@ -26803,10 +26870,36 @@ async function juridicalChunking(text, filename) {
   const documentName = generateDocumentName(filename);
   const chunks = [];
   const splitter = new RecursiveCharacterTextSplitter({
-    chunkSize: EMBEDDING_MAX_CHARS - 300,
-    // Margem para o prefixo de contexto
-    chunkOverlap: 200,
-    separators: ["\nCAP\xCDTULO ", "\nT\xCDTULO ", "\nSe\xE7\xE3o ", "\nArt. ", "\n\n", "\n", ". ", " "],
+    chunkSize: CHUNK_SIZE_GENERAL,
+    chunkOverlap: CHUNK_OVERLAP_GENERAL,
+    separators: [
+      "\nCAP\xCDTULO ",
+      "\nT\xCDTULO ",
+      "\nSe\xE7\xE3o ",
+      "\nArt. ",
+      "\nMatriz Curricular",
+      "\nDISCIPLINAS OBRIGAT\xD3RIAS",
+      "\nPER\xCDODO ",
+      "\n1\xBA Per\xEDodo",
+      "\n2\xBA Per\xEDodo",
+      "\n3\xBA Per\xEDodo",
+      "\n4\xBA Per\xEDodo",
+      "\n5\xBA Per\xEDodo",
+      "\n6\xBA Per\xEDodo",
+      "\n7\xBA Per\xEDodo",
+      "\n8\xBA Per\xEDodo",
+      "\n8.1.1 ",
+      "\n8.1.2 ",
+      "\n8.1.3 ",
+      "\n8.3. ",
+      "\nEmenta:",
+      "\nObjetivo(s):",
+      "\nC\xF3digo:",
+      "\n\n",
+      "\n",
+      ". ",
+      " "
+    ],
     keepSeparator: true
   });
   const parts = await splitter.splitText(text);
@@ -26815,7 +26908,7 @@ async function juridicalChunking(text, filename) {
     const partTrimmed = part.trim();
     if (partTrimmed.length === 0)
       continue;
-    const hierarchyMatch = partTrimmed.match(/^(?:CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o)\s+[IVXLCDM\d]+.*?(?:\n|$)/i);
+    const hierarchyMatch = partTrimmed.match(/^(?:CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o|8\.\d+(?:\.\d+)?)\s+[IVXLCDM\d\w\s]+.*?(?:\n|$)/i);
     if (hierarchyMatch) {
       currentContext = hierarchyMatch[0].trim();
     }
@@ -27210,7 +27303,7 @@ import { dirname, resolve as resolve2 } from "path";
 var OLLAMA_BASE_URL2 = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
 var LLM_MODEL2 = process.env.OLLAMA_LLM_MODEL || "qwen3.5:4b";
 var NUM_CTX2 = Number(process.env.OLLAMA_NUM_CTX) || 8192;
-var FETCH_TIMEOUT_MS2 = 38e4;
+var FETCH_TIMEOUT_MS2 = 6e5;
 var AGENT_SYSTEM_PROMPT = `Voc\xEA \xE9 o assistente virtual oficial do IFMG Campus Ouro Branco.
 
 Voc\xEA tem acesso a uma ferramenta de busca nos documentos oficiais (cursos, PPC, regulamentos, portarias, ementas). USE ESTA FERRAMENTA para responder perguntas sobre regulamentos acad\xEAmicos, PPC, grade curricular, TCC, est\xE1gio, atividades complementares e normas gerais do campus.
@@ -27232,13 +27325,14 @@ REGRAS OBRIGAT\xD3RIAS:
    - DIREITOS_DEVERES: Regime disciplinar, deveres dos alunos, penalidades, direitos discentes.
    - OUTRAS: Para qualquer outro assunto acad\xEAmico ou geral.
 4. Use EXCLUSIVAMENTE as informa\xE7\xF5es retornadas pela ferramenta. N\xE3o invente ou complemente com conhecimento externo.
-5. FILTRE ESTRITAMENTE: Extraia APENAS a informa\xE7\xE3o pontual que responde \xE0 pergunta do usu\xE1rio. \xC9 EXPRESSAMENTE PROIBIDO gerar longos blocos de texto, ementas completas ou eixos curriculares se a pergunta for apenas sobre listar mat\xE9rias ou verificar carga hor\xE1ria.
+5. EMENTAS E REGRAS ACAD\xCAMICAS: Se o usu\xE1rio solicitar a EMENTA de uma disciplina ou regras acad\xEAmicas espec\xEDficas (porcentagem de frequ\xEAncia, nota de aprova\xE7\xE3o, TCC, est\xE1gio), forne\xE7a o conte\xFAdo INTEGRAL retornado pela ferramenta, sem resumir ou omitir t\xF3picos. Se a pergunta for apenas sobre listar mat\xE9rias de um per\xEDodo, cite apenas os nomes das disciplinas e seus c\xF3digos.
 6. Se a ferramenta n\xE3o retornar resultados relevantes, diga: "N\xE3o encontrei essa informa\xE7\xE3o nos documentos dispon\xEDveis. Recomendo consultar a coordena\xE7\xE3o do seu curso ou o setor correspondente do IFMG."
 7. Cite a fonte (nome do documento) quando poss\xEDvel.
 8. Para sauda\xE7\xF5es simples (ol\xE1, bom dia), responda diretamente sem usar a ferramenta.
 
 DIRETIVAS DE IDIOMA E FORMATA\xC7\xC3O:
 - REGRA ABSOLUTA: Responda EXCLUSIVAMENTE em Portugu\xEAs do Brasil (pt-BR).
+- REGRA PROIBITIVA: NUNCA exiba blocos de racioc\xEDnio como 'Thinking Process:', 'Analyze the Request:', 'Scan Context' ou passos internos de an\xE1lise. Escreva APENAS a resposta final diretamente para o aluno.
 - ECONOMIA DE TOKENS: Seja extremamente direto e conciso. N\xE3o enrole na introdu\xE7\xE3o ou conclus\xE3o.
 - FORMATA\xC7\xC3O SIMPLES: Use bullet points ('* ') APENAS no n\xEDvel principal. NUNCA crie listas aninhadas ou recuos secund\xE1rios.
 - Use **negrito** para destacar os termos principais (Ex: nomes das mat\xE9rias).`;
@@ -27434,40 +27528,56 @@ ${"\u2500".repeat(50)}`);
 
 `);
   } else {
-    console.log(
-      "\u{1F4AC} [Agente] Passo 2: Sem tool_calls \u2014 resposta direta"
-    );
+    console.log("\u{1F4AC} [Agente] Passo 2: Sem tool_calls \u2014 resposta direta");
+    if (!assistantMessage.content) {
+      console.warn("\u26A0\uFE0F [Agente] O modelo n\xE3o retornou tools nem texto no Passo 1. Abortando.");
+      const fallbackMsg = "Desculpe, n\xE3o consegui processar a sua pergunta neste momento. Pode tentar reformular?";
+      res.write(`data: ${JSON.stringify({ type: "status", status: "Erro de gera\xE7\xE3o..." })}
+
+`);
+      res.write(`data: ${JSON.stringify({ type: "sources", sources: [] })}
+
+`);
+      res.write(`data: ${JSON.stringify({ type: "token", content: fallbackMsg })}
+
+`);
+      res.write(`data: [DONE]
+
+`);
+      if (session) {
+        updateSession(session.sessionId, question, "", fallbackMsg);
+      }
+      return;
+    }
     res.write(`data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}
 
 `);
     messages.push({
       role: "assistant",
-      content: assistantMessage.content || ""
+      content: assistantMessage.content
     });
     res.write(
       `data: ${JSON.stringify({ type: "sources", sources: [] })}
 
 `
     );
-    if (assistantMessage.content) {
-      res.write(
-        `data: ${JSON.stringify({ type: "token", content: assistantMessage.content })}
+    res.write(
+      `data: ${JSON.stringify({ type: "token", content: assistantMessage.content })}
 
 `
-      );
-      res.write(`data: [DONE]
+    );
+    res.write(`data: [DONE]
 
 `);
-      const duration3 = ((Date.now() - start) / 1e3).toFixed(1);
-      console.log(
-        `\u23F1\uFE0F  [Agente] Pipeline conclu\xEDdo em ${duration3}s (sem ferramentas)
+    const duration3 = ((Date.now() - start) / 1e3).toFixed(1);
+    console.log(
+      `\u23F1\uFE0F  [Agente] Pipeline conclu\xEDdo em ${duration3}s (sem ferramentas)
 `
-      );
-      if (session) {
-        updateSession(session.sessionId, question, "", assistantMessage.content);
-      }
-      return;
+    );
+    if (session) {
+      updateSession(session.sessionId, question, "", assistantMessage.content);
     }
+    return;
   }
   console.log("\u{1F30A} [Agente] Passo 3: Gerando resposta final com streaming...");
   const messagesFinal = [
@@ -27486,7 +27596,11 @@ ${"\u2500".repeat(50)}`);
       messages: messagesFinal,
       stream: true,
       keep_alive: "1h",
-      options: { num_ctx: NUM_CTX2 }
+      options: {
+        num_ctx: NUM_CTX2,
+        temperature: 0.2,
+        num_predict: 2048
+      }
     })
   });
   if (!streamResponse.ok) {
@@ -27673,7 +27787,7 @@ function adminAuth(req, res, next) {
 
 // src/server.ts
 var app = express();
-app.set("trust proxy", true);
+app.set("trust proxy", 1);
 var PORT = Number(process.env.PORT) || 3333;
 var allowedOrigins = (process.env.CORS_ORIGINS || process.env.FRONTEND_URL || "http://localhost:5173").split(",").map((s) => s.trim());
 app.use(
@@ -27736,6 +27850,7 @@ var server = app.listen(PORT, async () => {
 `);
   await testDBConnection();
   await verifyEmbeddingDimension();
+  await verifyFeedbacksTable();
   await checkOllama();
   try {
     await initializeMCPClient();

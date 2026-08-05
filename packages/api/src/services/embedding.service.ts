@@ -18,8 +18,8 @@ import type {
  */
 
 const EMBEDDING_MAX_CHARS = 4000;
-const CHUNK_SIZE_GENERAL = 1000;
-const CHUNK_OVERLAP_GENERAL = 200;
+const CHUNK_SIZE_GENERAL = 2200;
+const CHUNK_OVERLAP_GENERAL = 300;
 const TABLE_MAX_ROWS_PER_CHUNK = 30;
 
 const BATCH_SIZE = 32;
@@ -163,7 +163,7 @@ function detectChunkingType(text: string, filename: string): ChunkingType {
   const chapters = (text.match(/\bCAP[IÍ]TULO\s+[IVXLCDM\d]+/gi) || []).length;
   if (articles >= 3 || chapters >= 2) return "juridical";
 
-  if (/regulament|norma|resolu[çc]|portaria|edital|delibera|estatut|regimento/i.test(filename)) {
+  if (/regulament|norma|resolu[çc]|portaria|edital|delibera|estatut|regimento|ppc/i.test(filename)) {
     return "juridical";
   }
 
@@ -176,13 +176,25 @@ async function juridicalChunking(text: string, filename: string): Promise<ChunkD
 
   // LangChain Splitter configurado com hierarquia jurídica e seções do PPC
   const splitter = new RecursiveCharacterTextSplitter({
-    chunkSize: 1000,
-    chunkOverlap: 200,
+    chunkSize: CHUNK_SIZE_GENERAL,
+    chunkOverlap: CHUNK_OVERLAP_GENERAL,
     separators: [
       "\nCAPÍTULO ",
       "\nTÍTULO ",
       "\nSeção ",
       "\nArt. ",
+      "\nMatriz Curricular",
+      "\nDISCIPLINAS OBRIGATÓRIAS",
+      "\nPERÍODO ",
+      "\n1º Período",
+      "\n2º Período",
+      "\n3º Período",
+      "\n4º Período",
+      "\n5º Período",
+      "\n6º Período",
+      "\n7º Período",
+      "\n8º Período",
+      "\n8.1.1 ",
       "\n8.1.2 ",
       "\n8.1.3 ",
       "\n8.3. ",
