@@ -100,26 +100,27 @@ async function rewriteQuestion(question: string): Promise<{ intention: string; r
     // Validação: se a reescrita ficou vazia ou absurdamente longa, usa a original
     if (!rewritten || rewritten.length > 1000) {
       console.log(`✍️  [Reescrita] Resultado inválido, usando original.`);
-      return { intention: "OUTRAS", rewrittenQuestion: question };
+      return { intention: inferIntentionFromKeywords(question), rewrittenQuestion: question };
     }
 
     const match = rewritten.trim().match(/^\[(.*?)\]\s*(.*)/);
     if (match) {
       const intention = match[1].toUpperCase();
       const rewrittenQuestion = match[2];
-      console.log(`✍️  [Reescrita] Intenção: [${intention}] | Reescrita: "${rewrittenQuestion}"`);
-      return { intention, rewrittenQuestion };
+      const effectiveIntention = intention === "OUTRAS" ? inferIntentionFromKeywords(question) : intention;
+      console.log(`✍️  [Reescrita] Intenção: [${effectiveIntention}] | Reescrita: "${rewrittenQuestion}"`);
+      return { intention: effectiveIntention, rewrittenQuestion };
     }
 
     console.log(`✍️  [Reescrita] Resultado sem tag: "${rewritten}"`);
-    return { intention: "OUTRAS", rewrittenQuestion: rewritten };
+    return { intention: inferIntentionFromKeywords(question), rewrittenQuestion: rewritten };
   } catch (error) {
     // Fallback gracioso: se a reescrita falhar, não bloqueia o pipeline
     console.warn(
       `⚠️  [Reescrita] Falha na reescrita, usando pergunta original:`,
       error instanceof Error ? error.message : error
     );
-    return { intention: "OUTRAS", rewrittenQuestion: question };
+    return { intention: inferIntentionFromKeywords(question), rewrittenQuestion: question };
   }
 }
 
@@ -160,22 +161,8 @@ const RRF_K = 60;
 const RRF_ALPHA = 0.5;
 
 /**
- * Busca híbrida: combina busca vetorial (pgvector) com Full-Text Search
- * (tsvector/tsquery) usando Reciprocal Rank Fusion (RRF).
- *
- * RRF: Score_final = α × 1/(k + rank_semântico) + (1-α) × 1/(k + rank_lexical)
- *
- * Isso garante que:
- * - Buscas semânticas funcionem para perguntas conceituais
- * - Nomes exatos de disciplinas/siglas subam ao topo via FTS
- *
- * @param embedding  - Vetor da pergunta (para busca semântica)
- * @param queryText  - Texto da pergunta (para Full-Text Search)
- * @param limit      - Número máximo de resultados (default: 5)
- */
-/**
  * Formata a query para o formato tsquery do PostgreSQL (FTS).
- * Filtra stopwords e adiciona expansão baseada na intenção (intent).
+ * Filtra stopwords, expande numerais ordinais e adiciona termos de apoio da intenção (intent).
  */
 function formatFTSQuery(query: string, intent?: string): string {
   const stopWords = new Set([
@@ -183,11 +170,43 @@ function formatFTSQuery(query: string, intent?: string): string {
     "esses", "essas", "pode", "podia", "poderia", "favor", "voce", "curso", "ifmg",
     "campus", "ouro", "branco", "sao", "tem", "ter", "quaisquer"
   ]);
+
+  const ordinalMap: Record<string, string> = {
+    primeiro: "(primeiro | 1 | 1º)",
+    "1º": "(primeiro | 1 | 1º)",
+    "1": "(primeiro | 1 | 1º)",
+    segundo: "(segundo | 2 | 2º)",
+    "2º": "(segundo | 2 | 2º)",
+    "2": "(segundo | 2 | 2º)",
+    terceiro: "(terceiro | 3 | 3º)",
+    "3º": "(terceiro | 3 | 3º)",
+    "3": "(terceiro | 3 | 3º)",
+    quarto: "(quarto | 4 | 4º)",
+    "4º": "(quarto | 4 | 4º)",
+    "4": "(quarto | 4 | 4º)",
+    quinto: "(quinto | 5 | 5º)",
+    "5º": "(quinto | 5 | 5º)",
+    "5": "(quinto | 5 | 5º)",
+    sexto: "(sexto | 6 | 6º)",
+    "6º": "(sexto | 6 | 6º)",
+    "6": "(sexto | 6 | 6º)",
+    setimo: "(setimo | 7 | 7º)",
+    sétimo: "(setimo | 7 | 7º)",
+    "7º": "(setimo | 7 | 7º)",
+    "7": "(setimo | 7 | 7º)",
+    oitavo: "(oitavo | 8 | 8º)",
+    "8º": "(oitavo | 8 | 8º)",
+    "8": "(oitavo | 8 | 8º)",
+  };
+
   const queryLimpa = query.replace(/[^\p{L}\p{N}\s]/gu, " ").toLowerCase().trim();
   if (!queryLimpa) return "dummy_fallback_query";
 
-  const terms = queryLimpa.split(/\s+/).filter((w) => w.length > 2 && !stopWords.has(w));
+  const rawTerms = queryLimpa.split(/\s+/).filter((w) => w.length >= 1 && !stopWords.has(w));
+  const terms = rawTerms.map((w) => ordinalMap[w] || w);
   let mainFTS = terms.length > 0 ? terms.join(" & ") : "dummy_fallback_query";
+
+  const effectiveIntent = (!intent || intent === "OUTRAS") ? inferIntentionFromKeywords(query) : intent;
 
   const intentKeywords: Record<string, string> = {
     CURSO: "matriz | curricular | periodo",
@@ -204,8 +223,8 @@ function formatFTSQuery(query: string, intent?: string): string {
     DIREITOS_DEVERES: "direitos | deveres",
   };
 
-  if (intent && intentKeywords[intent]) {
-    mainFTS = `(${mainFTS}) | (${intentKeywords[intent]})`;
+  if (effectiveIntent && intentKeywords[effectiveIntent]) {
+    mainFTS = `(${mainFTS}) | (${intentKeywords[effectiveIntent]})`;
   }
 
   return mainFTS;

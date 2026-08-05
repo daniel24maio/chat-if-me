@@ -79,15 +79,43 @@ async function generateEmbedding(text: string): Promise<number[]> {
 
 /**
  * Formata a query para o formato tsquery do PostgreSQL (FTS).
- * Remove caracteres especiais, junta os termos com '&' e adiciona palavras de apoio da intenção (intent).
+ * Remove caracteres especiais, expande numerais ordinais e adiciona palavras de apoio da intenção (intent).
  */
 function formatFTSQuery(query: string, intent?: string): string {
-  // Remove tudo que não for letra, número ou espaço
-  const queryLimpa = query.replace(/[^\p{L}\p{N}\s]/gu, " ").trim();
-  if (!queryLimpa) return "dummy_fallback_query"; // Evita erro de sintaxe se ficar vazio
+  const ordinalMap: Record<string, string> = {
+    primeiro: "(primeiro | 1 | 1º)",
+    "1º": "(primeiro | 1 | 1º)",
+    "1": "(primeiro | 1 | 1º)",
+    segundo: "(segundo | 2 | 2º)",
+    "2º": "(segundo | 2 | 2º)",
+    "2": "(segundo | 2 | 2º)",
+    terceiro: "(terceiro | 3 | 3º)",
+    "3º": "(terceiro | 3 | 3º)",
+    "3": "(terceiro | 3 | 3º)",
+    quarto: "(quarto | 4 | 4º)",
+    "4º": "(quarto | 4 | 4º)",
+    "4": "(quarto | 4 | 4º)",
+    quinto: "(quinto | 5 | 5º)",
+    "5º": "(quinto | 5 | 5º)",
+    "5": "(quinto | 5 | 5º)",
+    sexto: "(sexto | 6 | 6º)",
+    "6º": "(sexto | 6 | 6º)",
+    "6": "(sexto | 6 | 6º)",
+    setimo: "(setimo | 7 | 7º)",
+    sétimo: "(setimo | 7 | 7º)",
+    "7º": "(setimo | 7 | 7º)",
+    "7": "(setimo | 7 | 7º)",
+    oitavo: "(oitavo | 8 | 8º)",
+    "8º": "(oitavo | 8 | 8º)",
+    "8": "(oitavo | 8 | 8º)",
+  };
 
-  const terms = queryLimpa.split(/\s+/).filter(Boolean);
-  let mainFTS = terms.join(" & ");
+  const queryLimpa = query.replace(/[^\p{L}\p{N}\s]/gu, " ").toLowerCase().trim();
+  if (!queryLimpa) return "dummy_fallback_query";
+
+  const rawTerms = queryLimpa.split(/\s+/).filter(Boolean);
+  const terms = rawTerms.map((w) => ordinalMap[w] || w);
+  let mainFTS = terms.length > 0 ? terms.join(" & ") : "dummy_fallback_query";
 
   const intentKeywords: Record<string, string> = {
     ESTRUTURA_CURSOS: "matriz | curricular | periodo",

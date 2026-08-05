@@ -1514,23 +1514,24 @@ async function rewriteQuestion(question) {
     const rewritten = await rewriteWithLLM(REWRITE_SYSTEM_PROMPT, question);
     if (!rewritten || rewritten.length > 1e3) {
       console.log(`\u270D\uFE0F  [Reescrita] Resultado inv\xE1lido, usando original.`);
-      return { intention: "OUTRAS", rewrittenQuestion: question };
+      return { intention: inferIntentionFromKeywords(question), rewrittenQuestion: question };
     }
     const match = rewritten.trim().match(/^\[(.*?)\]\s*(.*)/);
     if (match) {
       const intention = match[1].toUpperCase();
       const rewrittenQuestion = match[2];
-      console.log(`\u270D\uFE0F  [Reescrita] Inten\xE7\xE3o: [${intention}] | Reescrita: "${rewrittenQuestion}"`);
-      return { intention, rewrittenQuestion };
+      const effectiveIntention = intention === "OUTRAS" ? inferIntentionFromKeywords(question) : intention;
+      console.log(`\u270D\uFE0F  [Reescrita] Inten\xE7\xE3o: [${effectiveIntention}] | Reescrita: "${rewrittenQuestion}"`);
+      return { intention: effectiveIntention, rewrittenQuestion };
     }
     console.log(`\u270D\uFE0F  [Reescrita] Resultado sem tag: "${rewritten}"`);
-    return { intention: "OUTRAS", rewrittenQuestion: rewritten };
+    return { intention: inferIntentionFromKeywords(question), rewrittenQuestion: rewritten };
   } catch (error) {
     console.warn(
       `\u26A0\uFE0F  [Reescrita] Falha na reescrita, usando pergunta original:`,
       error instanceof Error ? error.message : error
     );
-    return { intention: "OUTRAS", rewrittenQuestion: question };
+    return { intention: inferIntentionFromKeywords(question), rewrittenQuestion: question };
   }
 }
 async function generateEmbedding(text) {
@@ -1572,11 +1573,40 @@ function formatFTSQuery(query, intent) {
     "ter",
     "quaisquer"
   ]);
+  const ordinalMap = {
+    primeiro: "(primeiro | 1 | 1\xBA)",
+    "1\xBA": "(primeiro | 1 | 1\xBA)",
+    "1": "(primeiro | 1 | 1\xBA)",
+    segundo: "(segundo | 2 | 2\xBA)",
+    "2\xBA": "(segundo | 2 | 2\xBA)",
+    "2": "(segundo | 2 | 2\xBA)",
+    terceiro: "(terceiro | 3 | 3\xBA)",
+    "3\xBA": "(terceiro | 3 | 3\xBA)",
+    "3": "(terceiro | 3 | 3\xBA)",
+    quarto: "(quarto | 4 | 4\xBA)",
+    "4\xBA": "(quarto | 4 | 4\xBA)",
+    "4": "(quarto | 4 | 4\xBA)",
+    quinto: "(quinto | 5 | 5\xBA)",
+    "5\xBA": "(quinto | 5 | 5\xBA)",
+    "5": "(quinto | 5 | 5\xBA)",
+    sexto: "(sexto | 6 | 6\xBA)",
+    "6\xBA": "(sexto | 6 | 6\xBA)",
+    "6": "(sexto | 6 | 6\xBA)",
+    setimo: "(setimo | 7 | 7\xBA)",
+    s\u00E9timo: "(setimo | 7 | 7\xBA)",
+    "7\xBA": "(setimo | 7 | 7\xBA)",
+    "7": "(setimo | 7 | 7\xBA)",
+    oitavo: "(oitavo | 8 | 8\xBA)",
+    "8\xBA": "(oitavo | 8 | 8\xBA)",
+    "8": "(oitavo | 8 | 8\xBA)"
+  };
   const queryLimpa = query.replace(/[^\p{L}\p{N}\s]/gu, " ").toLowerCase().trim();
   if (!queryLimpa)
     return "dummy_fallback_query";
-  const terms = queryLimpa.split(/\s+/).filter((w) => w.length > 2 && !stopWords.has(w));
+  const rawTerms = queryLimpa.split(/\s+/).filter((w) => w.length >= 1 && !stopWords.has(w));
+  const terms = rawTerms.map((w) => ordinalMap[w] || w);
   let mainFTS = terms.length > 0 ? terms.join(" & ") : "dummy_fallback_query";
+  const effectiveIntent = !intent || intent === "OUTRAS" ? inferIntentionFromKeywords(query) : intent;
   const intentKeywords = {
     CURSO: "matriz | curricular | periodo",
     ESTRUTURA_CURSOS: "matriz | curricular | periodo",
@@ -1591,8 +1621,8 @@ function formatFTSQuery(query, intent) {
     INFRA_CAMPUS: "biblioteca | laboratorio",
     DIREITOS_DEVERES: "direitos | deveres"
   };
-  if (intent && intentKeywords[intent]) {
-    mainFTS = `(${mainFTS}) | (${intentKeywords[intent]})`;
+  if (effectiveIntent && intentKeywords[effectiveIntent]) {
+    mainFTS = `(${mainFTS}) | (${intentKeywords[effectiveIntent]})`;
   }
   return mainFTS;
 }
