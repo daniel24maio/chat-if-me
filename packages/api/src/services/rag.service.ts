@@ -182,7 +182,7 @@ function formatFTSQuery(query: string, intent?: string): string {
   const stopWords = new Set([
     "qual", "quais", "como", "onde", "quando", "para", "sobre", "entre", "este", "esta",
     "esses", "essas", "pode", "podia", "poderia", "favor", "voce", "curso", "ifmg",
-    "campus", "ouro", "branco", "sao", "tem", "ter", "quaisquer"
+    "campus", "ouro", "branco", "sao", "tem", "ter", "quaisquer", "conteudo", "programatico", "disciplina"
   ]);
 
   const ordinalMap: Record<string, string> = {
@@ -213,20 +213,31 @@ function formatFTSQuery(query: string, intent?: string): string {
     "8": "(oitavo | 8 | 8º)",
   };
 
-  const queryLimpa = query.replace(/[^\p{L}\p{N}\s]/gu, " ").toLowerCase().trim();
-  if (!queryLimpa) return "dummy_fallback_query";
+  // Se houver um código de disciplina (ex: OBBGSIN.034 ou OBBGADM.001), extrai como termo FTS prioritário
+  const codeMatch = query.match(/(OBBGSIN|OBBGADM|OBBGEMT|OBLCOMP|OBLPED)\.?(\d{3})/i);
+  let codeFTS = "";
+  if (codeMatch) {
+    codeFTS = `(${codeMatch[1].toLowerCase()} & ${codeMatch[2]})`;
+  }
 
-  const rawTerms = queryLimpa.split(/\s+/).filter((w) => w.length >= 1 && !stopWords.has(w));
+  const queryLimpa = query.replace(/[^\p{L}\p{N}\s]/gu, " ").toLowerCase().trim();
+  if (!queryLimpa) return codeFTS || "dummy_fallback_query";
+
+  const rawTerms = queryLimpa.split(/\s+/).filter((w) => w.length >= 2 && !stopWords.has(w));
   const terms = rawTerms.map((w) => ordinalMap[w] || w);
   let mainFTS = terms.length > 0 ? terms.join(" & ") : "dummy_fallback_query";
+
+  if (codeFTS) {
+    mainFTS = `${codeFTS} | (${mainFTS})`;
+  }
 
   const effectiveIntent = (!intent || intent === "OUTRAS") ? inferIntentionFromKeywords(query) : intent;
 
   const intentKeywords: Record<string, string> = {
     CURSO: "matriz | curricular | periodo",
     ESTRUTURA_CURSOS: "matriz | curricular | periodo",
-    DISCIPLINA: "ementa | ementario | pre-requisito",
-    DISCIPLINA_EMENTA: "ementa | ementario",
+    DISCIPLINA: "ementa",
+    DISCIPLINA_EMENTA: "ementa",
     CONTEUDO: "ementa | conteudo",
     INGRESSO_MATRICULA: "matricula | ingresso",
     AVALIACAO_FREQUENCIA: "frequencia | faltas | nota",
@@ -238,7 +249,7 @@ function formatFTSQuery(query: string, intent?: string): string {
   };
 
   if (effectiveIntent && (effectiveIntent === "DISCIPLINA_EMENTA" || effectiveIntent === "DISCIPLINA" || effectiveIntent === "CONTEUDO")) {
-    mainFTS = `(${mainFTS}) & (ementa | ementario | conteudo)`;
+    mainFTS = `(${mainFTS}) & (ementa | ementario)`;
   } else if (effectiveIntent && intentKeywords[effectiveIntent]) {
     mainFTS = `(${mainFTS}) | (${intentKeywords[effectiveIntent]})`;
   }
@@ -314,16 +325,35 @@ async function hybridSearch(
     similarity: Number(row.rrf_score),
   }));
 
-  // ── Boost para trechos de Ementa quando a intenção for busca de ementa ──
+  // ── Boost e Penalizações para Ementas ──
   const effectiveIntent = (!intention || intention === "OUTRAS") ? inferIntentionFromKeywords(queryText) : intention;
-  if (effectiveIntent && (effectiveIntent === "DISCIPLINA_EMENTA" || effectiveIntent === "DISCIPLINA" || effectiveIntent === "CONTEUDO")) {
-    for (const doc of documents) {
-      if (/ementa:/i.test(doc.content) || /conteudo programatico/i.test(doc.content)) {
-        doc.similarity += 0.05; // Boost de prioridade no RRF para trazer a ementa como Documento 1
+  const isEmentaQuery = effectiveIntent === "DISCIPLINA_EMENTA" || effectiveIntent === "DISCIPLINA" || effectiveIntent === "CONTEUDO";
+
+  const codeMatch = queryText.match(/(OBBGSIN|OBBGADM|OBBGEMT|OBLCOMP|OBLPED)\.?(\d{3})/i);
+  const targetCode = codeMatch ? `${codeMatch[1]}.${codeMatch[2]}`.toLowerCase() : null;
+
+  for (const doc of documents) {
+    const contentLower = doc.content.toLowerCase();
+
+    // Se a busca tem um código específico (ex: OBBGSIN.034)
+    if (targetCode && contentLower.includes(targetCode)) {
+      doc.similarity += 0.15;
+
+      // Se for busca de ementa E o trecho contiver "ementa:", dá um super boost (+0.30) para priorizar a ementa real
+      if (isEmentaQuery && /ementa:/i.test(doc.content)) {
+        doc.similarity += 0.30;
       }
+    } else if (isEmentaQuery && /ementa:/i.test(doc.content)) {
+      doc.similarity += 0.10;
     }
-    documents.sort((a, b) => b.similarity - a.similarity);
+
+    // Se for busca de ementa e o trecho for apenas a tabela da Matriz Curricular, reduz prioridade (-0.15)
+    if (isEmentaQuery && /PERÍODO\s+COD\.\s+DISCIPLINA/i.test(doc.content)) {
+      doc.similarity -= 0.15;
+    }
   }
+
+  documents.sort((a, b) => b.similarity - a.similarity);
 
   // ── Penalização por feedback negativo (ICL Dinâmico) ──
   // Chunks com feedbacks negativos acumulados têm o score RRF reduzido:
@@ -411,30 +441,20 @@ function buildRAGMessages(
     fewShotBlock = `\n═══ EXEMPLOS DE SUCESSO (interações anteriores avaliadas positivamente pelos usuários) ═══\n${examples}\n═══ FIM DOS EXEMPLOS ═══\n\nUse os exemplos acima como REFERÊNCIA DE TOM E FORMATO. Adapte o conteúdo ao CONTEXTO abaixo.\n`;
   }
 
-  // System Prompt RAG rigoroso contra alucinações e com diretivas de formatação
+  // System Prompt RAG otimizado: enxuto, afirmativo e sem meta-regras negativas
   const systemPrompt = `Você é o assistente virtual oficial do IFMG Campus Ouro Branco.
+Responda à dúvida do aluno em Português (pt-BR) usando EXCLUSIVAMENTE o CONTEXTO abaixo.
 
-Sua função é responder dúvidas dos alunos sobre regulamentos, PPC (Projeto Pedagógico do Curso), grade curricular, normas acadêmicas e informações do campus.
-
-INTENÇÃO DA PERGUNTA: [${intention}] (Foque a sua resposta no contexto dessa intenção).
+INTENÇÃO: [${intention}]
 ${fewShotBlock}
-CONTEXTO (trechos dos documentos oficiais do curso):
+CONTEXTO:
 ${context}
 
-REGRAS OBRIGATÓRIAS (siga rigorosamente):
-1. Use EXCLUSIVAMENTE as informações do CONTEXTO acima.
-2. NÃO invente, suponha ou complemente com conhecimento externo.
-3. Se a resposta não estiver nos trechos, diga: "Não encontrei essa informação nos documentos disponíveis. Recomendo consultar a coordenação do curso ou acessar o portal do IFMG."
-4. Cite a fonte (nome do documento) quando possível.
-
-DIRETIVAS OBRIGATÓRIAS DE IDIOMA E FORMATAÇÃO:
-- REGRA ABSOLUTA: Responda EXCLUSIVAMENTE em Português do Brasil (pt-BR). Traduza qualquer termo do contexto que esteja em inglês. É proibido responder em inglês ou qualquer outro idioma.
-- REGRA PROIBITIVA: NUNCA exiba blocos de raciocínio como 'Thinking Process:', 'Analyze the Request:', 'Scan Context' ou passos internos de análise. Escreva APENAS a resposta final diretamente para o aluno.
-- REGRA DE EMENTAS E DETALHAMENTO: Se o usuário solicitar a EMENTA de uma disciplina ou detalhes de regras acadêmicas (ex: porcentagem de frequência, nota de aprovação, TCC, estágio), forneça a resposta COMPLETA E INTEGRAL como consta nos documentos, sem omitir tópicos ou resumir a ementa.
-- Se o usuário pedir a LISTA DE DISCIPLINAS de um período, cite os nomes das disciplinas e seus códigos.
-- Mantenha a formatação simples. Use listas ('* ') com UM ÚNICO NÍVEL de aninhamento. NUNCA coloque listas dentro de listas.
-- Use **negrito** para destacar nomes de disciplinas, códigos ou termos chaves.
-- Finalize com uma pergunta breve e proativa (Ex: "Gostaria de saber a ementa ou os pré-requisitos de alguma dessas disciplinas?").`;
+REGRAS DE RESPOSTA:
+1. Responda APENAS com base no contexto. Se a informação não estiver nos trechos, responda exatamente: "Não encontrei essa informação nos documentos disponíveis. Recomendo consultar a coordenação do curso ou acessar o portal do IFMG."
+2. Se o aluno solicitar EMENTA de disciplina ou detalhes de normas acadêmicas, forneça a resposta COMPLETA E INTEGRAL como consta nos documentos, sem resumir ou omitir tópicos.
+3. Use formatação Markdown simples (listas com '* ', destaque em **negrito** para códigos/nomes) e cite a fonte (ex: PPCBSI 2022) quando possível.
+4. Finalize a resposta com uma breve pergunta proativa de acompanhamento.`;
 
   // Histórico das últimas 5 mensagens da sessão (contexto conversacional)
   const historyMessages: OllamaChatMessage[] = sessionMessages

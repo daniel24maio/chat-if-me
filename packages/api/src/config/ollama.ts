@@ -31,6 +31,12 @@ const REWRITE_MODEL = process.env.OLLAMA_REWRITE_MODEL || "qwen3.5:4b";
 const NUM_CTX = Number(process.env.OLLAMA_NUM_CTX) || 8192;
 
 /**
+ * Número de camadas do LLM a serem carregadas na GPU.
+ * Padrão: 24 camadas na VRAM da GPU para evitar estouro de memória sob alta concorrência.
+ */
+const NUM_GPU = Number(process.env.OLLAMA_NUM_GPU) || 24;
+
+/**
  * Timeout global de segurança para as chamadas do Ollama.
  * Impede o erro UND_ERR_HEADERS_TIMEOUT liberando a thread do Node.js
  * caso a GPU demore muito tempo a processar o prompt.
@@ -102,6 +108,9 @@ export async function generateOllamaEmbedding(text: string): Promise<number[]> {
       model: EMBED_MODEL,
       prompt: text,
       keep_alive: "24h",
+      options: {
+        num_gpu: 0, // Força a execução do embedding (bge-m3) 100% na CPU/RAM
+      },
     }),
   });
 
@@ -136,7 +145,7 @@ export async function generateOllamaResponse(messages: OllamaChatMessage[]): Pro
       messages: safeMessages,
       stream: false,
       keep_alive: "24h",
-      options: { num_ctx: NUM_CTX },
+      options: { num_ctx: NUM_CTX, num_gpu: NUM_GPU },
     }),
   });
 
@@ -182,6 +191,7 @@ export async function rewriteWithLLM(systemPrompt: string, question: string): Pr
         temperature: 0,
         num_ctx: NUM_CTX,
         num_predict: 100,
+        num_gpu: NUM_GPU,
       },
     }),
   });
@@ -230,8 +240,9 @@ export async function streamOllamaResponse(
       keep_alive: "24h",
       options: {
         num_ctx: NUM_CTX,
-        temperature: 0.2,
-        num_predict: 2048,
+        temperature: 0.1,
+        num_predict: 8192,
+        num_gpu: NUM_GPU,
       },
     }),
   });
@@ -249,6 +260,7 @@ export async function streamOllamaResponse(
   const decoder = new TextDecoder();
   let buffer = "";
   let fullText = "";
+  let fullThought = "";
   let generatedTokens = false;
 
   try {
@@ -275,11 +287,20 @@ export async function streamOllamaResponse(
             console.error("❌ [Ollama LLM Stream] Erro retornado no chunk:", chunk.error);
           }
 
-          // Ignora campos de raciocínio interno (reasoning_content / thinking) para não vazar a análise do LLM no frontend
-          if (chunk.message?.content) {
+          // 1. Se o Ollama enviar canal nativo de raciocínio (thinking / reasoning_content)
+          const thoughtToken = chunk.message?.thinking || chunk.message?.reasoning_content;
+          if (thoughtToken) {
+            fullThought += thoughtToken;
+            res.write(`data: ${JSON.stringify({ type: "thought", content: thoughtToken })}\n\n`);
+          }
+
+          // 2. Canal de resposta para o aluno (content)
+          const textToken = chunk.message?.content;
+          if (textToken) {
+            if (textToken.trim() === "<think>" || textToken.trim() === "</think>") continue;
             generatedTokens = true;
-            fullText += chunk.message.content;
-            res.write(`data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`);
+            fullText += textToken;
+            res.write(`data: ${JSON.stringify({ type: "token", content: textToken })}\n\n`);
           }
 
           if (chunk.done) {
@@ -296,10 +317,17 @@ export async function streamOllamaResponse(
         const chunk = JSON.parse(buffer.trim()) as {
           message?: { content?: string; thinking?: string; reasoning_content?: string };
         };
-        if (chunk.message?.content) {
+        const thoughtToken = chunk.message?.thinking || chunk.message?.reasoning_content;
+        if (thoughtToken) {
+          fullThought += thoughtToken;
+          res.write(`data: ${JSON.stringify({ type: "thought", content: thoughtToken })}\n\n`);
+        }
+
+        const textToken = chunk.message?.content;
+        if (textToken && textToken.trim() !== "<think>" && textToken.trim() !== "</think>") {
           generatedTokens = true;
-          fullText += chunk.message.content;
-          res.write(`data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`);
+          fullText += textToken;
+          res.write(`data: ${JSON.stringify({ type: "token", content: textToken })}\n\n`);
         }
       } catch {
         // Ignora
@@ -309,13 +337,36 @@ export async function streamOllamaResponse(
     reader.releaseLock();
   }
 
-  // Se nenhum token foi gerado, envia um fallback amigável
+  // Se nenhum token de content foi gerado, mas houve pensamento (thinking)
   if (!generatedTokens) {
-    console.warn("⚠️ [Ollama] Resposta vazia no streaming. Enviando fallback.");
-    const fallbackMsg = "Não encontrei essa informação nos documentos disponíveis. Recomendo consultar a coordenação do curso ou acessar o portal do IFMG.";
-    res.write(
-      `data: ${JSON.stringify({ type: "token", content: fallbackMsg })}\n\n`
-    );
+    // Tenta extrair a resposta do rascunho interno no pensamento se houver
+    let extractedResponse = "";
+    if (fullThought) {
+      const match = fullThought.match(/(?:Drafting the Response:|Resposta Final:|Content:)([\s\S]*)/i);
+      if (match && match[1].trim().length > 20) {
+        extractedResponse = match[1].trim();
+      } else {
+        // Se houver um trecho formatado com bullet points no pensamento
+        const lines = fullThought.split("\n").filter(l => !l.trim().startsWith("Thinking") && !l.trim().startsWith("Analyze") && !l.trim().startsWith("Scan") && !l.trim().startsWith("Review"));
+        const cleanThoughtText = lines.join("\n").trim();
+        if (cleanThoughtText.length > 50) {
+          extractedResponse = cleanThoughtText;
+        }
+      }
+    }
+
+    if (extractedResponse) {
+      console.log("💡 [Ollama] Extraindo resposta rascunhada do canal de thinking...");
+      generatedTokens = true;
+      fullText = extractedResponse;
+      res.write(`data: ${JSON.stringify({ type: "token", content: extractedResponse })}\n\n`);
+    } else {
+      console.warn("⚠️ [Ollama] Resposta vazia no streaming. Enviando fallback.");
+      const fallbackMsg = "Não encontrei essa informação nos documentos disponíveis. Recomendo consultar a coordenação do curso ou acessar o portal do IFMG.";
+      res.write(
+        `data: ${JSON.stringify({ type: "token", content: fallbackMsg })}\n\n`
+      );
+    }
   }
 
   res.write(`data: [DONE]\n\n`);

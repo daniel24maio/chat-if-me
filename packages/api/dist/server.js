@@ -881,6 +881,7 @@ var EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || "bge-m3";
 var LLM_MODEL = process.env.OLLAMA_LLM_MODEL || "qwen3.5:4b";
 var REWRITE_MODEL = process.env.OLLAMA_REWRITE_MODEL || "qwen3.5:4b";
 var NUM_CTX = Number(process.env.OLLAMA_NUM_CTX) || 8192;
+var NUM_GPU = Number(process.env.OLLAMA_NUM_GPU) || 24;
 var FETCH_TIMEOUT_MS = 6e5;
 function pruneHistory(messages, maxInteractions = 6) {
   if (messages.length <= maxInteractions + 1)
@@ -916,7 +917,11 @@ async function generateOllamaEmbedding(text) {
     body: JSON.stringify({
       model: EMBED_MODEL,
       prompt: text,
-      keep_alive: "24h"
+      keep_alive: "24h",
+      options: {
+        num_gpu: 0
+        // Força a execução do embedding (bge-m3) 100% na CPU/RAM
+      }
     })
   });
   if (!response.ok) {
@@ -946,7 +951,8 @@ async function rewriteWithLLM(systemPrompt, question) {
       options: {
         temperature: 0,
         num_ctx: NUM_CTX,
-        num_predict: 100
+        num_predict: 100,
+        num_gpu: NUM_GPU
       }
     })
   });
@@ -981,8 +987,9 @@ async function streamOllamaResponse(messages, res, sources) {
       keep_alive: "24h",
       options: {
         num_ctx: NUM_CTX,
-        temperature: 0.2,
-        num_predict: 2048
+        temperature: 0.1,
+        num_predict: 8192,
+        num_gpu: NUM_GPU
       }
     })
   });
@@ -997,6 +1004,7 @@ async function streamOllamaResponse(messages, res, sources) {
   const decoder = new TextDecoder();
   let buffer = "";
   let fullText = "";
+  let fullThought = "";
   let generatedTokens = false;
   try {
     while (true) {
@@ -1015,10 +1023,20 @@ async function streamOllamaResponse(messages, res, sources) {
           if (chunk.error) {
             console.error("\u274C [Ollama LLM Stream] Erro retornado no chunk:", chunk.error);
           }
-          if (chunk.message?.content) {
+          const thoughtToken = chunk.message?.thinking || chunk.message?.reasoning_content;
+          if (thoughtToken) {
+            fullThought += thoughtToken;
+            res.write(`data: ${JSON.stringify({ type: "thought", content: thoughtToken })}
+
+`);
+          }
+          const textToken = chunk.message?.content;
+          if (textToken) {
+            if (textToken.trim() === "<think>" || textToken.trim() === "</think>")
+              continue;
             generatedTokens = true;
-            fullText += chunk.message.content;
-            res.write(`data: ${JSON.stringify({ type: "token", content: chunk.message.content })}
+            fullText += textToken;
+            res.write(`data: ${JSON.stringify({ type: "token", content: textToken })}
 
 `);
           }
@@ -1032,10 +1050,18 @@ async function streamOllamaResponse(messages, res, sources) {
     if (buffer.trim()) {
       try {
         const chunk = JSON.parse(buffer.trim());
-        if (chunk.message?.content) {
+        const thoughtToken = chunk.message?.thinking || chunk.message?.reasoning_content;
+        if (thoughtToken) {
+          fullThought += thoughtToken;
+          res.write(`data: ${JSON.stringify({ type: "thought", content: thoughtToken })}
+
+`);
+        }
+        const textToken = chunk.message?.content;
+        if (textToken && textToken.trim() !== "<think>" && textToken.trim() !== "</think>") {
           generatedTokens = true;
-          fullText += chunk.message.content;
-          res.write(`data: ${JSON.stringify({ type: "token", content: chunk.message.content })}
+          fullText += textToken;
+          res.write(`data: ${JSON.stringify({ type: "token", content: textToken })}
 
 `);
         }
@@ -1046,13 +1072,35 @@ async function streamOllamaResponse(messages, res, sources) {
     reader.releaseLock();
   }
   if (!generatedTokens) {
-    console.warn("\u26A0\uFE0F [Ollama] Resposta vazia no streaming. Enviando fallback.");
-    const fallbackMsg = "N\xE3o encontrei essa informa\xE7\xE3o nos documentos dispon\xEDveis. Recomendo consultar a coordena\xE7\xE3o do curso ou acessar o portal do IFMG.";
-    res.write(
-      `data: ${JSON.stringify({ type: "token", content: fallbackMsg })}
+    let extractedResponse = "";
+    if (fullThought) {
+      const match = fullThought.match(/(?:Drafting the Response:|Resposta Final:|Content:)([\s\S]*)/i);
+      if (match && match[1].trim().length > 20) {
+        extractedResponse = match[1].trim();
+      } else {
+        const lines = fullThought.split("\n").filter((l) => !l.trim().startsWith("Thinking") && !l.trim().startsWith("Analyze") && !l.trim().startsWith("Scan") && !l.trim().startsWith("Review"));
+        const cleanThoughtText = lines.join("\n").trim();
+        if (cleanThoughtText.length > 50) {
+          extractedResponse = cleanThoughtText;
+        }
+      }
+    }
+    if (extractedResponse) {
+      console.log("\u{1F4A1} [Ollama] Extraindo resposta rascunhada do canal de thinking...");
+      generatedTokens = true;
+      fullText = extractedResponse;
+      res.write(`data: ${JSON.stringify({ type: "token", content: extractedResponse })}
+
+`);
+    } else {
+      console.warn("\u26A0\uFE0F [Ollama] Resposta vazia no streaming. Enviando fallback.");
+      const fallbackMsg = "N\xE3o encontrei essa informa\xE7\xE3o nos documentos dispon\xEDveis. Recomendo consultar a coordena\xE7\xE3o do curso ou acessar o portal do IFMG.";
+      res.write(
+        `data: ${JSON.stringify({ type: "token", content: fallbackMsg })}
 
 `
-    );
+      );
+    }
   }
   res.write(`data: [DONE]
 
@@ -1587,7 +1635,10 @@ function formatFTSQuery(query, intent) {
     "sao",
     "tem",
     "ter",
-    "quaisquer"
+    "quaisquer",
+    "conteudo",
+    "programatico",
+    "disciplina"
   ]);
   const ordinalMap = {
     primeiro: "(primeiro | 1 | 1\xBA)",
@@ -1616,18 +1667,26 @@ function formatFTSQuery(query, intent) {
     "8\xBA": "(oitavo | 8 | 8\xBA)",
     "8": "(oitavo | 8 | 8\xBA)"
   };
+  const codeMatch = query.match(/(OBBGSIN|OBBGADM|OBBGEMT|OBLCOMP|OBLPED)\.?(\d{3})/i);
+  let codeFTS = "";
+  if (codeMatch) {
+    codeFTS = `(${codeMatch[1].toLowerCase()} & ${codeMatch[2]})`;
+  }
   const queryLimpa = query.replace(/[^\p{L}\p{N}\s]/gu, " ").toLowerCase().trim();
   if (!queryLimpa)
-    return "dummy_fallback_query";
-  const rawTerms = queryLimpa.split(/\s+/).filter((w) => w.length >= 1 && !stopWords.has(w));
+    return codeFTS || "dummy_fallback_query";
+  const rawTerms = queryLimpa.split(/\s+/).filter((w) => w.length >= 2 && !stopWords.has(w));
   const terms = rawTerms.map((w) => ordinalMap[w] || w);
   let mainFTS = terms.length > 0 ? terms.join(" & ") : "dummy_fallback_query";
+  if (codeFTS) {
+    mainFTS = `${codeFTS} | (${mainFTS})`;
+  }
   const effectiveIntent = !intent || intent === "OUTRAS" ? inferIntentionFromKeywords(query) : intent;
   const intentKeywords = {
     CURSO: "matriz | curricular | periodo",
     ESTRUTURA_CURSOS: "matriz | curricular | periodo",
-    DISCIPLINA: "ementa | ementario | pre-requisito",
-    DISCIPLINA_EMENTA: "ementa | ementario",
+    DISCIPLINA: "ementa",
+    DISCIPLINA_EMENTA: "ementa",
     CONTEUDO: "ementa | conteudo",
     INGRESSO_MATRICULA: "matricula | ingresso",
     AVALIACAO_FREQUENCIA: "frequencia | faltas | nota",
@@ -1638,7 +1697,7 @@ function formatFTSQuery(query, intent) {
     DIREITOS_DEVERES: "direitos | deveres"
   };
   if (effectiveIntent && (effectiveIntent === "DISCIPLINA_EMENTA" || effectiveIntent === "DISCIPLINA" || effectiveIntent === "CONTEUDO")) {
-    mainFTS = `(${mainFTS}) & (ementa | ementario | conteudo)`;
+    mainFTS = `(${mainFTS}) & (ementa | ementario)`;
   } else if (effectiveIntent && intentKeywords[effectiveIntent]) {
     mainFTS = `(${mainFTS}) | (${intentKeywords[effectiveIntent]})`;
   }
@@ -1693,14 +1752,24 @@ async function hybridSearch(embedding, queryText, limit = 5, intention) {
     similarity: Number(row.rrf_score)
   }));
   const effectiveIntent = !intention || intention === "OUTRAS" ? inferIntentionFromKeywords(queryText) : intention;
-  if (effectiveIntent && (effectiveIntent === "DISCIPLINA_EMENTA" || effectiveIntent === "DISCIPLINA" || effectiveIntent === "CONTEUDO")) {
-    for (const doc of documents) {
-      if (/ementa:/i.test(doc.content) || /conteudo programatico/i.test(doc.content)) {
-        doc.similarity += 0.05;
+  const isEmentaQuery = effectiveIntent === "DISCIPLINA_EMENTA" || effectiveIntent === "DISCIPLINA" || effectiveIntent === "CONTEUDO";
+  const codeMatch = queryText.match(/(OBBGSIN|OBBGADM|OBBGEMT|OBLCOMP|OBLPED)\.?(\d{3})/i);
+  const targetCode = codeMatch ? `${codeMatch[1]}.${codeMatch[2]}`.toLowerCase() : null;
+  for (const doc of documents) {
+    const contentLower = doc.content.toLowerCase();
+    if (targetCode && contentLower.includes(targetCode)) {
+      doc.similarity += 0.15;
+      if (isEmentaQuery && /ementa:/i.test(doc.content)) {
+        doc.similarity += 0.3;
       }
+    } else if (isEmentaQuery && /ementa:/i.test(doc.content)) {
+      doc.similarity += 0.1;
     }
-    documents.sort((a, b) => b.similarity - a.similarity);
+    if (isEmentaQuery && /PERÍODO\s+COD\.\s+DISCIPLINA/i.test(doc.content)) {
+      doc.similarity -= 0.15;
+    }
   }
+  documents.sort((a, b) => b.similarity - a.similarity);
   if (documents.length > 0) {
     const chunkIds = documents.map((d) => d.id);
     const negatives = await countNegativesByChunk(chunkIds);
@@ -1752,28 +1821,18 @@ Use os exemplos acima como REFER\xCANCIA DE TOM E FORMATO. Adapte o conte\xFAdo 
 `;
   }
   const systemPrompt = `Voc\xEA \xE9 o assistente virtual oficial do IFMG Campus Ouro Branco.
+Responda \xE0 d\xFAvida do aluno em Portugu\xEAs (pt-BR) usando EXCLUSIVAMENTE o CONTEXTO abaixo.
 
-Sua fun\xE7\xE3o \xE9 responder d\xFAvidas dos alunos sobre regulamentos, PPC (Projeto Pedag\xF3gico do Curso), grade curricular, normas acad\xEAmicas e informa\xE7\xF5es do campus.
-
-INTEN\xC7\xC3O DA PERGUNTA: [${intention}] (Foque a sua resposta no contexto dessa inten\xE7\xE3o).
+INTEN\xC7\xC3O: [${intention}]
 ${fewShotBlock}
-CONTEXTO (trechos dos documentos oficiais do curso):
+CONTEXTO:
 ${context}
 
-REGRAS OBRIGAT\xD3RIAS (siga rigorosamente):
-1. Use EXCLUSIVAMENTE as informa\xE7\xF5es do CONTEXTO acima.
-2. N\xC3O invente, suponha ou complemente com conhecimento externo.
-3. Se a resposta n\xE3o estiver nos trechos, diga: "N\xE3o encontrei essa informa\xE7\xE3o nos documentos dispon\xEDveis. Recomendo consultar a coordena\xE7\xE3o do curso ou acessar o portal do IFMG."
-4. Cite a fonte (nome do documento) quando poss\xEDvel.
-
-DIRETIVAS OBRIGAT\xD3RIAS DE IDIOMA E FORMATA\xC7\xC3O:
-- REGRA ABSOLUTA: Responda EXCLUSIVAMENTE em Portugu\xEAs do Brasil (pt-BR). Traduza qualquer termo do contexto que esteja em ingl\xEAs. \xC9 proibido responder em ingl\xEAs ou qualquer outro idioma.
-- REGRA PROIBITIVA: NUNCA exiba blocos de racioc\xEDnio como 'Thinking Process:', 'Analyze the Request:', 'Scan Context' ou passos internos de an\xE1lise. Escreva APENAS a resposta final diretamente para o aluno.
-- REGRA DE EMENTAS E DETALHAMENTO: Se o usu\xE1rio solicitar a EMENTA de uma disciplina ou detalhes de regras acad\xEAmicas (ex: porcentagem de frequ\xEAncia, nota de aprova\xE7\xE3o, TCC, est\xE1gio), forne\xE7a a resposta COMPLETA E INTEGRAL como consta nos documentos, sem omitir t\xF3picos ou resumir a ementa.
-- Se o usu\xE1rio pedir a LISTA DE DISCIPLINAS de um per\xEDodo, cite os nomes das disciplinas e seus c\xF3digos.
-- Mantenha a formata\xE7\xE3o simples. Use listas ('* ') com UM \xDANICO N\xCDVEL de aninhamento. NUNCA coloque listas dentro de listas.
-- Use **negrito** para destacar nomes de disciplinas, c\xF3digos ou termos chaves.
-- Finalize com uma pergunta breve e proativa (Ex: "Gostaria de saber a ementa ou os pr\xE9-requisitos de alguma dessas disciplinas?").`;
+REGRAS DE RESPOSTA:
+1. Responda APENAS com base no contexto. Se a informa\xE7\xE3o n\xE3o estiver nos trechos, responda exatamente: "N\xE3o encontrei essa informa\xE7\xE3o nos documentos dispon\xEDveis. Recomendo consultar a coordena\xE7\xE3o do curso ou acessar o portal do IFMG."
+2. Se o aluno solicitar EMENTA de disciplina ou detalhes de normas acad\xEAmicas, forne\xE7a a resposta COMPLETA E INTEGRAL como consta nos documentos, sem resumir ou omitir t\xF3picos.
+3. Use formata\xE7\xE3o Markdown simples (listas com '* ', destaque em **negrito** para c\xF3digos/nomes) e cite a fonte (ex: PPCBSI 2022) quando poss\xEDvel.
+4. Finalize a resposta com uma breve pergunta proativa de acompanhamento.`;
   const historyMessages = sessionMessages.slice(-5).map((m) => ({ role: m.role, content: m.content }));
   return [
     { role: "system", content: systemPrompt },
