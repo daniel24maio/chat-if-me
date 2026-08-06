@@ -181,8 +181,7 @@ const RRF_ALPHA = 0.5;
 function formatFTSQuery(query: string, intent?: string): string {
   const stopWords = new Set([
     "qual", "quais", "como", "onde", "quando", "para", "sobre", "entre", "este", "esta",
-    "esses", "essas", "pode", "podia", "poderia", "favor", "voce", "curso", "ifmg",
-    "campus", "ouro", "branco", "sao", "tem", "ter", "quaisquer", "conteudo", "programatico", "disciplina"
+    "esses", "essas", "pode", "podia", "poderia", "favor", "voce", "sao", "tem", "ter"
   ]);
 
   const ordinalMap: Record<string, string> = {
@@ -211,6 +210,13 @@ function formatFTSQuery(query: string, intent?: string): string {
     oitavo: "(oitavo | 8 | 8º)",
     "8º": "(oitavo | 8 | 8º)",
     "8": "(oitavo | 8 | 8º)",
+    nono: "(nono | 9 | 9º)",
+    "9º": "(nono | 9 | 9º)",
+    "9": "(nono | 9 | 9º)",
+    decimo: "(decimo | décimo | 10 | 10º)",
+    décimo: "(decimo | décimo | 10 | 10º)",
+    "10º": "(decimo | décimo | 10 | 10º)",
+    "10": "(decimo | décimo | 10 | 10º)",
   };
 
   // Se houver um código de disciplina (ex: OBBGSIN.034 ou OBBGADM.001), extrai como termo FTS prioritário

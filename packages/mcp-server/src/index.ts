@@ -108,6 +108,13 @@ function formatFTSQuery(query: string, intent?: string): string {
     oitavo: "(oitavo | 8 | 8º)",
     "8º": "(oitavo | 8 | 8º)",
     "8": "(oitavo | 8 | 8º)",
+    nono: "(nono | 9 | 9º)",
+    "9º": "(nono | 9 | 9º)",
+    "9": "(nono | 9 | 9º)",
+    decimo: "(decimo | décimo | 10 | 10º)",
+    décimo: "(decimo | décimo | 10 | 10º)",
+    "10º": "(decimo | décimo | 10 | 10º)",
+    "10": "(decimo | décimo | 10 | 10º)",
   };
 
   const queryLimpa = query.replace(/[^\p{L}\p{N}\s]/gu, " ").toLowerCase().trim();

@@ -1627,18 +1627,9 @@ function formatFTSQuery(query, intent) {
     "poderia",
     "favor",
     "voce",
-    "curso",
-    "ifmg",
-    "campus",
-    "ouro",
-    "branco",
     "sao",
     "tem",
-    "ter",
-    "quaisquer",
-    "conteudo",
-    "programatico",
-    "disciplina"
+    "ter"
   ]);
   const ordinalMap = {
     primeiro: "(primeiro | 1 | 1\xBA)",
@@ -1665,7 +1656,14 @@ function formatFTSQuery(query, intent) {
     "7": "(setimo | 7 | 7\xBA)",
     oitavo: "(oitavo | 8 | 8\xBA)",
     "8\xBA": "(oitavo | 8 | 8\xBA)",
-    "8": "(oitavo | 8 | 8\xBA)"
+    "8": "(oitavo | 8 | 8\xBA)",
+    nono: "(nono | 9 | 9\xBA)",
+    "9\xBA": "(nono | 9 | 9\xBA)",
+    "9": "(nono | 9 | 9\xBA)",
+    decimo: "(decimo | d\xE9cimo | 10 | 10\xBA)",
+    d\u00E9cimo: "(decimo | d\xE9cimo | 10 | 10\xBA)",
+    "10\xBA": "(decimo | d\xE9cimo | 10 | 10\xBA)",
+    "10": "(decimo | d\xE9cimo | 10 | 10\xBA)"
   };
   const codeMatch = query.match(/(OBBGSIN|OBBGADM|OBBGEMT|OBLCOMP|OBLPED)\.?(\d{3})/i);
   let codeFTS = "";
@@ -27058,6 +27056,18 @@ async function juridicalChunking(text, filename) {
       "\n6\xBA Per\xEDodo",
       "\n7\xBA Per\xEDodo",
       "\n8\xBA Per\xEDodo",
+      "\n9\xBA Per\xEDodo",
+      "\n10\xBA Per\xEDodo",
+      "\n1\xBA periodo",
+      "\n2\xBA periodo",
+      "\n3\xBA periodo",
+      "\n4\xBA periodo",
+      "\n5\xBA periodo",
+      "\n6\xBA periodo",
+      "\n7\xBA periodo",
+      "\n8\xBA periodo",
+      "\n9\xBA periodo",
+      "\n10\xBA periodo",
       "\n8.1.1 ",
       "\n8.1.2 ",
       "\n8.1.3 ",
@@ -27078,7 +27088,7 @@ async function juridicalChunking(text, filename) {
     const partTrimmed = part.trim();
     if (partTrimmed.length === 0)
       continue;
-    const hierarchyMatch = partTrimmed.match(/^(?:CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o|8\.\d+(?:\.\d+)?)\s+[IVXLCDM\d\w\s]+.*?(?:\n|$)/i);
+    const hierarchyMatch = partTrimmed.match(/^(?:CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o|8\.\d+(?:\.\d+)?|\d{1,2}º?\s+Per[íi]odo)\s+[IVXLCDM\d\w\s]+.*?(?:\n|$)/i);
     if (hierarchyMatch) {
       currentContext = hierarchyMatch[0].trim();
     }
@@ -27499,6 +27509,7 @@ REGRAS OBRIGAT\xD3RIAS:
 6. Se a ferramenta n\xE3o retornar resultados relevantes, diga: "N\xE3o encontrei essa informa\xE7\xE3o nos documentos dispon\xEDveis. Recomendo consultar a coordena\xE7\xE3o do seu curso ou o setor correspondente do IFMG."
 7. Cite a fonte (nome do documento) quando poss\xEDvel.
 8. Para sauda\xE7\xF5es simples (ol\xE1, bom dia), responda diretamente sem usar a ferramenta.
+9. PERGUNTAS CURTAS OU SOBRE PER\xCDODOS/DISCIPLINAS (ex: 'periodo 7', '8 periodo', 'disciplinas 5', 'grade 3'): \xC9 EXTREMAMENTE OBRIGAT\xD3RIO chamar a ferramenta search_ifmg_knowledge. NUNCA responda diretamente sem consultar a ferramenta.
 
 DIRETIVAS DE IDIOMA E FORMATA\xC7\xC3O:
 - REGRA ABSOLUTA: Responda EXCLUSIVAMENTE em Portugu\xEAs do Brasil (pt-BR).
@@ -27641,6 +27652,22 @@ ${"\u2500".repeat(50)}`);
   const assistantMessage = firstData.message;
   if (!assistantMessage) {
     throw new Error("[Ollama] Resposta sem message");
+  }
+  const academicQueryMatch = contextualizedQuestion.match(/(?:per[íi]odo|disciplinas?|grade|matriz|ementa|tcc|est[áa]gio)\s*(\d{1,2})|(\d{1,2})\s*º?\s*(?:per[íi]odo|semestre)/i);
+  if ((!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) && academicQueryMatch) {
+    const periodNum = academicQueryMatch[1] || academicQueryMatch[2] || "";
+    console.log(`\u{1F4A1} [Agente] Heur\xEDstica ativada: for\xE7ando chamada da ferramenta para "${contextualizedQuestion}" (per\xEDodo ${periodNum})`);
+    assistantMessage.tool_calls = [
+      {
+        function: {
+          name: "search_ifmg_knowledge",
+          arguments: {
+            query: `disciplinas per\xEDodo ${periodNum} Bacharelado Sistemas de Informa\xE7\xE3o`,
+            intent: "ESTRUTURA_CURSOS"
+          }
+        }
+      }
+    ];
   }
   if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
     console.log(
@@ -27786,6 +27813,7 @@ ${"\u2500".repeat(50)}`);
   const decoder = new TextDecoder();
   let buffer = "";
   let fullText = "";
+  let fullThought = "";
   let generatedTokens = false;
   try {
     while (true) {
@@ -27801,11 +27829,21 @@ ${"\u2500".repeat(50)}`);
           continue;
         try {
           const chunk = JSON.parse(trimmed);
-          if (chunk.message?.content) {
+          const thoughtToken = chunk.message?.thinking || chunk.message?.reasoning_content;
+          if (thoughtToken) {
+            fullThought += thoughtToken;
+            res.write(`data: ${JSON.stringify({ type: "thought", content: thoughtToken })}
+
+`);
+          }
+          const textToken = chunk.message?.content;
+          if (textToken) {
+            if (textToken.trim() === "<think>" || textToken.trim() === "</think>")
+              continue;
             generatedTokens = true;
-            fullText += chunk.message.content;
+            fullText += textToken;
             res.write(
-              `data: ${JSON.stringify({ type: "token", content: chunk.message.content })}
+              `data: ${JSON.stringify({ type: "token", content: textToken })}
 
 `
             );
@@ -27820,11 +27858,19 @@ ${"\u2500".repeat(50)}`);
     if (buffer.trim()) {
       try {
         const chunk = JSON.parse(buffer.trim());
-        if (chunk.message?.content) {
+        const thoughtToken = chunk.message?.thinking || chunk.message?.reasoning_content;
+        if (thoughtToken) {
+          fullThought += thoughtToken;
+          res.write(`data: ${JSON.stringify({ type: "thought", content: thoughtToken })}
+
+`);
+        }
+        const textToken = chunk.message?.content;
+        if (textToken && textToken.trim() !== "<think>" && textToken.trim() !== "</think>") {
           generatedTokens = true;
-          fullText += chunk.message.content;
+          fullText += textToken;
           res.write(
-            `data: ${JSON.stringify({ type: "token", content: chunk.message.content })}
+            `data: ${JSON.stringify({ type: "token", content: textToken })}
 
 `
           );
@@ -27836,13 +27882,35 @@ ${"\u2500".repeat(50)}`);
     reader.releaseLock();
   }
   if (!generatedTokens) {
-    console.warn("\u26A0\uFE0F [Agente] Resposta vazia no streaming. Enviando fallback.");
-    const fallbackMsg = "N\xE3o encontrei essa informa\xE7\xE3o nos documentos dispon\xEDveis. Recomendo consultar a coordena\xE7\xE3o do curso ou acessar o portal do IFMG.";
-    res.write(
-      `data: ${JSON.stringify({ type: "token", content: fallbackMsg })}
+    let extractedResponse = "";
+    if (fullThought) {
+      const match = fullThought.match(/(?:Drafting the Response:|Resposta Final:|Content:)([\s\S]*)/i);
+      if (match && match[1].trim().length > 20) {
+        extractedResponse = match[1].trim();
+      } else {
+        const lines = fullThought.split("\n").filter((l) => !l.trim().startsWith("Thinking") && !l.trim().startsWith("Analyze") && !l.trim().startsWith("Scan"));
+        const cleanThoughtText = lines.join("\n").trim();
+        if (cleanThoughtText.length > 50) {
+          extractedResponse = cleanThoughtText;
+        }
+      }
+    }
+    if (extractedResponse) {
+      console.log("\u{1F4A1} [Agente] Extraindo resposta rascunhada do canal de thinking...");
+      generatedTokens = true;
+      fullText = extractedResponse;
+      res.write(`data: ${JSON.stringify({ type: "token", content: extractedResponse })}
+
+`);
+    } else {
+      console.warn("\u26A0\uFE0F [Agente] Resposta vazia no streaming. Enviando fallback.");
+      const fallbackMsg = "N\xE3o encontrei essa informa\xE7\xE3o nos documentos dispon\xEDveis. Recomendo consultar a coordena\xE7\xE3o do curso ou acessar o portal do IFMG.";
+      res.write(
+        `data: ${JSON.stringify({ type: "token", content: fallbackMsg })}
 
 `
-    );
+      );
+    }
   }
   res.write(`data: [DONE]
 

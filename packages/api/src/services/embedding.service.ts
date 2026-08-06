@@ -194,6 +194,18 @@ async function juridicalChunking(text: string, filename: string): Promise<ChunkD
       "\n6º Período",
       "\n7º Período",
       "\n8º Período",
+      "\n9º Período",
+      "\n10º Período",
+      "\n1º periodo",
+      "\n2º periodo",
+      "\n3º periodo",
+      "\n4º periodo",
+      "\n5º periodo",
+      "\n6º periodo",
+      "\n7º periodo",
+      "\n8º periodo",
+      "\n9º periodo",
+      "\n10º periodo",
       "\n8.1.1 ",
       "\n8.1.2 ",
       "\n8.1.3 ",
@@ -217,7 +229,7 @@ async function juridicalChunking(text: string, filename: string): Promise<ChunkD
     if (partTrimmed.length === 0) continue;
 
     // Atualiza o contexto se a parte contiver um marcador de hierarquia
-    const hierarchyMatch = partTrimmed.match(/^(?:CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o|8\.\d+(?:\.\d+)?)\s+[IVXLCDM\d\w\s]+.*?(?:\n|$)/i);
+    const hierarchyMatch = partTrimmed.match(/^(?:CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o|8\.\d+(?:\.\d+)?|\d{1,2}º?\s+Per[íi]odo)\s+[IVXLCDM\d\w\s]+.*?(?:\n|$)/i);
     if (hierarchyMatch) {
       currentContext = hierarchyMatch[0].trim();
     }

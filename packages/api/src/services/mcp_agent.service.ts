@@ -68,6 +68,7 @@ REGRAS OBRIGATÓRIAS:
 6. Se a ferramenta não retornar resultados relevantes, diga: "Não encontrei essa informação nos documentos disponíveis. Recomendo consultar a coordenação do seu curso ou o setor correspondente do IFMG."
 7. Cite a fonte (nome do documento) quando possível.
 8. Para saudações simples (olá, bom dia), responda diretamente sem usar a ferramenta.
+9. PERGUNTAS CURTAS OU SOBRE PERÍODOS/DISCIPLINAS (ex: 'periodo 7', '8 periodo', 'disciplinas 5', 'grade 3'): É EXTREMAMENTE OBRIGATÓRIO chamar a ferramenta search_ifmg_knowledge. NUNCA responda diretamente sem consultar a ferramenta.
 
 DIRETIVAS DE IDIOMA E FORMATAÇÃO:
 - REGRA ABSOLUTA: Responda EXCLUSIVAMENTE em Português do Brasil (pt-BR).
@@ -302,6 +303,24 @@ export async function processAgentQuestion(
     throw new Error("[Ollama] Resposta sem message");
   }
 
+  // ── Heurística de segurança para perguntas de período/disciplina sem tool_call ──
+  const academicQueryMatch = contextualizedQuestion.match(/(?:per[íi]odo|disciplinas?|grade|matriz|ementa|tcc|est[áa]gio)\s*(\d{1,2})|(\d{1,2})\s*º?\s*(?:per[íi]odo|semestre)/i);
+  if ((!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) && academicQueryMatch) {
+    const periodNum = academicQueryMatch[1] || academicQueryMatch[2] || "";
+    console.log(`💡 [Agente] Heurística ativada: forçando chamada da ferramenta para "${contextualizedQuestion}" (período ${periodNum})`);
+    assistantMessage.tool_calls = [
+      {
+        function: {
+          name: "search_ifmg_knowledge",
+          arguments: {
+            query: `disciplinas período ${periodNum} Bacharelado Sistemas de Informação`,
+            intent: "ESTRUTURA_CURSOS",
+          },
+        },
+      },
+    ];
+  }
+
   // ── Passo 2: Verificar se há tool_calls ──
   if (
     assistantMessage.tool_calls &&
@@ -473,6 +492,7 @@ export async function processAgentQuestion(
   const decoder = new TextDecoder();
   let buffer = "";
   let fullText = "";
+  let fullThought = "";
   let generatedTokens = false;
 
   try {
@@ -494,12 +514,21 @@ export async function processAgentQuestion(
             done?: boolean;
           };
 
-          // Filtra: envia apenas o conteúdo final da resposta (ignora o raciocínio interno do modelo)
-          if (chunk.message?.content) {
+          // 1. Canal de raciocínio / thinking
+          const thoughtToken = chunk.message?.thinking || chunk.message?.reasoning_content;
+          if (thoughtToken) {
+            fullThought += thoughtToken;
+            res.write(`data: ${JSON.stringify({ type: "thought", content: thoughtToken })}\n\n`);
+          }
+
+          // 2. Envia apenas o conteúdo final da resposta
+          const textToken = chunk.message?.content;
+          if (textToken) {
+            if (textToken.trim() === "<think>" || textToken.trim() === "</think>") continue;
             generatedTokens = true;
-            fullText += chunk.message.content;
+            fullText += textToken;
             res.write(
-              `data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`
+              `data: ${JSON.stringify({ type: "token", content: textToken })}\n\n`
             );
           }
 
@@ -518,11 +547,18 @@ export async function processAgentQuestion(
         const chunk = JSON.parse(buffer.trim()) as {
           message?: { content?: string; thinking?: string; reasoning_content?: string };
         };
-        if (chunk.message?.content) {
+        const thoughtToken = chunk.message?.thinking || chunk.message?.reasoning_content;
+        if (thoughtToken) {
+          fullThought += thoughtToken;
+          res.write(`data: ${JSON.stringify({ type: "thought", content: thoughtToken })}\n\n`);
+        }
+
+        const textToken = chunk.message?.content;
+        if (textToken && textToken.trim() !== "<think>" && textToken.trim() !== "</think>") {
           generatedTokens = true;
-          fullText += chunk.message.content;
+          fullText += textToken;
           res.write(
-            `data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`
+            `data: ${JSON.stringify({ type: "token", content: textToken })}\n\n`
           );
         }
       } catch {
@@ -533,13 +569,34 @@ export async function processAgentQuestion(
     reader.releaseLock();
   }
 
-  // Se nenhum token foi gerado, envia um fallback amigável
+  // Se nenhum token de conteúdo foi gerado, mas houve pensamento
   if (!generatedTokens) {
-    console.warn("⚠️ [Agente] Resposta vazia no streaming. Enviando fallback.");
-    const fallbackMsg = "Não encontrei essa informação nos documentos disponíveis. Recomendo consultar a coordenação do curso ou acessar o portal do IFMG.";
-    res.write(
-      `data: ${JSON.stringify({ type: "token", content: fallbackMsg })}\n\n`
-    );
+    let extractedResponse = "";
+    if (fullThought) {
+      const match = fullThought.match(/(?:Drafting the Response:|Resposta Final:|Content:)([\s\S]*)/i);
+      if (match && match[1].trim().length > 20) {
+        extractedResponse = match[1].trim();
+      } else {
+        const lines = fullThought.split("\n").filter(l => !l.trim().startsWith("Thinking") && !l.trim().startsWith("Analyze") && !l.trim().startsWith("Scan"));
+        const cleanThoughtText = lines.join("\n").trim();
+        if (cleanThoughtText.length > 50) {
+          extractedResponse = cleanThoughtText;
+        }
+      }
+    }
+
+    if (extractedResponse) {
+      console.log("💡 [Agente] Extraindo resposta rascunhada do canal de thinking...");
+      generatedTokens = true;
+      fullText = extractedResponse;
+      res.write(`data: ${JSON.stringify({ type: "token", content: extractedResponse })}\n\n`);
+    } else {
+      console.warn("⚠️ [Agente] Resposta vazia no streaming. Enviando fallback.");
+      const fallbackMsg = "Não encontrei essa informação nos documentos disponíveis. Recomendo consultar a coordenação do curso ou acessar o portal do IFMG.";
+      res.write(
+        `data: ${JSON.stringify({ type: "token", content: fallbackMsg })}\n\n`
+      );
+    }
   }
 
   // Sinaliza fim do stream
