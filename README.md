@@ -92,6 +92,7 @@ Nessa arquitetura agêntica baseada no protocolo MCP (**Model Context Protocol**
    - O LLM analisa o prompt (incluindo o histórico conversacional recente) e decide de forma autônoma se precisa executar uma busca nos documentos. 
      - Para saudações e interações simples, o pipeline detecta localmente no fast-path e envia a mensagem de apresentação estática, encerrando o fluxo.
      - Para perguntas acadêmicas, ele gera um objeto `tool_calls` solicitando a invocação da ferramenta `search_ifmg_knowledge`. Ele deve obrigatoriamente preencher dois parâmetros: `query` (termos chaves/nomes próprios limpos e com siglas expandidas) e `intent` (uma das 10 categorias de intenção acadêmica).
+   - **Mecanismo de Segurança (Force Tool Calling para Perguntas Curtas):** Caso a pergunta do usuário seja extremamente direta (ex: `"periodo 7"`, `"8 periodo"`, `"disciplinas 5"`), e o LLM não retorne `tool_calls` no Passo 1, uma heurística no backend intercepta a chamada e força a execução da ferramenta `search_ifmg_knowledge` para o número do período solicitado, garantindo que o agente nunca responda "de cabeça" sem consultar os documentos.
 
 3. **Passo 2 — Execução da Tool via Servidor MCP:**
    - O backend captura a requisição de Tool Calling do Ollama e executa a ferramenta localmente via protocolo chamando `mcpClient.callTool`.
@@ -220,9 +221,11 @@ REGRAS OBRIGATÓRIAS:
 6. Se a ferramenta não retornar resultados relevantes, diga: "Não encontrei essa informação nos documentos disponíveis. Recomendo consultar a coordenação do seu curso ou o setor correspondente do IFMG."
 7. Cite a fonte (nome do documento) quando possível.
 8. Para saudações simples (olá, bom dia), responda diretamente sem usar a ferramenta.
+9. PERGUNTAS CURTAS OU SOBRE PERÍODOS/DISCIPLINAS (ex: 'periodo 7', '8 periodo', 'disciplinas 5', 'grade 3'): É EXTREMAMENTE OBRIGATÓRIO chamar a ferramenta search_ifmg_knowledge. NUNCA responda diretamente sem consultar a ferramenta.
 
 DIRETIVAS DE IDIOMA E FORMATAÇÃO:
 - REGRA ABSOLUTA: Responda EXCLUSIVAMENTE em Português do Brasil (pt-BR).
+- REGRA PROIBITIVA: NUNCA exiba blocos de raciocínio como 'Thinking Process:', 'Analyze the Request:', 'Scan Context' ou passos internos de análise. Escreva APENAS a resposta final diretamente para o aluno.
 - ECONOMIA DE TOKENS: Seja extremamente direto e conciso. Não enrole na introdução ou conclusão.
 - FORMATAÇÃO SIMPLES: Use bullet points ('* ') APENAS no nível principal. NUNCA crie listas aninhadas ou recuos secundários.
 - Use **negrito** para destacar os termos principais (Ex: nomes das matérias).
@@ -264,23 +267,16 @@ DIRETIVAS DE IDIOMA E FORMATAÇÃO:
 ### Ingestão de Documentos (Admin)
 - 📄 Upload de PDF, Word (.docx), Planilhas/Excel (.xlsx, .csv), Markdown (.md), Imagens e TXT via drag-and-drop (`/embedding`)
 - 📊 **Extração e Conversão**: Extração de PDFs preservando a estrutura semântica/markdown gerada por IA espacial via `@llamaindex/liteparse` e conversão nativa de planilhas para `Markdown Tables`.
-- 🧹 **Serviço de Sanitização Dedicado**: Limpeza e normalização do texto bruto extraído (implementado em `sanitization.service.ts`), executado em 8 etapas sequenciais:
-  1. **Limpeza de OCR**: Remoção de caracteres de controle inválidos, marcação de ordem de byte (BOM) e artefatos de OCR do Tesseract.
-  2. **Reconstituição Hifenizada**: Junção inteligente de palavras que foram cortadas com hífen na transição de linhas de PDFs.
-  3. **Remoção de Elementos Institucionais**: Filtros baseados em expressões regulares para descartar termos repetitivos como "SERVIÇO PÚBLICO FEDERAL", "MINISTÉRIO DA EDUCAÇÃO", "IFMG Campus Ouro Branco", além de e-mails, endereços e telefones institucionais.
-  4. **Poda de Anexos**: Truncamento automático do arquivo ao encontrar expressões de início de anexos ou apêndices (ex: `ANEXO I` no início de linhas), eliminando trechos de formulários em branco que causariam ruído na busca.
-  5. **Conversão de Tabelas Markdown**: Normalização de tabelas com pipes (`|`) para linhas de texto corrido, garantindo que códigos e nomes de disciplinas fiquem no mesmo espaço semântico contíguo.
-  6. **Limpeza Estrutural**: Remoção de pilcrows (`¶`, `§`), números de página isolados e pontuações repetidas (decorativas).
-  7. **Preparação para Chunking Jurídico**: Eliminação de quebras simples de linha que cortam frases ao meio e inserção de quebras duplas (`\n\n`) antes de marcadores de seções (`Art.`, `CAPÍTULO`, `Seção`).
-  8. **Normalização Final**: Consolidação de múltiplos espaços em branco e remoção de linhas vazias ou muito curtas (ruído).
+- 📊 **Pós-processador Semântico de Matrizes Curriculares (`postProcessPDFMatrixText`)**: Converte automaticamente linhas soltas de grades de disciplinas extraídas de PDFs em tabelas Markdown delimitadas (`| Período | Código | Disciplina | CH | Pré-requisito |`), alinhando períodos e disciplinas no mesmo bloco semântico.
+- 🧹 **Serviço de Sanitização Dedicado**: Limpeza e normalização do texto bruto extraído (implementado em `sanitization.service.ts`), executado em 8 etapas sequenciais (remoção de cabeçalhos/rodapés, união de hífens, limpeza de OCR, etc.).
 - 👁️ **OCR Nativo**: Leitura automática de imagens e PDFs escaneados via `tesseract.js`
-- ✂️ **Chunking Semântico Adaptativo** — roteamento automático por tipo de conteúdo:
-  - **Jurídico**: Quebra por `Art.` / `CAPÍTULO` / `TÍTULO` / `Seção` — preserva artigo + incisos + parágrafos como unidade atômica
-  - **Tabela**: Nunca quebra no meio de uma linha; replica o cabeçalho da tabela no topo de cada sub-chunk
-  - **Geral**: Chunking por parágrafo (~2048 chars / ~512 tokens) com overlap de 256 chars
+- ✂️ **Chunking Semântico Adaptativo (Suporte de 1º a 10º Período)** — roteamento automático por tipo de conteúdo:
+  - **Jurídico / Matrizes**: Quebra por `Art.` / `CAPÍTULO` / `TÍTULO` / `Seção` / `1º a 10º Período` — preserva semestres e artigos inteiros sem fragmentar tabelas no meio.
+  - **Tabela**: Nunca quebra no meio de uma linha; replica o cabeçalho da tabela no topo de cada sub-chunk.
+  - **Geral**: Chunking por parágrafo (~2048 chars / ~512 tokens) com overlap de 256 chars.
 - 🏷️ **Injeção de Contexto Global**: Cada chunk recebe um prefixo automático `[Documento: X | Contexto: Y]` antes da vetorização para evitar OOC (Out of Context) no pgvector
 - 🔢 Vetorização via Ollama (`bge-m3`, 1024 dimensões)
-- 💾 Armazenamento Híbrido no PostgreSQL (`pgvector` HNSW + `tsvector`)
+- 💾 Armazenamento Híbrido no PostgreSQL (`pgvector` HNSW + `tsvector` com ordinalMap de 1º a 10º período)
 - 📋 Listagem de documentos já processados na base de conhecimento
 - 🗑️ Exclusão de documentos e de todos os seus fragmentos associados
 

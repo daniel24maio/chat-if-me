@@ -10,9 +10,9 @@ Este pacote contém o backend da aplicação, desenvolvido com Node.js, Express,
 
 A lógica central da API é modulada em serviços especializados presentes em `src/services/`, cada um com responsabilidades estritas no pipeline de IA:
 
-*   **`rag.service.ts` (Pipeline RAG Clássico)**: Fluxo determinístico para responder dúvidas acadêmicas. Combina *Query Rewriting*, busca vetorial e lexical via *Reciprocal Rank Fusion (RRF)*, além de streaming SSE, sendo extremamente resistente a alucinações.
-*   **`mcp_agent.service.ts` (Agente MCP)**: Pipeline dinâmico baseado no Model Context Protocol, gerenciando o subprocesso do servidor MCP de forma autônoma para orquestrar *Tool Calling*.
-*   **`embedding.service.ts` (Ingestão e Vetorização)**: Processamento de arquivos (PDFs, planilhas), chunking semântico inteligente (jurídico, tabelas), geração de vetores 1024d (`bge-m3`) e inserção no banco híbrido do PostgreSQL.
+*   **`rag.service.ts` (Pipeline RAG Clássico)**: Fluxo determinístico para responder dúvidas acadêmicas. Combina *Query Rewriting*, busca vetorial e lexical via *Reciprocal Rank Fusion (RRF)* com `ordinalMap` expandido para até 10 períodos, além de streaming SSE resiliente contra respostas vazias de raciocínio (*thinking*).
+*   **`mcp_agent.service.ts` (Agente MCP)**: Pipeline dinâmico baseado no Model Context Protocol, gerenciando o subprocesso do servidor MCP de forma autônoma para orquestrar *Tool Calling*. Possui heurística de *Force Tool Calling* em tempo de execução para perguntas curtas sobre períodos (ex: `"periodo 7"`), além de captura de eventos `thought` SSE para o frontend.
+*   **`embedding.service.ts` (Ingestão e Vetorização)**: Processamento de arquivos (PDFs, planilhas), pós-processamento semântico de tabelas e matrizes curriculares em Markdown (`postProcessPDFMatrixText`), chunking semântico adaptativo (suportando do 1º ao 10º período sem fragmentar semestres), geração de vetores 1024d (`bge-m3`) e inserção no banco híbrido do PostgreSQL.
 *   **`sanitization.service.ts` (Sanitização Avançada)**: Tratamento profundo do texto bruto extraído (OCR), removendo caracteres de controle, corrigindo palavras hifenizadas indevidamente, limpando rodapés/cabeçalhos institucionais padrão e formatando tabelas Markdown antes do corte (*chunking*).
 *   **`memory.service.ts` (Memória em RAM)**: Sessões conversacionais gerenciadas nativamente na heap do Node.js. Conta com *Garbage Collector* ativo (TTL de 5 min), limitador de segurança LRU (máx. 100 sessões ativas) e resolução automática de correferências nas conversas contínuas.
 *   **`fast_path.util.ts` (Bypass Rápido)**: Otimização de saudações (`Olá`, `Bom dia`). Detecta interações primárias instantaneamente (via regex + LLM intent) e envia mensagens pré-fabricadas (`STATIC_GREETING_RESPONSE`), economizando processamento de GPU e evitando demoras de inferência no primeiro contato.
@@ -23,8 +23,12 @@ A lógica central da API é modulada em serviços especializados presentes em `s
 ## 🛠️ Funcionalidades Adicionais
 
 *   **Duplo Pipeline de Busca (SSE)**: Roteamento de perguntas otimizado para RAG sequencial e agente autônomo MCP.
+*   **Force Tool Calling & Heurística de Busca**: Garantia de busca documental automática para perguntas diretas de período ou matriz curricular.
+*   **Formatação de Matrizes Curriculares em Markdown**: Pós-processador nativo que preserva linhas de disciplinas e códigos em tabelas alinhadas (`| Período | Código | Disciplina | CH | Pré-requisito |`).
+*   **Suporte a 10 Períodos Acadêmicos**: Indexação FTS e fatiamento jurídico ajustados para cursos de até 10 semestres.
+*   **Resiliência a Raciocínio (Thinking)**: Filtragem e transmissão de canais `thinking` / `reasoning_content` (`<think>`) com fallback de rascunho.
 *   **Status Dinâmicos SSE**: Pushes de status intermediários enviados em tempo real para manter o frontend ciente do progresso interno do pipeline ("Buscando...", "Lendo documentos...").
-*   **API de Feedback**: Endpoint `POST /api/chat/feedback` para captar e consolidar avaliações qualitativas (👍/👎) nas respostas geradas.-
+*   **API de Feedback**: Endpoint `POST /api/chat/feedback` para captar e consolidar avaliações qualitativas (👍/👎) nas respostas geradas.
 
 ## ⚙️ Configuração (Variáveis de Ambiente)
 

@@ -28,7 +28,7 @@ const REWRITE_MODEL = process.env.OLLAMA_REWRITE_MODEL || "qwen3.5:4b";
  * Context window máximo por requisição.
  * Limita a alocação de VRAM do Ollama para suportar mais usuários simultâneos.
  */
-const NUM_CTX = Number(process.env.OLLAMA_NUM_CTX) || 8192;
+const NUM_CTX = Number(process.env.OLLAMA_NUM_CTX) || 32768;
 
 /**
  * Número de camadas do LLM a serem carregadas na GPU.

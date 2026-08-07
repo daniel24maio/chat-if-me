@@ -19,13 +19,16 @@ Este pacote expõe o banco de dados PostgreSQL (com a extensão `pgvector` e bus
 
 ### `search_ifmg_knowledge`
 
-Realiza uma busca híbrida (semântica baseada em embeddings + léxica via Full-Text Search) combinada com **Reciprocal Rank Fusion (RRF)** nos documentos oficiais do campus.
+Realiza uma busca híbrida (semântica baseada em embeddings + léxica via Full-Text Search com suporte a ordinalMap de 1º a 10º período) combinada com **Reciprocal Rank Fusion (RRF)** nos documentos oficiais do campus.
 
 *   **Parâmetros de Entrada**:
     *   `query` (string, obrigatório): Palavras-chave principais para a busca. *Diretiva: Evitar pronomes, artigos e conectivos; focar apenas em termos fundamentais.*
-    *   `intent` (enum, obrigatório): Classificação da intenção da busca disposta em 10 categorias estruturais (ex: `ESTAGIO_TCC`, `AVALIACAO_FREQUENCIA`, etc.).
+    *   `intent` (enum, obrigatório): Classificação da intenção da busca disposta em 10 categorias estruturais (ex: `ESTRUTURA_CURSOS`, `DISCIPLINA_EMENTA`, `ESTAGIO_TCC`, `AVALIACAO_FREQUENCIA`, etc.).
+*   **Recursos Avançados**:
+    *   **Suporte a 10 Períodos**: Mapeamento inteligente de ordinais e cardinais do 1º ao 10º período (`primeiro` a `décimo`, `1º` a `10º`).
+    *   **ICL Dinâmico & Penalização por Feedback**: Chunks que acumularam avaliações negativas de usuários são automaticamente penalizados no ranking RRF ($Score_{final} = \frac{Score_{RRF}}{1 + \beta \times N_{negativos}}$).
 *   **Retorno**:
-    *   Até 3 trechos de documentos relevantes (limite configurado como `MAX_RESULTS = 3` para evitar saturação e estouro de contexto na GPU de homelabs) que superaram a nota de corte mínima `MIN_RRF_SCORE = 0.002`, contendo os conteúdos, origens e scores de similaridade RRF.
+    *   Até 5 trechos de documentos relevantes (limite `MAX_RESULTS = 5`) que superaram a nota de corte mínima `MIN_RRF_SCORE = 0.002`, contendo os conteúdos, origens e scores de similaridade RRF.
 
 ---
 

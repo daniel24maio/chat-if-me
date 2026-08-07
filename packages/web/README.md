@@ -10,7 +10,8 @@ Este pacote contém o frontend da aplicação, desenvolvido com React, Vite e Ta
 
 *   **Identidade Visual IFMG**: Cores institucionais personalizadas (Verde `#2F9E41` / Vermelho `#CD191E`).
 *   **Modo Escuro (Dark Mode)**: Suporte completo a temas claro/escuro com transições suaves, respeitando as preferências do sistema ou do usuário.
-*   **Streaming SSE**: Exibição de tokens em tempo real com indicador de escrita (cursor piscante `█`) e carregamento dinâmico.
+*   **Streaming SSE & Suporte a Thinking**: Exibição de tokens em tempo real com indicador de escrita (cursor piscante `█`), suporte à recepção de eventos `thought` de raciocínio interno e carregamento dinâmico.
+*   **Renderização de Tabelas & Matrizes Curriculares**: Renderização elegante com `React Markdown` + `Remark GFM` de tabelas de disciplinas (`| Período | Código | Disciplina | CH | Pré-requisito |`) formatadas pelo backend.
 *   **Status Dinâmicos do Pipeline**: Exibe na bolha de digitação o progresso real do backend ("Analisando pergunta...", "Buscando nos documentos...", "Preparando resposta...") em tempo real.
 *   **Memória de Sessão em RAM**: Diálogos multi-turn integrados com resolução de pronomes e persistência conversacional.
 *   **Modal de Expiração por Inatividade**: Ao atingir 5 minutos de inatividade, o chat bloqueia a digitação (campo de texto e botão de envio) e exibe um modal overlay (com desfoque de fundo e animação suave) para iniciar uma "Nova Conversa" de forma segura.
@@ -19,7 +20,7 @@ Este pacote contém o frontend da aplicação, desenvolvido com React, Vite e Ta
 *   **Acessibilidade (Diretrizes WCAG)**: Contraste de cores otimizado para o tema escuro (mínimo de 4.5:1 em textos muted), anéis de foco (`focus-visible`) visíveis em todos os botões e inputs para navegação fluida por teclado, tags `aria-live="polite"` e `aria-atomic="false"` na bolha de streaming, e `aria-label` descritivos nos botões 👍/👎 e campos interativos.
 *   **Otimização Mobile e Tipografia**: Alinhamento à esquerda forçado (`text-align: left`) em todas as bolhas para melhor escaneabilidade sem texto justificado. Aplainamento visual de listas em Markdown para evitar recuos profundos e quebras de layout em telas de smartphones. Inclusão de data (`dd/mm/aaaa hh:mm`) no rodapé dos timestamps.
 *   **Painel Administrativo (`/embedding`)**:
-    *   Drag-and-drop de arquivos para envio à API.
+    *   Drag-and-drop de arquivos para envio à API (suportando PDFs, Word, Excel, CSV, imagens e TXT).
     *   Feedback visual do status de processamento por documento.
     *   Listagem de documentos processados na base de conhecimento com opção de exclusão definitiva.
 *   **Responsividade**: Otimizado para telas de dispositivos móveis, tablets e computadores.
