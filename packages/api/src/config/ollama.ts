@@ -241,7 +241,7 @@ export async function streamOllamaResponse(
       options: {
         num_ctx: NUM_CTX,
         temperature: 0.1,
-        num_predict: 8192,
+        num_predict: 10240,
         num_gpu: NUM_GPU,
       },
     }),

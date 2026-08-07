@@ -988,7 +988,7 @@ async function streamOllamaResponse(messages, res, sources) {
       options: {
         num_ctx: NUM_CTX,
         temperature: 0.1,
-        num_predict: 8192,
+        num_predict: 10240,
         num_gpu: NUM_GPU
       }
     })
@@ -27796,7 +27796,7 @@ ${"\u2500".repeat(50)}`);
       options: {
         num_ctx: NUM_CTX2,
         temperature: 0.2,
-        num_predict: 8192
+        num_predict: 10240
       }
     })
   });

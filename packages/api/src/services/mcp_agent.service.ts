@@ -471,7 +471,7 @@ export async function processAgentQuestion(
       options: {
         num_ctx: NUM_CTX,
         temperature: 0.2,
-        num_predict: 8192,
+        num_predict: 10240,
       },
     }),
   });
