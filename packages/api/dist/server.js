@@ -1701,7 +1701,7 @@ function formatFTSQuery(query, intent) {
   }
   return mainFTS;
 }
-async function hybridSearch(embedding, queryText, limit = 5, intention) {
+async function hybridSearch(embedding, queryText, limit = 3, intention) {
   console.log(
     `\u{1F50D} [RAG] Busca h\xEDbrida: vetorial (\u03B1=${RRF_ALPHA}) + FTS (1-\u03B1=${1 - RRF_ALPHA}), k=${RRF_K} | Inten\xE7\xE3o: [${intention || "N/A"}]`
   );
@@ -1911,7 +1911,7 @@ ${"\u2500".repeat(50)}`);
   const embedding = await generateEmbedding(rewrittenQuestion);
   const embedMs = Date.now() - t1;
   const t2 = Date.now();
-  const documents = await hybridSearch(embedding, rewrittenQuestion, 5, intention);
+  const documents = await hybridSearch(embedding, rewrittenQuestion, 3, intention);
   const retrievalMs = Date.now() - t2;
   const sources = documents.map(
     (doc) => `${doc.source} (similaridade: ${doc.similarity.toFixed(2)})`

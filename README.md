@@ -96,7 +96,7 @@ Nessa arquitetura agêntica baseada no protocolo MCP (**Model Context Protocol**
 3. **Passo 2 — Execução da Tool via Servidor MCP:**
    - O backend captura a requisição de Tool Calling do Ollama e executa a ferramenta localmente via protocolo chamando `mcpClient.callTool`.
    - Dentro do MCP Server, é executada uma busca híbrida no PostgreSQL associando `pgvector` HNSW (similaridade de cosseno com peso $\alpha = 0.4$) e Full-Text Search com `tsvector` + `portuguese_unaccent`.
-   - **Filtro de Lixo Semântico:** Diferente do RAG clássico, o servidor MCP aplica uma nota de corte estrita **`MIN_RRF_SCORE = 0.002`** para descartar trechos irrelevantes de baixo ranking, retornando até 5 resultados para o agente (limite `MAX_RESULTS = 5` para evitar saturação e estouro de contexto na GPU de homelabs).
+   - **Filtro de Lixo Semântico:** Diferente do RAG clássico, o servidor MCP aplica uma nota de corte estrita **`MIN_RRF_SCORE = 0.002`** para descartar trechos irrelevantes de baixo ranking, retornando até 3 resultados para o agente (limite `MAX_RESULTS = 3` para evitar saturação e estouro de contexto na GPU de homelabs).
 
 4. **Passo 3 — Segunda Chamada, Geração Final & Persistência:**
    - O backend anexa os trechos retornados pela busca ao histórico de mensagens na conversa com a role `tool` e envia o histórico completo de volta ao Ollama.

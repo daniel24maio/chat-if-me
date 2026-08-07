@@ -271,13 +271,13 @@ function formatFTSQuery(query: string, intent?: string): string {
  *
  * @param embedding  - Vetor da pergunta (para busca semântica)
  * @param queryText  - Texto da pergunta (para Full-Text Search)
- * @param limit      - Número máximo de resultados (default: 5)
+ * @param limit      - Número máximo de resultados (default: 3)
  * @param intention  - Intenção classificada (para expansão FTS)
  */
 async function hybridSearch(
   embedding: number[],
   queryText: string,
-  limit: number = 5,
+  limit: number = 3,
   intention?: string
 ): Promise<RetrievedDocument[]> {
   console.log(
@@ -579,7 +579,7 @@ export async function processQuestionStream(
 
   // Etapa 2: Busca híbrida (vetorial + FTS) com RRF + penalização por feedback negativo + intenção
   const t2 = Date.now();
-  const documents = await hybridSearch(embedding, rewrittenQuestion, 5, intention);
+  const documents = await hybridSearch(embedding, rewrittenQuestion, 3, intention);
   const retrievalMs = Date.now() - t2;
 
   // Extrair as fontes dos documentos recuperados para referência
