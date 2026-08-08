@@ -37,7 +37,7 @@ const OLLAMA_BASE_URL =
 const LLM_MODEL = process.env.OLLAMA_LLM_MODEL || "qwen3.5:4b";
 
 /** Context window máximo por requisição (economia de VRAM) */
-const NUM_CTX = Number(process.env.OLLAMA_NUM_CTX) || 32768;
+const NUM_CTX = Number(process.env.OLLAMA_NUM_CTX) || 10240;
 
 /** Timeout global de segurança para as chamadas do Ollama (10 minutos) */
 const FETCH_TIMEOUT_MS = 600000;
@@ -471,7 +471,7 @@ export async function processAgentQuestion(
       options: {
         num_ctx: NUM_CTX,
         temperature: 0.2,
-        num_predict: 10240,
+        num_predict: 8164,
       },
     }),
   });

@@ -29,7 +29,7 @@ const FEW_SHOT_SIMILARITY_THRESHOLD = 0.85;
 
 /**
  * Número máximo de exemplos positivos a retornar por busca few-shot.
- * Cada exemplo consome ~200-400 tokens da janela de contexto (num_ctx: 8192).
+ * Cada exemplo consome ~200-400 tokens da janela de contexto (num_ctx: 10240).
  */
 const MAX_FEW_SHOT_EXAMPLES = 3;
 

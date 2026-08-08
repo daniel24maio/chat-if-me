@@ -315,7 +315,7 @@ DIRETIVAS DE IDIOMA E FORMATAÇÃO:
 | **Connection Pooling** | Pool PostgreSQL com max=20 conexões, timeout de 5s |
 
 ### Limitações Conhecidas
-- Context window limitado a 8192 tokens por requisição por padrão (configurável via `OLLAMA_NUM_CTX`)
+- Context window limitado a 10240 tokens por requisição por padrão (configurável via `OLLAMA_NUM_CTX`)
 - Modelo de geração padrão é `qwen3.5:4b` (4B parâmetros) — melhor qualidade de geração e aderência a instruções
 - Sem autenticação de usuários finais (sistema acadêmico aberto)
 
@@ -429,7 +429,7 @@ OLLAMA_BASE_URL=http://192.168.31.50:11434
 OLLAMA_EMBED_MODEL=bge-m3
 OLLAMA_LLM_MODEL=qwen3.5:4b
 OLLAMA_REWRITE_MODEL=qwen3.5:4b
-OLLAMA_NUM_CTX=8192
+OLLAMA_NUM_CTX=10240
 REDIS_URL=redis://localhost:6379
 ```
 
@@ -486,7 +486,7 @@ Para rodar em produção (ex: homelab com Nginx/Cloudflare Tunnels), você preci
 - `ADMIN_API_KEY`: Chave de autenticação para rotas admin
 - `DATABASE_URL`: String de conexão do PostgreSQL
 - `OLLAMA_BASE_URL`: URL do servidor Ollama no seu homelab
-- `OLLAMA_NUM_CTX`: Limite da janela de contexto para a GPU (ex: 8192)
+- `OLLAMA_NUM_CTX`: Limite da janela de contexto para a GPU (ex: 10240)
 - `REDIS_URL`: URL do servidor Redis
 
 **Frontend (`chatifme-frontend`):**

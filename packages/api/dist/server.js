@@ -880,7 +880,7 @@ var OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
 var EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || "bge-m3";
 var LLM_MODEL = process.env.OLLAMA_LLM_MODEL || "qwen3.5:4b";
 var REWRITE_MODEL = process.env.OLLAMA_REWRITE_MODEL || "qwen3.5:4b";
-var NUM_CTX = Number(process.env.OLLAMA_NUM_CTX) || 32768;
+var NUM_CTX = Number(process.env.OLLAMA_NUM_CTX) || 10240;
 var NUM_GPU = Number(process.env.OLLAMA_NUM_GPU) || 24;
 var FETCH_TIMEOUT_MS = 6e5;
 function pruneHistory(messages, maxInteractions = 6) {
@@ -988,7 +988,7 @@ async function streamOllamaResponse(messages, res, sources) {
       options: {
         num_ctx: NUM_CTX,
         temperature: 0.1,
-        num_predict: 10240,
+        num_predict: 8164,
         num_gpu: NUM_GPU
       }
     })
@@ -27482,7 +27482,7 @@ import { fileURLToPath } from "url";
 import { dirname, resolve as resolve2 } from "path";
 var OLLAMA_BASE_URL2 = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
 var LLM_MODEL2 = process.env.OLLAMA_LLM_MODEL || "qwen3.5:4b";
-var NUM_CTX2 = Number(process.env.OLLAMA_NUM_CTX) || 32768;
+var NUM_CTX2 = Number(process.env.OLLAMA_NUM_CTX) || 10240;
 var FETCH_TIMEOUT_MS2 = 6e5;
 var AGENT_SYSTEM_PROMPT = `Voc\xEA \xE9 o assistente virtual oficial do IFMG Campus Ouro Branco.
 
@@ -27796,7 +27796,7 @@ ${"\u2500".repeat(50)}`);
       options: {
         num_ctx: NUM_CTX2,
         temperature: 0.2,
-        num_predict: 10240
+        num_predict: 8164
       }
     })
   });
