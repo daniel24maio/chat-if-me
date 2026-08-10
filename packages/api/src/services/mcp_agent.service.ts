@@ -15,7 +15,7 @@ import {
   streamStaticGreeting,
   STATIC_GREETING_RESPONSE,
 } from "./fast_path.util.js";
-import { streamOllamaResponse, type OllamaChatMessage } from "../config/ollama.js";
+import { streamOllamaResponse, extractDraftFromThinking, type OllamaChatMessage } from "../config/ollama.js";
 
 /**
  * Serviço do Agente MCP — Agentic RAG.
@@ -571,19 +571,7 @@ export async function processAgentQuestion(
 
   // Se nenhum token de conteúdo foi gerado, mas houve pensamento
   if (!generatedTokens) {
-    let extractedResponse = "";
-    if (fullThought) {
-      const match = fullThought.match(/(?:Drafting the Response:|Resposta Final:|Content:)([\s\S]*)/i);
-      if (match && match[1].trim().length > 20) {
-        extractedResponse = match[1].trim();
-      } else {
-        const lines = fullThought.split("\n").filter(l => !l.trim().startsWith("Thinking") && !l.trim().startsWith("Analyze") && !l.trim().startsWith("Scan"));
-        const cleanThoughtText = lines.join("\n").trim();
-        if (cleanThoughtText.length > 50) {
-          extractedResponse = cleanThoughtText;
-        }
-      }
-    }
+    const extractedResponse = extractDraftFromThinking(fullThought);
 
     if (extractedResponse) {
       console.log("💡 [Agente] Extraindo resposta rascunhada do canal de thinking...");

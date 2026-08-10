@@ -28,6 +28,13 @@ import { generateOllamaEmbedding } from "../config/ollama.js";
 const FEW_SHOT_SIMILARITY_THRESHOLD = 0.85;
 
 /**
+ * Similaridade máxima de cosseno permitida para injeção few-shot.
+ * Se a similaridade for >= 0.95 (pergunta quase idêntica), o exemplo é ignorado
+ * para evitar colapso de prompt / meta-raciocínio em LLMs de menor porte (qwen3.5:4b).
+ */
+const MAX_FEW_SHOT_SIMILARITY = 0.95;
+
+/**
  * Número máximo de exemplos positivos a retornar por busca few-shot.
  * Cada exemplo consome ~200-400 tokens da janela de contexto (num_ctx: 10240).
  */
@@ -143,10 +150,11 @@ export async function getPositiveExamples(
               1 - (question_embedding <=> $1::vector) AS similarity
        FROM chat_feedbacks
        WHERE feedback_type = 'positive'
-         AND 1 - (question_embedding <=> $1::vector) > $2
+         AND 1 - (question_embedding <=> $1::vector) >= $2
+         AND 1 - (question_embedding <=> $1::vector) < $3
        ORDER BY question_embedding <=> $1::vector
-       LIMIT $3`,
-      [vectorStr, threshold, maxExamples]
+       LIMIT $4`,
+      [vectorStr, threshold, MAX_FEW_SHOT_SIMILARITY, maxExamples]
     );
 
     if (result.rows.length === 0) {

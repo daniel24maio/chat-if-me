@@ -970,6 +970,24 @@ async function rewriteWithLLM(systemPrompt, question) {
   }
   return data.message.content.trim();
 }
+function extractDraftFromThinking(fullThought) {
+  if (!fullThought)
+    return "";
+  const match = fullThought.match(/(?:Drafting the Response:|Resposta Final:|Content:)([\s\S]*)/i);
+  if (match && match[1].trim().length > 20) {
+    const candidate = match[1].trim();
+    if (!/^\s*(?:\d+\.\s*)?(?:Wait|Analyze|Correction|System Prompt|Current State)/i.test(candidate)) {
+      return candidate;
+    }
+  }
+  const metaRegex = /^\s*(?:\d+\.\s*)?(?:Thinking|Analyze|Scan|Review|Wait|Correction|System Prompt|User Input|Current State|Looking at|First occurrence|My Previous Response|Previous Turn|The user is asking|Context Provided)/i;
+  const lines = fullThought.split("\n").map((l) => l.trim()).filter((l) => l.length > 0 && !metaRegex.test(l));
+  const cleanThoughtText = lines.join("\n").trim();
+  if (cleanThoughtText.length > 50 && !metaRegex.test(cleanThoughtText)) {
+    return cleanThoughtText;
+  }
+  return "";
+}
 async function streamOllamaResponse(messages, res, sources) {
   const url = `${OLLAMA_BASE_URL}/api/chat`;
   const safeMessages = pruneHistory(messages);
@@ -1072,19 +1090,7 @@ async function streamOllamaResponse(messages, res, sources) {
     reader.releaseLock();
   }
   if (!generatedTokens) {
-    let extractedResponse = "";
-    if (fullThought) {
-      const match = fullThought.match(/(?:Drafting the Response:|Resposta Final:|Content:)([\s\S]*)/i);
-      if (match && match[1].trim().length > 20) {
-        extractedResponse = match[1].trim();
-      } else {
-        const lines = fullThought.split("\n").filter((l) => !l.trim().startsWith("Thinking") && !l.trim().startsWith("Analyze") && !l.trim().startsWith("Scan") && !l.trim().startsWith("Review"));
-        const cleanThoughtText = lines.join("\n").trim();
-        if (cleanThoughtText.length > 50) {
-          extractedResponse = cleanThoughtText;
-        }
-      }
-    }
+    const extractedResponse = extractDraftFromThinking(fullThought);
     if (extractedResponse) {
       console.log("\u{1F4A1} [Ollama] Extraindo resposta rascunhada do canal de thinking...");
       generatedTokens = true;
@@ -1442,6 +1448,7 @@ async function streamStaticGreeting(res) {
 
 // src/services/feedback.service.ts
 var FEW_SHOT_SIMILARITY_THRESHOLD = 0.85;
+var MAX_FEW_SHOT_SIMILARITY = 0.95;
 var MAX_FEW_SHOT_EXAMPLES = 3;
 var PENALTY_BETA = 0.08;
 async function saveFeedback(params) {
@@ -1480,10 +1487,11 @@ async function getPositiveExamples(questionEmbedding, threshold = FEW_SHOT_SIMIL
               1 - (question_embedding <=> $1::vector) AS similarity
        FROM chat_feedbacks
        WHERE feedback_type = 'positive'
-         AND 1 - (question_embedding <=> $1::vector) > $2
+         AND 1 - (question_embedding <=> $1::vector) >= $2
+         AND 1 - (question_embedding <=> $1::vector) < $3
        ORDER BY question_embedding <=> $1::vector
-       LIMIT $3`,
-      [vectorStr, threshold, maxExamples]
+       LIMIT $4`,
+      [vectorStr, threshold, MAX_FEW_SHOT_SIMILARITY, maxExamples]
     );
     if (result.rows.length === 0) {
       return [];
@@ -1701,7 +1709,7 @@ function formatFTSQuery(query, intent) {
   }
   return mainFTS;
 }
-async function hybridSearch(embedding, queryText, limit = 3, intention) {
+async function hybridSearch(embedding, queryText, limit = 5, intention) {
   console.log(
     `\u{1F50D} [RAG] Busca h\xEDbrida: vetorial (\u03B1=${RRF_ALPHA}) + FTS (1-\u03B1=${1 - RRF_ALPHA}), k=${RRF_K} | Inten\xE7\xE3o: [${intention || "N/A"}]`
   );
@@ -1911,7 +1919,7 @@ ${"\u2500".repeat(50)}`);
   const embedding = await generateEmbedding(rewrittenQuestion);
   const embedMs = Date.now() - t1;
   const t2 = Date.now();
-  const documents = await hybridSearch(embedding, rewrittenQuestion, 3, intention);
+  const documents = await hybridSearch(embedding, rewrittenQuestion, 5, intention);
   const retrievalMs = Date.now() - t2;
   const sources = documents.map(
     (doc) => `${doc.source} (similaridade: ${doc.similarity.toFixed(2)})`
@@ -1958,7 +1966,7 @@ ${"\u2500".repeat(50)}`);
 
 // src/services/queue.service.ts
 var MAX_CONCURRENT = Number(process.env.OLLAMA_MAX_CONCURRENT) || 2;
-var QUEUE_TIMEOUT_MS = 12e4;
+var QUEUE_TIMEOUT_MS = 12e5;
 var OllamaSemaphore = class {
   constructor(maxConcurrent) {
     this.maxConcurrent = maxConcurrent;
@@ -27882,19 +27890,7 @@ ${"\u2500".repeat(50)}`);
     reader.releaseLock();
   }
   if (!generatedTokens) {
-    let extractedResponse = "";
-    if (fullThought) {
-      const match = fullThought.match(/(?:Drafting the Response:|Resposta Final:|Content:)([\s\S]*)/i);
-      if (match && match[1].trim().length > 20) {
-        extractedResponse = match[1].trim();
-      } else {
-        const lines = fullThought.split("\n").filter((l) => !l.trim().startsWith("Thinking") && !l.trim().startsWith("Analyze") && !l.trim().startsWith("Scan"));
-        const cleanThoughtText = lines.join("\n").trim();
-        if (cleanThoughtText.length > 50) {
-          extractedResponse = cleanThoughtText;
-        }
-      }
-    }
+    const extractedResponse = extractDraftFromThinking(fullThought);
     if (extractedResponse) {
       console.log("\u{1F4A1} [Agente] Extraindo resposta rascunhada do canal de thinking...");
       generatedTokens = true;

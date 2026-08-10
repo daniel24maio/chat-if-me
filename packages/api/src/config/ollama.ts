@@ -215,6 +215,39 @@ export async function rewriteWithLLM(systemPrompt: string, question: string): Pr
   return data.message.content.trim();
 }
 
+/**
+ * Extrai rascunho de resposta válido do canal de pensamento (thinking),
+ * filtrando rigorosamente linhas de meta-raciocínio, análise de prompt e loops de CoT.
+ */
+export function extractDraftFromThinking(fullThought: string): string {
+  if (!fullThought) return "";
+
+  // 1. Tentar encontrar uma seção explicitamente rotulada de resposta final
+  const match = fullThought.match(/(?:Drafting the Response:|Resposta Final:|Content:)([\s\S]*)/i);
+  if (match && match[1].trim().length > 20) {
+    const candidate = match[1].trim();
+    if (!/^\s*(?:\d+\.\s*)?(?:Wait|Analyze|Correction|System Prompt|Current State)/i.test(candidate)) {
+      return candidate;
+    }
+  }
+
+  // 2. Filtrar linhas de meta-raciocínio / análise de prompt
+  const metaRegex = /^\s*(?:\d+\.\s*)?(?:Thinking|Analyze|Scan|Review|Wait|Correction|System Prompt|User Input|Current State|Looking at|First occurrence|My Previous Response|Previous Turn|The user is asking|Context Provided)/i;
+
+  const lines = fullThought
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !metaRegex.test(l));
+
+  const cleanThoughtText = lines.join("\n").trim();
+
+  if (cleanThoughtText.length > 50 && !metaRegex.test(cleanThoughtText)) {
+    return cleanThoughtText;
+  }
+
+  return "";
+}
+
 // ---------------------------------------------------------------------------
 // Geração de Texto (LLM) — Modo STREAMING (SSE)
 // ---------------------------------------------------------------------------
@@ -339,21 +372,7 @@ export async function streamOllamaResponse(
 
   // Se nenhum token de content foi gerado, mas houve pensamento (thinking)
   if (!generatedTokens) {
-    // Tenta extrair a resposta do rascunho interno no pensamento se houver
-    let extractedResponse = "";
-    if (fullThought) {
-      const match = fullThought.match(/(?:Drafting the Response:|Resposta Final:|Content:)([\s\S]*)/i);
-      if (match && match[1].trim().length > 20) {
-        extractedResponse = match[1].trim();
-      } else {
-        // Se houver um trecho formatado com bullet points no pensamento
-        const lines = fullThought.split("\n").filter(l => !l.trim().startsWith("Thinking") && !l.trim().startsWith("Analyze") && !l.trim().startsWith("Scan") && !l.trim().startsWith("Review"));
-        const cleanThoughtText = lines.join("\n").trim();
-        if (cleanThoughtText.length > 50) {
-          extractedResponse = cleanThoughtText;
-        }
-      }
-    }
+    const extractedResponse = extractDraftFromThinking(fullThought);
 
     if (extractedResponse) {
       console.log("💡 [Ollama] Extraindo resposta rascunhada do canal de thinking...");
