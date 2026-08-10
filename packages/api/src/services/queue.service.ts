@@ -22,7 +22,7 @@
 const MAX_CONCURRENT = Number(process.env.OLLAMA_MAX_CONCURRENT) || 2;
 
 /** Timeout máximo de espera na fila (ms) */
-const QUEUE_TIMEOUT_MS = 120_000; // 2 minutos
+const QUEUE_TIMEOUT_MS = 120_0000; // 20 minutos
 
 /** Nome da fila */
 const QUEUE_NAME = "chatifme-llm";
@@ -45,7 +45,7 @@ class OllamaSemaphore {
   private currentCount = 0;
   private waitQueue: Array<{ resolve: () => void; timer: ReturnType<typeof setTimeout> }> = [];
 
-  constructor(private maxConcurrent: number) {}
+  constructor(private maxConcurrent: number) { }
 
   /**
    * Aguarda até que um slot esteja disponível.
