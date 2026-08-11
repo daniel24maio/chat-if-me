@@ -377,10 +377,10 @@ const ChatInterface: React.FC = () => {
               {msg.isStreaming && <span className="streaming-cursor" aria-hidden="true">█</span>}
             </div>
 
-            {/* Meta-informações da resposta (Feedback e Fontes) */}
-            {msg.sender === 'ai' && !msg.isStreaming && (msg.id !== '1' && msg.id !== 'expiration' || (msg.sources && msg.sources.length > 0 && msg.mode === 'agent')) && (
+            {/* Meta-informações da resposta (Feedback, Modo de busca e Fontes) */}
+            {msg.sender === 'ai' && !msg.isStreaming && msg.id !== '1' && msg.id !== 'expiration' && (
               <div className="message-meta">
-                {msg.id !== '1' && msg.id !== 'expiration' && (
+                <div className="message-meta-row">
                   <div className="message-feedback">
                     <span className="feedback-question">Esta resposta foi útil?</span>
                     <button
@@ -400,7 +400,13 @@ const ChatInterface: React.FC = () => {
                       👎
                     </button>
                   </div>
-                )}
+
+                  <div className="search-mode-indicator">
+                    <span className={`search-mode-badge ${msg.mode === 'agent' ? 'mode-badge-agent' : 'mode-badge-rag'}`}>
+                      {msg.mode === 'agent' ? '🤖 Modo: Agente MCP' : '⚡ Modo: RAG Clássico'}
+                    </span>
+                  </div>
+                </div>
 
                 {msg.sources && msg.sources.length > 0 && msg.mode === 'agent' && (
                   <div className="message-fontes-inline">

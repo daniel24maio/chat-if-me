@@ -461,10 +461,51 @@
   gap: 0.5rem;
 }
 
+.message-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
 .message-feedback {
   display: flex;
   align-items: center;
   gap: 0.4rem;
+}
+
+.search-mode-indicator {
+  display: flex;
+  align-items: center;
+}
+
+.search-mode-badge {
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 0.15rem 0.55rem;
+  border-radius: 100px;
+  display: inline-flex;
+  align-items: center;
+  letter-spacing: 0.01em;
+}
+
+.mode-badge-rag {
+  background-color: var(--primary-light);
+  border: 1px solid var(--primary-border);
+  color: var(--ifmg-verde-escuro);
+}
+
+.mode-badge-agent {
+  background-color: rgba(145, 53, 255, 0.12);
+  border: 1px solid rgba(145, 53, 255, 0.3);
+  color: #7e14ff;
+}
+
+[data-theme="dark"] .mode-badge-agent {
+  background-color: rgba(168, 85, 247, 0.2);
+  border-color: rgba(168, 85, 247, 0.4);
+  color: #c084fc;
 }
 
 .feedback-question {
