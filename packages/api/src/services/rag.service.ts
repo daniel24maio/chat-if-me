@@ -84,12 +84,27 @@ REGRAS:
  */
 function inferIntentionFromKeywords(text: string): string {
   const t = text.toLowerCase();
-  if (/matriz|grade|periodo|semestre|ppc|curso/i.test(t)) return "CURSO";
-  if (/ementa|pre-requisito|disciplina/i.test(t)) return "DISCIPLINA";
-  if (/tcc|trabalho de conclusao/i.test(t)) return "ESTAGIO_TCC";
-  if (/estagio/i.test(t)) return "ESTAGIO_TCC";
-  if (/matricula|ingresso|sisu|vestibular/i.test(t)) return "INGRESSO_MATRICULA";
-  if (/frequencia|falta|nota|abono|atestado|prova|exame/i.test(t)) return "AVALIACAO_FREQUENCIA";
+
+  // Pergunta sobre LISTAGEM de disciplinas de um período/semestre — é CURSO, não DISCIPLINA
+  if (/(?:disciplinas?|mat[eé]rias?|grade)\s+(?:do|da|no|na|de)?\s*(?:\d+[oaºª]?\s*)?per[íi]odo/i.test(text)) return "CURSO";
+  if (/(?:\d+[oaºª]?\s*)?(?:per[íi]odo|semestre)\s+(?:de\s+)?(?:sistemas|administra|computa|ci[eê]nc)/i.test(text)) return "CURSO";
+
+  // Estrutura geral do curso
+  if (/matriz|grade\s+curricular|curr[ií]cula|ppc|dura[cç][aã]o\s+do\s+curso/i.test(t)) return "CURSO";
+
+  // Ementa ou conteúdo específico de uma disciplina
+  if (/ementa|pre-?requisito|conte[uú]do\s+(?:da|programático)/i.test(t)) return "DISCIPLINA_EMENTA";
+
+  // Período genérico (sem mencionar disciplinas) — estrutura de cursos
+  if (/per[íi]odo|semestre|curso\s+de/i.test(t)) return "CURSO";
+
+  // Disciplina genérica — só quando não é sobre listagem por período
+  if (/disciplina/i.test(t)) return "DISCIPLINA";
+
+  if (/tcc|trabalho\s+de\s+conclus[aã]o/i.test(t)) return "ESTAGIO_TCC";
+  if (/est[aá]gio/i.test(t)) return "ESTAGIO_TCC";
+  if (/matr[íi]cula|ingresso|sisu|vestibular/i.test(t)) return "INGRESSO_MATRICULA";
+  if (/frequ[eê]ncia|falta|nota|abono|atestado|prova|exame/i.test(t)) return "AVALIACAO_FREQUENCIA";
   return "OUTRAS";
 }
 

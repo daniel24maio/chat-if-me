@@ -1623,17 +1623,25 @@ REGRAS:
 6. Responda APENAS com a Tag de Inten\xE7\xE3o seguida da pergunta reescrita, sem aspas. Exemplo: "[DISCIPLINA] qual \xE9 a carga hor\xE1ria de c\xE1lculo 1?"`;
 function inferIntentionFromKeywords(text) {
   const t = text.toLowerCase();
-  if (/matriz|grade|periodo|semestre|ppc|curso/i.test(t))
+  if (/(?:disciplinas?|mat[eé]rias?|grade)\s+(?:do|da|no|na|de)?\s*(?:\d+[oaºª]?\s*)?per[íi]odo/i.test(text))
     return "CURSO";
-  if (/ementa|pre-requisito|disciplina/i.test(t))
+  if (/(?:\d+[oaºª]?\s*)?(?:per[íi]odo|semestre)\s+(?:de\s+)?(?:sistemas|administra|computa|ci[eê]nc)/i.test(text))
+    return "CURSO";
+  if (/matriz|grade\s+curricular|curr[ií]cula|ppc|dura[cç][aã]o\s+do\s+curso/i.test(t))
+    return "CURSO";
+  if (/ementa|pre-?requisito|conte[uú]do\s+(?:da|programático)/i.test(t))
+    return "DISCIPLINA_EMENTA";
+  if (/per[íi]odo|semestre|curso\s+de/i.test(t))
+    return "CURSO";
+  if (/disciplina/i.test(t))
     return "DISCIPLINA";
-  if (/tcc|trabalho de conclusao/i.test(t))
+  if (/tcc|trabalho\s+de\s+conclus[aã]o/i.test(t))
     return "ESTAGIO_TCC";
-  if (/estagio/i.test(t))
+  if (/est[aá]gio/i.test(t))
     return "ESTAGIO_TCC";
-  if (/matricula|ingresso|sisu|vestibular/i.test(t))
+  if (/matr[íi]cula|ingresso|sisu|vestibular/i.test(t))
     return "INGRESSO_MATRICULA";
-  if (/frequencia|falta|nota|abono|atestado|prova|exame/i.test(t))
+  if (/frequ[eê]ncia|falta|nota|abono|atestado|prova|exame/i.test(t))
     return "AVALIACAO_FREQUENCIA";
   return "OUTRAS";
 }
