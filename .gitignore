@@ -44,3 +44,16 @@ Thumbs.db
 # ==============================
 # Ignorar dados do banco de dados local caso você faça bind mounts locais
 pgdata/
+
+# ==============================
+# Documentação Interna / TCC (Overleaf)
+# ==============================
+tcc/
+overleaf/
+*.tex
+*.bib
+*.aux
+*.log
+*.toc
+*.fls
+*.fdb_latexmk
