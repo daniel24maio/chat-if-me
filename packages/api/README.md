@@ -10,25 +10,29 @@ Este pacote contém o backend da aplicação, desenvolvido com Node.js, Express,
 
 A lógica central da API é modulada em serviços especializados presentes em `src/services/`, cada um com responsabilidades estritas no pipeline de IA:
 
-*   **`rag.service.ts` (Pipeline RAG Clássico)**: Fluxo determinístico para responder dúvidas acadêmicas. Combina *Query Rewriting*, busca vetorial e lexical via *Reciprocal Rank Fusion (RRF)* com `ordinalMap` expandido para até 10 períodos, além de streaming SSE resiliente contra respostas vazias de raciocínio (*thinking*).
-*   **`mcp_agent.service.ts` (Agente MCP)**: Pipeline dinâmico baseado no Model Context Protocol, gerenciando o subprocesso do servidor MCP de forma autônoma para orquestrar *Tool Calling*. Possui heurística de *Force Tool Calling* em tempo de execução para perguntas curtas sobre períodos (ex: `"periodo 7"`), além de captura de eventos `thought` SSE para o frontend.
-*   **`embedding.service.ts` (Ingestão e Vetorização)**: Processamento de arquivos (PDFs, planilhas), pós-processamento semântico de tabelas e matrizes curriculares em Markdown (`postProcessPDFMatrixText`), chunking semântico adaptativo (suportando do 1º ao 10º período sem fragmentar semestres), geração de vetores 1024d (`bge-m3`) e inserção no banco híbrido do PostgreSQL.
-*   **`sanitization.service.ts` (Sanitização Avançada)**: Tratamento profundo do texto bruto extraído (OCR), removendo caracteres de controle, corrigindo palavras hifenizadas indevidamente, limpando rodapés/cabeçalhos institucionais padrão e formatando tabelas Markdown antes do corte (*chunking*).
-*   **`memory.service.ts` (Memória em RAM)**: Sessões conversacionais gerenciadas nativamente na heap do Node.js. Conta com *Garbage Collector* ativo (TTL de 5 min), limitador de segurança LRU (máx. 100 sessões ativas) e resolução automática de correferências nas conversas contínuas.
-*   **`fast_path.util.ts` (Bypass Rápido)**: Otimização de saudações (`Olá`, `Bom dia`). Detecta interações primárias instantaneamente (via regex + LLM intent) e envia mensagens pré-fabricadas (`STATIC_GREETING_RESPONSE`), economizando processamento de GPU e evitando demoras de inferência no primeiro contato.
-*   **`queue.service.ts` (VRAM Guard - Semáforo)**: Mecanismo de controle de concorrência que enfileira conexões ativas na porta do Ollama, garantindo que o limite físico da GPU (ex: max 2 requests simultâneos) seja respeitado, impedindo falhas críticas de sistema por *Out of Memory (OOM)*.
+*   **`rag.service.ts` (Pipeline RAG Clássico)**: Fluxo determinístico para responder dúvidas acadêmicas. Combina *Query Rewriting*, busca vetorial (1024d) e lexical via *Reciprocal Rank Fusion (RRF)* otimizado com boost por intenção (`CURSO` / `DISCIPLINA_EMENTA`), suporte a penalização ICL por feedback negativo, e streaming SSE resiliente com filtro stateful contra vazamentos de raciocínio (*thinking*).
+*   **`mcp_agent.service.ts` (Agente MCP)**: Pipeline dinâmico baseado no Model Context Protocol, gerenciando o subprocesso do servidor MCP de forma autônoma para orquestrar *Tool Calling*. Possui prompt orientado para 10 categorias acadêmicas (distinguindo listagem de período de ementas individuais), heurística de *Force Tool Calling* para perguntas curtas de períodos (ex: `"periodo 7"`), e filtro stateful de `<think>` SSE.
+*   **`embedding.service.ts` (Ingestão e Vetorização)**: Processamento de arquivos (PDFs, Word, Excel), pós-processamento semântico de tabelas e matrizes curriculares (`postProcessPDFMatrixText`), chunking semântico domain-driven com tipos fiéis aos documentos (`syllabus` para ementários integrados e `normative` para regulamentos/artigos), injeção automática de contexto global `[Documento: X | Contexto: Y]`, geração de vetores 1024d (`bge-m3`) e persistência no PostgreSQL.
+*   **`sanitization.service.ts` (Sanitização Avançada)**: Tratamento profundo em 15 etapas do texto bruto extraído (OCR), removendo caracteres de controle, corrigindo quebras de hífens, limpando rodapés/cabeçalhos institucionais e formatando tabelas Markdown antes da vetorização.
+*   **`memory.service.ts` (Memória em RAM)**: Sessões conversacionais gerenciadas na heap do Node.js. Conta com *Garbage Collector* ativo (TTL de 5 min), limitador de segurança LRU (máx. 100 sessões ativas) e resolução automática de correferências nas conversas contínuas.
+*   **`fast_path.util.ts` (Bypass Rápido)**: Intercepta saudações (`Olá`, `Bom dia`) enviando respostas estáticas pré-fabricadas instantaneamente, sem consumir VRAM na GPU.
+*   **`queue.service.ts` (VRAM Guard - Semáforo)**: Controle de concorrência ativa (`OLLAMA_MAX_CONCURRENT = 2`) que enfileira conexões ativas prevenindo erros de *Out of Memory (OOM)* na GPU.
 
 ---
 
 ## 🛠️ Funcionalidades Adicionais
 
 *   **Duplo Pipeline de Busca (SSE)**: Roteamento de perguntas otimizado para RAG sequencial e agente autônomo MCP.
-*   **Force Tool Calling & Heurística de Busca**: Garantia de busca documental automática para perguntas diretas de período ou matriz curricular.
-*   **Formatação de Matrizes Curriculares em Markdown**: Pós-processador nativo que preserva linhas de disciplinas e códigos em tabelas alinhadas (`| Período | Código | Disciplina | CH | Pré-requisito |`).
-*   **Suporte a 10 Períodos Acadêmicos**: Indexação FTS e fatiamento jurídico ajustados para cursos de até 10 semestres.
-*   **Resiliência a Raciocínio (Thinking)**: Filtragem e transmissão de canais `thinking` / `reasoning_content` (`<think>`) com fallback de rascunho.
-*   **Status Dinâmicos SSE**: Pushes de status intermediários enviados em tempo real para manter o frontend ciente do progresso interno do pipeline ("Buscando...", "Lendo documentos...").
-*   **API de Feedback**: Endpoint `POST /api/chat/feedback` para captar e consolidar avaliações qualitativas (👍/👎) nas respostas geradas.
+*   **Chunking Semântico Domain-Driven**:
+    *   `syllabus`: Preserva `[Código + Nome + CH + Ementa + Objetivos + Bibliografia]` 100% integrados em um único chunk com prefixo de contexto de disciplina ou grade curricular.
+    *   `normative`: Mantém a integridade estrutural de Artigos (Art.), Parágrafos (§), Incisos e Capítulos de regulamentos acadêmicos.
+*   **Busca Híbrida com Boost por Intenção & ICL Dinâmico**:
+    *   Boost RRF de `+0.12` para matrizes curriculares em consultas de intenção `CURSO`.
+    *   Boost RRF de `+0.30` / `+0.10` para blocos de ementa em consultas de `DISCIPLINA_EMENTA`.
+    *   Penalização RRF dinâmica para chunks marcados com feedback negativo pelos usuários.
+*   **Filtro Stateful de Bloco `<think>`**: Intercepta e descarta qualquer token de raciocínio de Chain-of-Thought enviado no fluxo `content` pelo Ollama antes da transmissão SSE ao cliente.
+*   **Resiliência & Fallback**: Transmissão de status intermediários SSE e resgate gracioso de rascunhos em caso de geração de conteúdo vazia.
+*   **API de Feedback**: Endpoint `POST /api/chat/feedback` para captar avaliações (👍/👎) e alimentar o ICL dinâmico.
 
 ## ⚙️ Configuração (Variáveis de Ambiente)
 

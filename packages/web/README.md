@@ -11,6 +11,7 @@ Este pacote contém o frontend da aplicação, desenvolvido com React, Vite e Ta
 *   **Identidade Visual IFMG**: Cores institucionais personalizadas (Verde `#2F9E41` / Vermelho `#CD191E`).
 *   **Modo Escuro (Dark Mode)**: Suporte completo a temas claro/escuro com transições suaves, respeitando as preferências do sistema ou do usuário.
 *   **Streaming SSE & Suporte a Thinking**: Exibição de tokens em tempo real com indicador de escrita (cursor piscante `█`), suporte à recepção de eventos `thought` de raciocínio interno e carregamento dinâmico.
+*   **Badge de Modo de Busca no Rodapé**: Exibição da tag visual do modo utilizado (`⚡ Modo: RAG Clássico` ou `🤖 Modo: Agente MCP`) ao lado dos botões de feedback, para facilitar comparações diretas na pesquisa acadêmica do TCC.
 *   **Renderização de Tabelas & Matrizes Curriculares**: Renderização elegante com `React Markdown` + `Remark GFM` de tabelas de disciplinas (`| Período | Código | Disciplina | CH | Pré-requisito |`) formatadas pelo backend.
 *   **Status Dinâmicos do Pipeline**: Exibe na bolha de digitação o progresso real do backend ("Analisando pergunta...", "Buscando nos documentos...", "Preparando resposta...") em tempo real.
 *   **Memória de Sessão em RAM**: Diálogos multi-turn integrados com resolução de pronomes e persistência conversacional.

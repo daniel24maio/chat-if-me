@@ -23,9 +23,9 @@ Realiza uma busca híbrida (semântica baseada em embeddings + léxica via Full-
 
 *   **Parâmetros de Entrada**:
     *   `query` (string, obrigatório): Palavras-chave principais para a busca. *Diretiva: Evitar pronomes, artigos e conectivos; focar apenas em termos fundamentais.*
-    *   `intent` (enum, obrigatório): Classificação da intenção da busca disposta em 10 categorias estruturais (ex: `ESTRUTURA_CURSOS`, `DISCIPLINA_EMENTA`, `ESTAGIO_TCC`, `AVALIACAO_FREQUENCIA`, etc.).
+    *   `intent` (enum, obrigatório): Classificação da intenção da busca disposta em 10 categorias estruturais (ex: `ESTRUTURA_CURSOS` para matrizes e listagens por período, `DISCIPLINA_EMENTA` para ementas e pré-requisitos específicos, `ESTAGIO_TCC`, `AVALIACAO_FREQUENCIA`, etc.).
 *   **Recursos Avançados**:
-    *   **Suporte a 10 Períodos**: Mapeamento inteligente de ordinais e cardinais do 1º ao 10º período (`primeiro` a `décimo`, `1º` a `10º`).
+    *   **FTS Otimizado**: Filtragem de *stopwords* de pergunta, extração automática de códigos de disciplina (`OBBGSIN.016`), sinonímia de ementas (`conteudo` $\leftrightarrow$ `ementa | ementario | programa`) e suporte a numerais ordinais de 1º a 10º período.
     *   **ICL Dinâmico & Penalização por Feedback**: Chunks que acumularam avaliações negativas de usuários são automaticamente penalizados no ranking RRF ($Score_{final} = \frac{Score_{RRF}}{1 + \beta \times N_{negativos}}$).
 *   **Retorno**:
     *   Até 5 trechos de documentos relevantes (limite `MAX_RESULTS = 5`) que superaram a nota de corte mínima `MIN_RRF_SCORE = 0.002`, contendo os conteúdos, origens e scores de similaridade RRF.

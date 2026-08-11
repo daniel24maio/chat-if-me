@@ -20,8 +20,8 @@ Sistema **Agentic RAG** (Retrieval-Augmented Generation com agentes autônomos) 
 │  │                   │  │                    │  │                   │  │
 │  │ • Chat (SSE)      │  │ • /api/chat (RAG)  │  │ • MCP Tool:       │  │
 │  │ • Toggle RAG/MCP  │  │ • /api/agent (MCP) │  │   search_ifmg_    │  │
-│  │ • Upload PDFs     │  │ • MCP Client       │  │   knowledge       │  │
-│  │                   │  │ • VRAM Semaphore   │  │                   │  │
+│  │ • Badge RAG/Agent │  │ • MCP Client       │  │   knowledge       │  │
+│  │ • Upload PDFs     │  │ • VRAM Semaphore   │  │                   │  │
 │  └─────────┬────────┘  └──────┬────────┬────┘  └──────┬────────────┘  │
 │            │ HTTP              │  stdio │               │              │
 │            └──────────────────►│◄───────┘               │              │
@@ -39,7 +39,7 @@ Sistema **Agentic RAG** (Retrieval-Augmented Generation com agentes autônomos) 
 #### 📚 RAG Clássico (`/api/chat`)
 
 ```
-Pergunta → Query Rewriting → Busca Híbrida (pgvector + FTS via RRF) → LLM Streaming (SSE)
+Pergunta → Query Rewriting → Busca Híbrida Otimizada (pgvector + FTS via RRF Boost) → LLM Streaming com Filtro Stateful (SSE)
 ```
 
 Pipeline determinístico onde toda consulta segue um fluxo linear e estruturado em 5 etapas principais:
@@ -47,188 +47,156 @@ Pipeline determinístico onde toda consulta segue um fluxo linear e estruturado 
 1. **Etapa 0 — Query Rewriting & Roteamento de Intenção:**
    - A pergunta original do aluno é processada por um LLM leve (utilizando o prompt de sistema `REWRITE_SYSTEM_PROMPT`).
    - O LLM realiza a expansão automática de siglas acadêmicas do IFMG (como `TCC`, `PPC`, `CR`, `IRA`, `AC`, `DP`, etc.) e converte termos coloquiais em linguagem formal/acadêmica, alinhando a busca com o vocabulário oficial dos documentos.
-   - Adiciona uma **Tag de Intenção** à consulta: `[CURSO]`, `[DISCIPLINA]`, `[CONTEUDO]` ou `[OUTRAS]`.
-   - Se o processo falhar, o sistema aplica um fallback automático utilizando a pergunta original do aluno.
+   - Classifica a pergunta em uma das **Tags de Intenção**: `[CURSO]`, `[DISCIPLINA]`, `[CONTEUDO]` ou `[OUTRAS]`.
+   - Se o processo de reescrita falhar ou omitir a intenção, a função `inferIntentionFromKeywords` calcula a intenção com suporte a ordinais e variações acentuadas (ex: *"disciplinas do 1º período"* $\rightarrow$ `CURSO`).
 
 2. **Etapa 1 — Vetorização (Embeddings):**
    - A pergunta reescrita e expandida é convertida em um vetor numérico denso de **1024 dimensões** utilizando o modelo `bge-m3` via Ollama.
 
-3. **Etapa 2 — Busca Híbrida com Reciprocal Rank Fusion (RRF):**
+3. **Etapa 2 — Busca Híbrida com RRF (Reciprocal Rank Fusion) Otimizado & Boost por Intenção:**
    - Para maximizar a precisão tanto em consultas conceituais (semânticas) quanto em buscas por termos exatos (léxicas), o sistema realiza duas buscas concorrentes no PostgreSQL:
      - **Busca Vetorial (Semântica):** Usa a extensão `pgvector` com o operador de similaridade de cosseno (`<=>`), otimizado por índices HNSW.
-     - **Busca Lexical (FTS):** Usa o mecanismo de busca textual do PostgreSQL com indexação `tsvector` + filtro `portuguese_unaccent` e ordenação por relevância usando `ts_rank_cd`.
-   - **RRF (Reciprocal Rank Fusion):** Combina os resultados de ambas as buscas aplicando a fórmula matemática:
+     - **Busca Lexical (FTS Otimizado):** Usa `formatFTSQuery` para filtrar *stopwords* de conversação (*"qual"*, *"quais"*, *"disciplina"*, *"conteúdo"*), expandir numerais ordinais (1º a 10º período), mapear sinonímias (`conteudo` $\leftrightarrow$ `ementa | ementario | programa`) e extrair códigos de disciplinas (`OBBGSIN.016` $\rightarrow$ `obbgsin & 016`).
+   - **Fórmula RRF (Reciprocal Rank Fusion):** Combina os resultados aplicando a fórmula:
      $$Score_{RRF} = \alpha \times \frac{1}{k + rank_{sem\hat{a}ntico}} + (1 - \alpha) \times \frac{1}{k + rank_{lexical}}$$
-     Configurado com $k = 60$ (constante de suavização) e $\alpha = 0.5$ (equilíbrio idêntico entre busca semântica e lexical). Os 5 melhores trechos resultantes são passados como contexto.
+     Configurado com $k = 60$ e $\alpha = 0.5$ (equilíbrio idêntico).
+   - **Boost & Penalização por Intenção:**
+     - **Intenção `DISCIPLINA_EMENTA`**: Aplica boost em chunks de ementa (`+0.30` se código de disciplina corresponder e tiver `ementa:`, `+0.10` para ementas gerais) e penaliza matrizes curriculares puras (`-0.15`).
+     - **Intenção `CURSO` / `ESTRUTURA_CURSOS`**: Aplica boost em chunks de matriz curricular (`+0.12`) e penaliza fichas de ementa sem contexto de período (`-0.05`).
+     - **Penalização por Feedback (ICL Dinâmico)**: Chunks com feedbacks negativos dos usuários têm seu score reduzido em $Score_{final} = \frac{Score_{RRF}}{1 + \beta \times N_{negativos}}$.
+   - Os 5 melhores trechos resultantes (`MAX_RESULTS = 5`) são selecionados como contexto.
 
 4. **Etapa 3 — Montagem do Prompt RAG, Histórico & Diretivas Anti-Alucinação:**
-   - O sistema constrói o prompt final de sistema inserindo os trechos de documentos retornados na busca híbrida e a tag de intenção classificada.
+   - O sistema constrói o prompt final inserindo os trechos de documentos retornados, a tag de intenção e os exemplos *few-shot* aprovados.
    - **Histórico Conversacional:** Injeta as últimas 5 mensagens da sessão (armazenadas na memória RAM) entre o prompt de sistema e a pergunta atual.
-   - Aplica regras estritas de segurança (*guardrails*): o LLM é instruído a responder exclusivamente com base no contexto, não inventar informações acadêmicas, citar as fontes (arquivos de origem) e responder obrigatoriamente em português do Brasil (`pt-BR`).
-   - A pergunta final submetida ao chat é a **pergunta original** enviada pelo usuário, enquanto o contexto, o histórico de conversa e a tag de intenção derivam da versão contextualizada e reescrita, preservando a naturalidade e coesão da conversa.
+   - Aplica regras estritas de segurança (*guardrails*): o LLM responde exclusivamente com base no contexto e responde obrigatoriamente em português do Brasil (`pt-BR`).
 
-5. **Etapa 4 — LLM Streaming (SSE), Métricas & Persistência:**
-   - Realiza o streaming da resposta gerada pelo LLM token a token para o frontend via Server-Sent Events (SSE).
-   - Acumula a resposta completa transmitida e a persiste no histórico da sessão RAM ao final.
-   - No encerramento da transmissão, envia um objeto com as métricas detalhadas de latência de cada fase em milissegundos (`rewrite`, `embedding`, `retrieval`, `generation` e `total`).
+5. **Etapa 4 — LLM Streaming com Filtro Stateful de Thinking (SSE) & Métricas:**
+   - Transmite a resposta via Server-Sent Events (SSE) token a token.
+   - **Filtro Stateful de Bloco `<think>`**: Um acumulador em memória intercepta e descarta qualquer token de raciocínio interno enviado no canal `content` pelo modelo `qwen3.5:4b`, garantindo que apenas a resposta final tratada chegue à interface do usuário.
+   - Transmite objetos de status em tempo real e entrega métricas detalhadas de latência de cada fase (`rewrite`, `embedding`, `retrieval`, `generation` e `total`).
 
 #### 🤖 Agentic RAG com MCP (`/api/agent`)
 
 ```
-Pergunta → Ollama (com tools[]) → tool_calls? → MCP callTool → LLM Streaming (SSE)
+Pergunta → Ollama (com tools[]) → tool_calls? → MCP callTool → LLM Streaming com Filtro Stateful (SSE)
 ```
-
-> [!WARNING]
-> **Status de Desempenho:** Os resultados desta abordagem de RAG Agêntico no momento **não estão totalmente satisfatórios**. Por utilizar localmente o modelo `qwen3.5:4b`, a capacidade cognitiva de Tool Calling de múltiplos passos e o respeito a instruções sob janelas de contexto saturadas são limitados, gerando falhas eventuais na chamada das ferramentas, estouro de contexto e descumprimento de formatação. O RAG Clássico se mostra muito mais consistente no cenário atual.
 
 Nessa arquitetura agêntica baseada no protocolo MCP (**Model Context Protocol**), o fluxo funciona em 4 etapas principais:
 
 1. **Inicialização do MCP Client & Server (Subprocesso Stdio):**
-   - Na subida do servidor Express, o backend inicializa o `mcpClient` e estabelece um canal de comunicação (`StdioClientTransport`) com o servidor MCP (`packages/mcp-server/dist/index.js`), que é executado como um subprocesso em background do Node.js.
-   - O client executa `listTools()` para descobrir dinamicamente as ferramentas exportadas pelo servidor e as traduz para a especificação de *Function Calling* (`tools[]`) esperada pela API de Chat do Ollama.
+   - Na subida do servidor Express, o backend inicializa o `mcpClient` e estabelece um canal de comunicação (`StdioClientTransport`) com o servidor MCP (`packages/mcp-server/dist/index.js`), executado como um subprocesso em background do Node.js.
+   - O client executa `listTools()` para descobrir dinamicamente as ferramentas e as traduz para a especificação de *Function Calling* (`tools[]`) do Ollama.
 
 2. **Passo 1 — Primeira Chamada (Histórico, Decisão e Tool Calling):**
-   - O Express recupera a sessão do usuário, resolve as referências anafóricas na pergunta e injeta as últimas 5 mensagens da conversa no array de mensagens enviado ao Ollama.
-   - O LLM analisa o prompt (incluindo o histórico conversacional recente) e decide de forma autônoma se precisa executar uma busca nos documentos. 
-     - Para saudações e interações simples, o pipeline detecta localmente no fast-path e envia a mensagem de apresentação estática, encerrando o fluxo.
-     - Para perguntas acadêmicas, ele gera um objeto `tool_calls` solicitando a invocação da ferramenta `search_ifmg_knowledge`. Ele deve obrigatoriamente preencher dois parâmetros: `query` (termos chaves/nomes próprios limpos e com siglas expandidas) e `intent` (uma das 10 categorias de intenção acadêmica).
-   - **Mecanismo de Segurança (Force Tool Calling para Perguntas Curtas):** Caso a pergunta do usuário seja extremamente direta (ex: `"periodo 7"`, `"8 periodo"`, `"disciplinas 5"`), e o LLM não retorne `tool_calls` no Passo 1, uma heurística no backend intercepta a chamada e força a execução da ferramenta `search_ifmg_knowledge` para o número do período solicitado, garantindo que o agente nunca responda "de cabeça" sem consultar os documentos.
+   - O Express recupera a sessão do usuário e injeta as últimas 5 mensagens da conversa no array de mensagens enviado ao Ollama.
+   - O LLM analisa a requisição e decide autonomamente se precisa buscar nos documentos.
+     - Para saudações simples, o fast-path responde instantaneamente.
+     - Para perguntas acadêmicas, ele gera um objeto `tool_calls` solicitando a ferramenta `search_ifmg_knowledge`, preenchendo os parâmetros `query` e `intent` (classificado estritamente entre 10 categorias acadêmicas, com `ESTRUTURA_CURSOS` explicitamente orientado para listagem de disciplinas por período).
+   - **Force Tool Calling para Perguntas Curtas:** Para perguntas diretas (ex: `"periodo 7"`, `"disciplinas 5"`), o backend força a execução do `search_ifmg_knowledge` se o LLM não disparar a ferramenta.
 
 3. **Passo 2 — Execução da Tool via Servidor MCP:**
-   - O backend captura a requisição de Tool Calling do Ollama e executa a ferramenta localmente via protocolo chamando `mcpClient.callTool`.
-   - Dentro do MCP Server, é executada uma busca híbrida no PostgreSQL associando `pgvector` HNSW (similaridade de cosseno com peso $\alpha = 0.4$) e Full-Text Search com `tsvector` + `portuguese_unaccent`.
-   - **Filtro de Lixo Semântico:** Diferente do RAG clássico, o servidor MCP aplica uma nota de corte estrita **`MIN_RRF_SCORE = 0.002`** para descartar trechos irrelevantes de baixo ranking, retornando até 5 resultados para o agente (limite `MAX_RESULTS = 5` para evitar saturação e estouro de contexto na GPU de homelabs).
+   - O backend captura a requisição de Tool Calling e executa `mcpClient.callTool`.
+   - O MCP Server roda a busca híbrida no PostgreSQL (`pgvector` HNSW $\alpha = 0.4$ + Full-Text Search com `portuguese_unaccent`).
+   - Aplica a nota de corte estrita **`MIN_RRF_SCORE = 0.002`** e o limite `MAX_RESULTS = 5` para evitar saturação de contexto na GPU.
 
-4. **Passo 3 — Segunda Chamada, Geração Final & Persistência:**
-   - O backend anexa os trechos retornados pela busca ao histórico de mensagens na conversa com a role `tool` e envia o histórico completo de volta ao Ollama.
-   - É injetado um prompt de sistema final para reforçar as regras do idioma e a proibição de responder com base em conhecimento externo.
-   - O Ollama processa as mensagens sob uma janela de contexto restrita a **2048 tokens** (`num_ctx: 2048`) para economizar VRAM e gera a resposta em streaming SSE direta para o frontend.
-   - **Persistência de Memória**: À medida que os tokens são gerados e transmitidos via streaming, o backend acumula a resposta completa e atualiza a sessão de memória do usuário para que o assistente mantenha consistência histórica em perguntas subsequentes.
+4. **Passo 3 — Segunda Chamada, Geração Final com Filtro Stateful & Persistência:**
+   - Os trechos retornados são anexados ao histórico como mensagens da role `tool`.
+   - O Ollama gera a resposta sob janela de contexto otimizada (`num_ctx: 10240`, `num_predict: 2048`, `think: false`).
+   - O filtro stateful de `<think>` remove eventuais vazamentos de CoT antes do envio via SSE.
+   - A resposta completa é persistida no histórico da sessão RAM.
+
+---
 
 ### 🗄️ Modelagem do Banco de Dados
 
-A persistência de dados e a busca híbrida são viabilizadas pelo PostgreSQL com a extensão `pgvector`. A estrutura física da tabela principal e de seus índices está modelada da seguinte forma:
+A persistência de dados e a busca híbrida são viabilizadas pelo PostgreSQL 16 com a extensão `pgvector`. A inicialização e o schema oficial do sistema estão consolidados no arquivo **[`init.sql`](file:///c:/projects/chat-if-me/packages/api/init.sql)**:
 
 ```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS unaccent;
+
+-- Tabela principal de documentos vetorizados
 CREATE TABLE IF NOT EXISTS documents (
   id SERIAL PRIMARY KEY,
-  content TEXT NOT NULL,                     -- Conteúdo bruto do chunk
-  metadata JSONB NOT NULL DEFAULT '{}',      -- Metadados (arquivo, página, tipo de chunking)
+  content TEXT NOT NULL,                     -- Conteúdo do chunk (com prefixo de contexto)
+  metadata JSONB NOT NULL DEFAULT '{}',      -- Metadados (filename, chunkIndex, chunkingType, sectionContext)
   embedding vector(1024) NOT NULL,           -- Vetor denso (bge-m3: 1024 dimensões)
-  content_tsv tsvector GENERATED ALWAYS AS ( -- Vetor esparso de FTS unaccent
+  content_tsv tsvector GENERATED ALWAYS AS ( -- Vetor esparso FTS unaccent
     to_tsvector('portuguese_unaccent', content)
   ) STORED,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Tabela de feedbacks para ICL Dinâmico e penalização por RRF
+CREATE TABLE IF NOT EXISTS chat_feedbacks (
+  id SERIAL PRIMARY KEY,
+  session_id VARCHAR(255) NOT NULL,
+  message_id VARCHAR(255) NOT NULL,
+  question TEXT NOT NULL,
+  response TEXT NOT NULL,
+  feedback VARCHAR(10) NOT NULL CHECK (feedback IN ('up', 'down')),
+  chunk_ids INTEGER[] DEFAULT '{}',
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 ```
 
 #### Estrutura de Índices Físicos
-Para garantir buscas rápidas em tempo real (< 100ms) sob cargas de dados acadêmicos:
-1. **Índice HNSW (`idx_documents_embedding`):** Configurado com similaridade de cosseno (`vector_cosine_ops`) e parâmetros `m = 16` e `ef_construction = 200`. O HNSW (Hierarchical Navigable Small World) foi preferido em relação ao IVFFlat por oferecer maior precisão e latência reduzida para coleções de dados dinâmicos de médio porte.
-2. **Índice GIN FTS (`idx_documents_fts`):** Construído sobre a coluna calculada `content_tsv` para acelerar pesquisas de palavras-chave exatas.
-3. **Índice GIN JSONB (`idx_documents_metadata`):** Indexa o campo `metadata` para permitir filtros instantâneos por nome de arquivo ou tipo de documento.
+1. **Índice HNSW (`idx_documents_embedding`):** Configurado com similaridade de cosseno (`vector_cosine_ops`), `m = 16` e `ef_construction = 200` para buscas semânticas rápidas (< 50ms).
+2. **Índice GIN FTS (`idx_documents_fts`):** Construído sobre a coluna calculada `content_tsv` para acelerar pesquisas léxicas por palavras-chave exatas.
+3. **Índice GIN JSONB (`idx_documents_metadata`):** Indexa o campo `metadata` para permiti filtros por nome de arquivo ou tipo de chunking.
 
 ---
 
 ### 📝 Engenharia de Prompts (Prompt Engineering)
 
-O comportamento dos modelos de linguagem locais é guiado por três prompts de sistema principais, detalhados a seguir:
+O comportamento dos modelos locais é estruturado em três prompts principais:
 
 #### 1. Query Rewriting (`REWRITE_SYSTEM_PROMPT`)
-Utilizado para expandir siglas acadêmicas do IFMG e categorizar a intenção do usuário antes de realizar a busca híbrida:
+Converte perguntas coloquiais em buscas acadêmicas e atribui a Tag de Intenção:
 ```text
 Você é um assistente de pré-processamento de consultas para um sistema de busca de documentos acadêmicos do IFMG (Instituto Federal de Minas Gerais), Campus Ouro Branco.
 
-Sua tarefa: reescrever a pergunta do usuário para melhorar a busca semântica em documentos acadêmicos.
-
 REGRAS:
 1. Classifique a intenção da pergunta e inicie a resposta com uma Tag de Intenção:
-   - [CURSO]: Dúvidas sobre o projeto pedagógico, regras gerais, estágios, TCC.
+   - [CURSO]: Dúvidas sobre o projeto pedagógico, matriz curricular, disciplinas por período, regras gerais.
    - [DISCIPLINA]: Dúvidas sobre nomes de matérias, códigos, carga horária, pré-requisitos.
    - [CONTEUDO]: Dúvidas específicas sobre a ementa ou tópicos ensinados dentro de uma disciplina.
    - [OUTRAS]: Dúvidas administrativas, infraestrutura do campus, portarias, calendário.
-2. Expanda TODAS as siglas acadêmicas:
-   - TCC → Trabalho de Conclusão de Curso
-   - PPC → Projeto Pedagógico do Curso
-   - CR → Coeficiente de Rendimento
-   - ENADE → Exame Nacional de Desempenho de Estudantes
-   - TI → Tecnologia da Informação
-   - SI → Sistemas de Informação
-   - IFMG → Instituto Federal de Minas Gerais
-   - NDE → Núcleo Docente Estruturante
-   - CEAD → Centro de Educação Aberta e a Distância
-   - IRA → Índice de Rendimento Acadêmico
-   - AC → Atividades Complementares
-   - DP → Dependência (disciplina em dependência)
+2. Expanda TODAS as siglas acadêmicas (TCC, PPC, CR, IRA, AC, DP, IFMG, etc.).
 3. Transforme linguagem coloquial em linguagem formal/acadêmica.
-4. Adicione contexto implícito quando cabível (ex: "reprovar" → "critérios de reprovação").
-5. Mantenha o sentido original da pergunta.
-6. Responda APENAS com a Tag de Intenção seguida da pergunta reescrita, sem aspas. Exemplo: "[DISCIPLINA] qual é a carga horária de cálculo 1?"
+4. Responda APENAS com a Tag de Intenção seguida da pergunta reescrita. Ex: "[CURSO] quais são as disciplinas do primeiro período de Sistemas de Informação?"
 ```
 
 #### 2. Prompt do RAG Clássico
-Montado dinamicamente incluindo os trechos de documentos retornados na busca híbrida e a tag de intenção classificada:
+Instrui a resposta estritamente baseada no contexto com fallback padronizado:
 ```text
 Você é o assistente virtual oficial do IFMG Campus Ouro Branco.
+Responda à dúvida do aluno em Português (pt-BR) usando EXCLUSIVAMENTE o CONTEXTO abaixo.
 
-Sua função é responder dúvidas dos alunos sobre regulamentos, PPC (Projeto Pedagógico do Curso), grade curricular, normas acadêmicas e informações do campus.
-
-INTENÇÃO DA PERGUNTA: [{intencao}] (Foque a sua resposta no contexto dessa intenção).
-
-CONTEXTO (trechos dos documentos oficiais do curso):
+INTENÇÃO: [{intencao}]
+{fewShotBlock}
+CONTEXTO:
 {contexto}
 
-REGRAS OBRIGATÓRIAS (siga rigorosamente):
-1. Use EXCLUSIVAMENTE as informações do CONTEXTO acima.
-2. NÃO invente, suponha ou complemente com conhecimento externo.
-3. Se a resposta não estiver nos trechos, diga: "Não encontrei essa informação nos documentos disponíveis. Recomendo consultar a coordenação do curso ou acessar o portal do IFMG."
-4. Cite a fonte (nome do documento) quando possível.
-
-DIRETIVAS OBRIGATÓRIAS DE IDIOMA E FORMATAÇÃO:
-- REGRA ABSOLUTA: Você deve responder EXCLUSIVAMENTE em Português do Brasil (pt-BR). Traduza qualquer termo do contexto que esteja em inglês. É proibido responder em inglês ou qualquer outro idioma.
-- Seja DIRETO E CONCISO. Não copie longos trechos de texto (como ementas completas ou bibliografias) a menos que o usuário tenha solicitado especificamente.
-- Se a intenção for [DISCIPLINA] e o usuário pedir uma lista de disciplinas de um período, cite APENAS os nomes das disciplinas e seus códigos.
-- Mantenha a formatação simples. Use listas ('* ') com UM ÚNICO NÍVEL de aninhamento. NUNCA coloque listas dentro de listas.
-- Use **negrito** para destacar nomes de disciplinas, códigos ou termos chaves.
-- Finalize com uma pergunta breve e proativa (Ex: "Gostaria que eu detalhasse a ementa de alguma dessas disciplinas?").
+REGRAS DE RESPOSTA:
+1. Responda APENAS com base no contexto. Se a informação não estiver nos trechos, responda exatamente: "Não encontrei essa informação nos documentos disponíveis. Recomendo consultar a coordenação do curso ou acessar o portal do IFMG."
+2. Se o aluno solicitar EMENTA de disciplina ou detalhes de normas acadêmicas, forneça a resposta COMPLETA E INTEGRAL como consta nos documentos.
+3. Use formatação Markdown simples (listas com '* ', destaque em **negrito** para códigos/nomes) e cite a fonte quando possível.
+4. Finalize a resposta com uma breve pergunta proativa de acompanhamento.
 ```
 
 #### 3. Prompt do Agente MCP (`AGENT_SYSTEM_PROMPT`)
-Injeta instruções de tool calling para guiar o agente na busca de conhecimento usando o protocolo MCP:
+Orienta a chamada autônoma da ferramenta `search_ifmg_knowledge` e categoriza as 10 intenções acadêmicas:
 ```text
 Você é o assistente virtual oficial do IFMG Campus Ouro Branco.
-
-Você tem acesso a uma ferramenta de busca nos documentos oficiais (cursos, PPC, regulamentos, portarias, ementas). USE ESTA FERRAMENTA para responder perguntas sobre regulamentos acadêmicos, PPC, grade curricular, TCC, estágio, atividades complementares e normas gerais do campus.
+USE A FERRAMENTA search_ifmg_knowledge para responder sobre regulamentos, PPC, matriz curricular, Ementas, TCC e normas gerais.
 
 REGRAS OBRIGATÓRIAS:
-1. SEMPRE use a ferramenta search_ifmg_knowledge antes de responder perguntas acadêmicas ou sobre normas do campus.
-2. Ao gerar o parâmetro 'query' na ferramenta de busca:
-   - Extraia APENAS palavras-chave principais e nomes próprios (proibido usar frases completas, pronomes ou conectivos).
-   - SEMPRE EXPANDA SIGLAS acadêmicas (ex: TCC -> Trabalho de Conclusão de Curso, PPC -> Projeto Pedagógico do Curso, AC -> Atividades Complementares, IRA -> Índice de Rendimento Acadêmico).
-3. Ao gerar o parâmetro 'intent', classifique a intenção estritamente em uma destas 10 categorias:
-   - INGRESSO_MATRICULA: Vestibular, SISU, transferências, trancamento, renovação de matrícula.
-   - ESTRUTURA_CURSOS: Matriz curricular, PPC, duração de cursos, regras gerais dos cursos do campus.
-   - DISCIPLINA_EMENTA: Carga horária específica, pré-requisitos, conteúdo programático, ementas, bibliografia.
-   - AVALIACAO_FREQUENCIA: Pontuação, provas, aprovação, limite de faltas (25%), abono/atestados.
-   - TCC: Regras, documentação, orientadores e bancas de Trabalho de Conclusão de Curso.
-   - ATIVIDADES_EXTRAS: Horas complementares (AAC), pesquisa, extensão, monitoria.
-   - ASSISTENCIA_BOLSAS: Assistência estudantil, auxílios (moradia, transporte), bolsas de estudo.
-   - INFRA_CAMPUS: Biblioteca, laboratórios, restaurante, horários de funcionamento, setores administrativos.
-   - DIREITOS_DEVERES: Regime disciplinar, deveres dos alunos, penalidades, direitos discentes.
-   - OUTRAS: Para qualquer outro assunto acadêmico ou geral.
-4. Use EXCLUSIVAMENTE as informações retornadas pela ferramenta. Não invente ou complemente com conhecimento externo.
-5. FILTRE ESTRITAMENTE: Extraia APENAS a informação pontual que responde à pergunta do usuário. É EXPRESSAMENTE PROIBIDO gerar longos blocos de texto, ementas completas ou eixos curriculares se a pergunta for apenas sobre listar matérias ou verificar carga horária.
-6. Se a ferramenta não retornar resultados relevantes, diga: "Não encontrei essa informação nos documentos disponíveis. Recomendo consultar a coordenação do seu curso ou o setor correspondente do IFMG."
-7. Cite a fonte (nome do documento) quando possível.
-8. Para saudações simples (olá, bom dia), responda diretamente sem usar a ferramenta.
-9. PERGUNTAS CURTAS OU SOBRE PERÍODOS/DISCIPLINAS (ex: 'periodo 7', '8 periodo', 'disciplinas 5', 'grade 3'): É EXTREMAMENTE OBRIGATÓRIO chamar a ferramenta search_ifmg_knowledge. NUNCA responda diretamente sem consultar a ferramenta.
-
-DIRETIVAS DE IDIOMA E FORMATAÇÃO:
-- REGRA ABSOLUTA: Responda EXCLUSIVAMENTE em Português do Brasil (pt-BR).
-- REGRA PROIBITIVA: NUNCA exiba blocos de raciocínio como 'Thinking Process:', 'Analyze the Request:', 'Scan Context' ou passos internos de análise. Escreva APENAS a resposta final diretamente para o aluno.
-- ECONOMIA DE TOKENS: Seja extremamente direto e conciso. Não enrole na introdução ou conclusão.
-- FORMATAÇÃO SIMPLES: Use bullet points ('* ') APENAS no nível principal. NUNCA crie listas aninhadas ou recuos secundários.
-- Use **negrito** para destacar os termos principais (Ex: nomes das matérias).
+1. SEMPRE use search_ifmg_knowledge antes de responder dúvidas acadêmicas.
+2. Extraia palavras-chave limpas e expanda siglas no parâmetro 'query'.
+3. Classifique o parâmetro 'intent' entre: INGRESSO_MATRICULA, ESTRUTURA_CURSOS (matriz curricular e disciplinas por período), DISCIPLINA_EMENTA (ementa/pré-requisito de disciplina específica), AVALIACAO_FREQUENCIA, TCC, ATIVIDADES_EXTRAS, ASSISTENCIA_BOLSAS, INFRA_CAMPUS, DIREITOS_DEVERES, OUTRAS.
+4. Responda EXCLUSIVAMENTE em Português do Brasil (pt-BR). NUNCA exiba blocos de raciocínio como 'Thinking Process:' ou '<think>'.
 ```
 
 ---
@@ -238,69 +206,51 @@ DIRETIVAS DE IDIOMA E FORMATAÇÃO:
 | Componente | VRAM |
 |---|---|
 | qwen3.5:4b (geração + reescrita) | ~3.0 GiB |
-| bge-m3 (embeddings 1024d) | ~1.2 GiB |
+| bge-m3 (embeddings 1024d em CPU/GPU) | ~1.2 GiB |
 | **Total** | **~4.2 GiB (26%)** |
 | **Livre (de 16 GiB)** | **~11.8 GiB** |
-
-> Otimizado para GPUs com 16 GiB de VRAM. Suporta ~10 usuários simultâneos.
 
 ---
 
 ## ✨ Funcionalidades
 
 ### Chat (Frontend)
-- 💬 Interface de chat com identidade visual IFMG (verde `#2F9E41` / vermelho `#CD191E`)
-- ⚡ **Streaming de respostas** via Server-Sent Events (SSE) — token a token
-- 🧠 **Memória de Sessão em RAM** — Mantém o contexto de diálogo, resolve referências anafóricas/pronomes entre perguntas seguidas e injeta as últimas 5 mensagens da conversa como histórico direto no prompt do LLM.
-- ⏰ **Modal de Expiração por Inatividade** — Ao atingir 5 minutos de inatividade, o chat bloqueia a digitação (campo de texto e botão de envio) e exibe um modal overlay (com desfoque de fundo e animação suave) para iniciar uma "Nova Conversa" de forma segura.
-- 💬 **Status Dinâmicos em Tempo Real** — Exibe o status dinâmico do pipeline ("Analisando pergunta...", "Buscando nos documentos...", "Preparando resposta...") na bolha de digitação.
-- 👍/👎 **Feedback de Respostas** — Botões interativos de feedback integrados com o servidor (ocultados na mensagem inicial e avisos do sistema).
-- 📚 **Ocultação Condicional de Fontes** — No modo RAG clássico, as fontes de documentos são intencionalmente ocultadas da interface para manter o visual limpo (registradas apenas no console do navegador e logs), mas permanecem totalmente visíveis na UI durante o uso do modo Agente MCP.
-- ⏱️ Métricas de timing por etapa do pipeline RAG (rewrite, embedding, retrieval, generation)
-- ♿ **Acessibilidade Completa (Diretrizes WCAG)** — Foco visual (`focus-visible`) em todos os botões e links interativos para navegação por teclado, contraste mínimo de cores (≥4.5:1) no tema escuro para textosmuted, suporte a leitores de tela (`aria-live="polite"` + `aria-atomic="false"`) na bolha de streaming, e `aria-label` descritivos nos botões 👍/👎, campo de input e ações de modal.
-- 📱 **Otimização de Layout e Mobile** — Alinhamento à esquerda forçado (`text-align: left`) em todas as bolhas para melhor legibilidade rápida (scanning) e eliminação do texto justificado. Listas aninhadas em Markdown são aplainadas visualmente para evitar "rivers of whitespace" e quebras em telas móveis.
-- 📅 **Data no Timestamp** — Exibição completa de data e horário (`dd/mm/aaaa hh:mm`) no rodapé de cada balão de mensagem para fins de rastreabilidade temporal.
-- 🌙 Dark mode automático (segue preferência do sistema)
-- 🔄 Auto-scroll suave durante streaming
-- ✍️ Cursor piscante durante a geração
+- 💬 Interface moderna com identidade visual IFMG (verde `#2F9E41` / vermelho `#CD191E`)
+- ⚡ **Streaming de respostas** via Server-Sent Events (SSE) com cursor piscante `█`
+- 🏷️ **Badge do Modo de Busca no Rodapé**: Exibe visualmente qual modo gerou a resposta (`⚡ Modo: RAG Clássico` ou `🤖 Modo: Agente MCP`), facilitando comparações do TCC.
+- 🧠 **Memória de Sessão em RAM**: Resolve pronomes/anapóras e mantém contexto de diálogo por até 5 minutos de inatividade.
+- ⏰ **Modal de Expiração de Sessão**: Bloqueia a interface após 5 minutos de inatividade para renovação segura da conversa.
+- 💬 **Status Dinâmicos do Pipeline**: Exibe o progresso em tempo real ("Analisando pergunta...", "Buscando nos documentos...", "Preparando resposta...").
+- 👍/👎 **Feedback de Respostas**: Captura avaliações do usuário para alimentar a penalização RRF por ICL Dinâmico.
+- 📚 **Fontes de Documentos**: Exibidas no modo Agente MCP e logadas no console em modo RAG.
+- ⏱️ Métricas de timing detalhadas por etapa (`rewrite`, `embedding`, `retrieval`, `generation`).
+- ♿ **Acessibilidade WCAG**: Contraste otimizado (≥4.5:1), navegação por teclado (`focus-visible`), suporte a leitores de tela (`aria-live="polite"`).
+- 🌙 Dark mode automático integrado.
 
 ### Ingestão de Documentos (Admin)
-- 📄 Upload de PDF, Word (.docx), Planilhas/Excel (.xlsx, .csv), Markdown (.md), Imagens e TXT via drag-and-drop (`/embedding`)
-- 📊 **Extração e Conversão**: Extração de PDFs preservando a estrutura semântica/markdown gerada por IA espacial via `@llamaindex/liteparse` e conversão nativa de planilhas para `Markdown Tables`.
-- 📊 **Pós-processador Semântico de Matrizes Curriculares (`postProcessPDFMatrixText`)**: Converte automaticamente linhas soltas de grades de disciplinas extraídas de PDFs em tabelas Markdown delimitadas (`| Período | Código | Disciplina | CH | Pré-requisito |`), alinhando períodos e disciplinas no mesmo bloco semântico.
-- 🧹 **Serviço de Sanitização Dedicado**: Limpeza e normalização do texto bruto extraído (implementado em `sanitization.service.ts`), executado em 8 etapas sequenciais (remoção de cabeçalhos/rodapés, união de hífens, limpeza de OCR, etc.).
-- 👁️ **OCR Nativo**: Leitura automática de imagens e PDFs escaneados via `tesseract.js`
-- ✂️ **Chunking Semântico Adaptativo (Suporte de 1º a 10º Período)** — roteamento automático por tipo de conteúdo:
-  - **Jurídico / Matrizes**: Quebra por `Art.` / `CAPÍTULO` / `TÍTULO` / `Seção` / `1º a 10º Período` — preserva semestres e artigos inteiros sem fragmentar tabelas no meio.
-  - **Tabela**: Nunca quebra no meio de uma linha; replica o cabeçalho da tabela no topo de cada sub-chunk.
-  - **Geral**: Chunking por parágrafo (~2048 chars / ~512 tokens) com overlap de 256 chars.
-- 🏷️ **Injeção de Contexto Global**: Cada chunk recebe um prefixo automático `[Documento: X | Contexto: Y]` antes da vetorização para evitar OOC (Out of Context) no pgvector
-- 🔢 Vetorização via Ollama (`bge-m3`, 1024 dimensões)
-- 💾 Armazenamento Híbrido no PostgreSQL (`pgvector` HNSW + `tsvector` com ordinalMap de 1º a 10º período)
-- 📋 Listagem de documentos já processados na base de conhecimento
-- 🗑️ Exclusão de documentos e de todos os seus fragmentos associados
+- 📄 Upload de PDF, Word (.docx), Excel (.xlsx, .csv), Markdown (.md), Imagens e TXT via drag-and-drop (`/embedding`).
+- 📊 **Extração Semântica & Matrizes**: Conversão nativa de planilhas para Markdown Tables e pós-processamento de tabelas de disciplinas (`postProcessPDFMatrixText`).
+- 🧹 **Sanitização de Texto em 15 Etapas**: Limpeza em `sanitization.service.ts` (remoção de rodapés, hífens de quebra de linha, cabeçalhos, etc.).
+- 👁️ **OCR Nativo**: Suporte a imagens e PDFs escaneados via `tesseract.js`.
+- ✂️ **Chunking Semântico Domain-Driven**:
+  - **`syllabus` (Ementários e Disciplinas)**: Fatiador especializado que mantém **`[Código + Nome + Carga Horária + Ementa + Objetivos + Bibliografia]`** 100% integrados em um único chunk autônomo.
+  - **`normative` (Normas e Regulamentos)**: Preserva a estrutura de Artigos (Art.), Parágrafos (§) e Incisos (I, II, III).
+  - **`table`**: Réplica cabeçalho de tabelas em cada sub-chunk.
+  - **`general`**: Chunking por parágrafos com overlap.
+- 🏷️ **Injeção de Contexto Global**: Prefixo automático `[Documento: X | Contexto: Y]` em todos os chunks para evitar descontextualização no pgvector.
+- 🔢 Vetorização via Ollama (`bge-m3`, 1024d) e armazenamento no PostgreSQL com índices HNSW + FTS.
 
 ### Backend (API)
-- 🧠 **Memória Conversacional em RAM** (`memory.service.ts`) — Serviço estruturado com `Map` e expiração de TTL a cada 5 minutos, monitorado por garbage collector de ciclo de 30s. Mantém uma janela deslizante das últimas 10 mensagens por sessão (evitando estouro de contexto/VRAM através do `pruneHistory` ajustado para 6 interações no Ollama), resolve referências anafóricas e injeta as 5 últimas mensagens no prompt tanto do RAG Clássico quanto do Agente MCP, acumulando também as respostas parciais de streaming para consistência do histórico. Possui proteção de limite de 100 sessões ativas (evicção LRU).
-- 🚀 **Otimização de Saudações (Fast-Path Bypass)** (`fast_path.util.ts`) — Dupla camada de detecção (Local Regex + LLM intent `[GREETING]`) que intercepta saudações/ajuda e responde instantaneamente com uma mensagem de apresentação pré-definida (`STATIC_GREETING_RESPONSE`) simulando digitação, sem acionar o LLM no homelab. (Aplicado no Agente MCP).
-- 🔄 **Query Rewriting & Roteamento de Intenção** — reescrita com expansão de siglas e extração da Tag de Intenção (`[CURSO]`, `[DISCIPLINA]`, etc) para guiar o contexto.
-- 🤖 **Agentic RAG (MCP)** — LLM decide autonomamente quando buscar via Tool Calling (agora com suporte à classificação de intenção no prompt).
-- 🔀 **Busca Híbrida (RRF)** — combina busca semântica (`pgvector` HNSW) com busca léxica por palavras-chave (`tsvector` + `portuguese_unaccent`) usando Reciprocal Rank Fusion.
-- 📊 **Métricas e Logs de Feedback** — Endpoint `/api/chat/feedback` estruturado em inglês para captação dos votos em console log no backend.
-- 🔐 **Segurança**: Rate limiting (20 req/min chat, 5 req/min upload), autenticação admin via `X-API-Key`, validação de MIME/extensão no upload, CORS restrito.
-- 🚦 **Controle de Concorrência (Semáforo de VRAM)**: Mecanismo de controle de concorrência ativa (implementado em `queue.service.ts`) para limitar o número de inferências paralelas enviadas à GPU local:
-  - **Funcionamento**: Utiliza uma lógica de semáforo de *acquire/release* encapsulada na função `comControleDeConcorrencia()`.
-  - **Limite Concorrente**: Parametrizado por `OLLAMA_MAX_CONCURRENT` (padrão = 2). Se o limite for atingido, novas conexões SSE entram em uma fila de espera em memória com timeout estrito de 120 segundos.
-  - **Evita OOM (Out of Memory)**: Garante estabilidade física da GPU em servidores locais ou homelabs, prevenindo crashes do daemon do Ollama sob múltiplos acessos simultâneos de alunos.
-- 🛡️ System Prompt rigoroso anti-alucinação focado na intenção detectada.
-- 💚 Health check expandido (`/api/health`) com status de DB, Ollama, Redis, fila e memória.
-- ⏱️ Métricas de timing por etapa do pipeline RAG enviadas via SSE.
-- 📝 Logs detalhados de todo o pipeline no terminal.
+- 🧠 **Memória Conversacional RAM** com Garbage Collector (TTL 5 min, limite LRU 100 sessões).
+- 🚀 **Fast-Path Bypass**: Resposta instantânea a saudações simples sem consumo de GPU.
+- 🚦 **VRAM Guard (Semáforo de Concorrência)**: Limita requisições simultâneas ao Ollama (`OLLAMA_MAX_CONCURRENT = 2`) prevenindo erros OOM na GPU.
+- 🛡️ **Filtro Stateful de Thinking**: Elimina vazamentos de raciocínio de CoT do `qwen3.5:4b` antes de enviar os tokens ao cliente via SSE.
+- 💚 Health check completo (`/api/health`) cobrindo DB, Ollama, Redis, fila e memória.
 
 ### MCP Server
-- 🔧 Ferramenta `search_ifmg_knowledge` exposta via protocolo MCP
-- 📡 Transporte stdio (subprocesso gerenciado pelo Express)
-- 🔢 Vetorização + busca pgvector encapsuladas como ferramenta padronizada
+- 🔧 Ferramenta `search_ifmg_knowledge` exposta via protocolo MCP.
+- 📡 Transporte stdio (subprocesso gerenciado pelo Express).
+- 🔢 Vetorização + busca pgvector encapsuladas como ferramenta padronizada com nota de corte RRF (`MIN_RRF_SCORE = 0.002`).
 
 ---
 
@@ -315,9 +265,9 @@ DIRETIVAS DE IDIOMA E FORMATAÇÃO:
 | **Connection Pooling** | Pool PostgreSQL com max=20 conexões, timeout de 5s |
 
 ### Limitações Conhecidas
-- Context window limitado a 10240 tokens por requisição por padrão (configurável via `OLLAMA_NUM_CTX`)
-- Modelo de geração padrão é `qwen3.5:4b` (4B parâmetros) — melhor qualidade de geração e aderência a instruções
-- Sem autenticação de usuários finais (sistema acadêmico aberto)
+- Context window de 10240 tokens por padrão (`OLLAMA_NUM_CTX = 10240`).
+- Modelo de geração padrão é `qwen3.5:4b` (4B parâmetros) — otimizado para GPUs de 16 GiB VRAM.
+- Sem autenticação de alunos finais (sistema de consulta acadêmica pública).
 
 ---
 
