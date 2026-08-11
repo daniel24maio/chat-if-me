@@ -181,7 +181,8 @@ const RRF_ALPHA = 0.5;
 function formatFTSQuery(query: string, intent?: string): string {
   const stopWords = new Set([
     "qual", "quais", "como", "onde", "quando", "para", "sobre", "entre", "este", "esta",
-    "esses", "essas", "pode", "podia", "poderia", "favor", "voce", "sao", "tem", "ter"
+    "esses", "essas", "pode", "podia", "poderia", "favor", "voce", "sao", "tem", "ter",
+    "conteudo", "conteúdo", "disciplina", "disciplinas", "detalhes", "programa"
   ]);
 
   const ordinalMap: Record<string, string> = {
@@ -231,20 +232,22 @@ function formatFTSQuery(query: string, intent?: string): string {
 
   const rawTerms = queryLimpa.split(/\s+/).filter((w) => w.length >= 2 && !stopWords.has(w));
   const terms = rawTerms.map((w) => ordinalMap[w] || w);
-  let mainFTS = terms.length > 0 ? terms.join(" & ") : "dummy_fallback_query";
+  let mainFTS = terms.length > 0 ? terms.join(" & ") : "";
 
   if (codeFTS) {
-    mainFTS = `${codeFTS} | (${mainFTS})`;
+    mainFTS = mainFTS ? `${codeFTS} | (${mainFTS})` : codeFTS;
   }
+
+  if (!mainFTS) mainFTS = "dummy_fallback_query";
 
   const effectiveIntent = (!intent || intent === "OUTRAS") ? inferIntentionFromKeywords(query) : intent;
 
   const intentKeywords: Record<string, string> = {
     CURSO: "matriz | curricular | periodo",
     ESTRUTURA_CURSOS: "matriz | curricular | periodo",
-    DISCIPLINA: "ementa",
-    DISCIPLINA_EMENTA: "ementa",
-    CONTEUDO: "ementa | conteudo",
+    DISCIPLINA: "ementa | ementario | conteudo",
+    DISCIPLINA_EMENTA: "ementa | ementario | conteudo",
+    CONTEUDO: "ementa | ementario | conteudo",
     INGRESSO_MATRICULA: "matricula | ingresso",
     AVALIACAO_FREQUENCIA: "frequencia | faltas | nota",
     ESTAGIO_TCC: "tcc | estagio",
@@ -255,7 +258,7 @@ function formatFTSQuery(query: string, intent?: string): string {
   };
 
   if (effectiveIntent && (effectiveIntent === "DISCIPLINA_EMENTA" || effectiveIntent === "DISCIPLINA" || effectiveIntent === "CONTEUDO")) {
-    mainFTS = `(${mainFTS}) & (ementa | ementario)`;
+    mainFTS = `(${mainFTS}) | (ementa | ementario | conteudo | programa)`;
   } else if (effectiveIntent && intentKeywords[effectiveIntent]) {
     mainFTS = `(${mainFTS}) | (${intentKeywords[effectiveIntent]})`;
   }

@@ -9,7 +9,7 @@ import { generateOllamaEmbedding } from "../config/ollama.js";
  *   - Buscar exemplos positivos por similaridade (para injeção few-shot)
  *   - Contar feedbacks negativos acumulados por chunk (para penalização RRF)
  *
- * Tabela utilizada: chat_feedbacks (criada por migrate_feedbacks.sql)
+ * Tabela utilizada: chat_feedbacks (criada por init.sql)
  */
 
 // ---------------------------------------------------------------------------

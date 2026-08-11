@@ -177,6 +177,7 @@ function pruneAppendices(text: string): string {
  * devem permanecer no mesmo chunk para preservar o contexto legal.
  *
  * Esta função faz duas coisas:
+ * 4. PREPARAÇÃO PARA CHUNKING NORMATIVO (Artigos, Capítulos, Seções)
  *
  *   A) Remove quebras de linha isoladas (\n) no meio de frases para que
  *      artigos com incisos em múltiplas linhas virem um bloco contínuo.
@@ -185,7 +186,7 @@ function pruneAppendices(text: string): string {
  *      (Art., CAPÍTULO, TÍTULO, Seção, RESOLUÇÃO, DAS DISPOSIÇÕES, etc.)
  *      para que o text splitter crie um novo chunk nesses pontos.
  */
-function prepareJuridicalChunking(text: string): string {
+function prepareNormativeChunking(text: string): string {
   let resultText = text;
 
   // ── Passo A: Colapsar quebras simples em espaço ──
@@ -371,9 +372,9 @@ export function sanitizeText(text: string): string {
   resultText = resultText.replace(PATTERNS.singleQuotes, "'");
   resultText = resultText.replace(PATTERNS.dash, "-");
 
-  // ── 14. Preparação para chunking jurídico ──
+  // ── 14. Preparação para chunking normativo ──
   // Colapsa \n isolados e garante \n\n antes de marcadores estruturais
-  resultText = prepareJuridicalChunking(resultText);
+  resultText = prepareNormativeChunking(resultText);
 
   // ── 15. Normaliza espaçamento: múltiplos espaços/tabs → espaço único ──
   resultText = resultText.replace(PATTERNS.multipleSpaces, " ");

@@ -152,29 +152,116 @@ function injectContext(text: string, documentName: string, sectionContext: strin
   return `[${parts.join(" | ")}]\n\n${text}`;
 }
 
-type ChunkingType = "juridical" | "table" | "general";
+type ChunkingType = "normative" | "syllabus" | "table" | "general";
 
 function detectChunkingType(text: string, filename: string): ChunkingType {
+  // 1. Tabelas estruturadas em Markdown
   const tableSeparators = (text.match(/\|[\s-]+\|/g) || []).length;
   const pipeLines = (text.match(/^\|.+\|$/gm) || []).length;
   if (tableSeparators >= 1 && pipeLines >= 5) return "table";
 
+  // 2. Ementários e seções de disciplinas (PPC / Ementários)
+  const ementasCount = (text.match(/\bEmenta:\s*/gi) || []).length;
+  const codigosCount = (text.match(/\bC[oó]digo:\s*(?:OBBG|OBLC|OBLP|[A-Z]{4})/gi) || []).length;
+  const nomeDisciplinaCount = (text.match(/\bNome da disciplina:\s*/gi) || []).length;
+
+  if (ementasCount >= 2 || codigosCount >= 2 || (nomeDisciplinaCount >= 2 && ementasCount >= 1)) {
+    return "syllabus";
+  }
+
+  if (/ementar|ementas/i.test(filename)) {
+    return "syllabus";
+  }
+
+  // 3. Normas acadêmicas, Resoluções, Portarias, Regulamentos de Ensino, PPC
   const articles = (text.match(/\bArt\.\s+\d+/g) || []).length;
   const chapters = (text.match(/\bCAP[IÍ]TULO\s+[IVXLCDM\d]+/gi) || []).length;
-  if (articles >= 3 || chapters >= 2) return "juridical";
+  if (articles >= 3 || chapters >= 2) return "normative";
 
   if (/regulament|norma|resolu[çc]|portaria|edital|delibera|estatut|regimento|ppc/i.test(filename)) {
-    return "juridical";
+    return "normative";
   }
 
   return "general";
 }
 
-async function juridicalChunking(text: string, filename: string): Promise<ChunkData[]> {
+/**
+ * Estratégia de Chunking para Ementários e Fichas de Disciplina.
+ * Garante que Código + Nome + Carga Horária + Ementa + Objetivos + Bibliografia
+ * permaneçam integrados no mesmo chunk semântico autônomo.
+ */
+async function syllabusChunking(text: string, filename: string): Promise<ChunkData[]> {
   const documentName = generateDocumentName(filename);
   const chunks: ChunkData[] = [];
 
-  // LangChain Splitter configurado com hierarquia jurídica e seções do PPC
+  const splitter = new RecursiveCharacterTextSplitter({
+    chunkSize: CHUNK_SIZE_GENERAL,
+    chunkOverlap: CHUNK_OVERLAP_GENERAL,
+    separators: [
+      "\nCódigo:",
+      "\nNome da disciplina:",
+      "\nDISCIPLINAS OBRIGATÓRIAS",
+      "\nDISCIPLINAS OPTATIVAS",
+      "\n1º Período",
+      "\n2º Período",
+      "\n3º Período",
+      "\n4º Período",
+      "\n5º Período",
+      "\n6º Período",
+      "\n7º Período",
+      "\n8º Período",
+      "\n9º Período",
+      "\n10º Período",
+      "\n\n",
+      "\n",
+      ". ",
+      " "
+    ],
+    keepSeparator: true
+  });
+
+  const parts = await splitter.splitText(text);
+  let currentDiscipline = "";
+
+  for (const part of parts) {
+    const partTrimmed = part.trim();
+    if (partTrimmed.length === 0) continue;
+
+    const codeMatch = partTrimmed.match(/(?:C[oó]digo|Disciplina):\s*([A-Za-z0-9._-]+)/i);
+    const nameMatch = partTrimmed.match(/Nome da disciplina:\s*([^\n]+)/i);
+
+    if (nameMatch || codeMatch) {
+      const code = codeMatch ? codeMatch[1].trim() : "";
+      const name = nameMatch ? nameMatch[1].trim() : "";
+      currentDiscipline = [name, code].filter(Boolean).join(" ");
+    }
+
+    const context = currentDiscipline ? `Disciplina: ${currentDiscipline}` : "Ementário";
+    const contentWithContext = injectContext(partTrimmed, documentName, context);
+
+    chunks.push({
+      content: contentWithContext,
+      metadata: {
+        filename,
+        chunkIndex: chunks.length,
+        totalChunks: 0,
+        documentName,
+        chunkingType: "syllabus",
+        sectionContext: context,
+      },
+    });
+  }
+
+  return chunks;
+}
+
+/**
+ * Estratégia de Chunking para Regulamentos e Normas Acadêmicas (Artigos/Capítulos).
+ */
+async function normativeChunking(text: string, filename: string): Promise<ChunkData[]> {
+  const documentName = generateDocumentName(filename);
+  const chunks: ChunkData[] = [];
+
   const splitter = new RecursiveCharacterTextSplitter({
     chunkSize: CHUNK_SIZE_GENERAL,
     chunkOverlap: CHUNK_OVERLAP_GENERAL,
@@ -186,33 +273,6 @@ async function juridicalChunking(text: string, filename: string): Promise<ChunkD
       "\nMatriz Curricular",
       "\nDISCIPLINAS OBRIGATÓRIAS",
       "\nPERÍODO ",
-      "\n1º Período",
-      "\n2º Período",
-      "\n3º Período",
-      "\n4º Período",
-      "\n5º Período",
-      "\n6º Período",
-      "\n7º Período",
-      "\n8º Período",
-      "\n9º Período",
-      "\n10º Período",
-      "\n1º periodo",
-      "\n2º periodo",
-      "\n3º periodo",
-      "\n4º periodo",
-      "\n5º periodo",
-      "\n6º periodo",
-      "\n7º periodo",
-      "\n8º periodo",
-      "\n9º periodo",
-      "\n10º periodo",
-      "\n8.1.1 ",
-      "\n8.1.2 ",
-      "\n8.1.3 ",
-      "\n8.3. ",
-      "\nEmenta:",
-      "\nObjetivo(s):",
-      "\nCódigo:",
       "\n\n",
       "\n",
       ". ",
@@ -228,8 +288,7 @@ async function juridicalChunking(text: string, filename: string): Promise<ChunkD
     const partTrimmed = part.trim();
     if (partTrimmed.length === 0) continue;
 
-    // Atualiza o contexto se a parte contiver um marcador de hierarquia
-    const hierarchyMatch = partTrimmed.match(/^(?:CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o|8\.\d+(?:\.\d+)?|\d{1,2}º?\s+Per[íi]odo)\s+[IVXLCDM\d\w\s]+.*?(?:\n|$)/i);
+    const hierarchyMatch = partTrimmed.match(/^(?:CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o|Art\.\s+\d+º?)\s+[IVXLCDM\d\w\s]+.*?(?:\n|$)/i);
     if (hierarchyMatch) {
       currentContext = hierarchyMatch[0].trim();
     }
@@ -243,7 +302,7 @@ async function juridicalChunking(text: string, filename: string): Promise<ChunkD
         chunkIndex: chunks.length,
         totalChunks: 0,
         documentName,
-        chunkingType: "juridical",
+        chunkingType: "normative",
         sectionContext: currentContext,
       },
     });
@@ -395,8 +454,11 @@ async function splitIntoChunks(text: string, filename: string): Promise<ChunkDat
   let chunks: ChunkData[];
 
   switch (chunkingType) {
-    case "juridical":
-      chunks = await juridicalChunking(text, filename);
+    case "syllabus":
+      chunks = await syllabusChunking(text, filename);
+      break;
+    case "normative":
+      chunks = await normativeChunking(text, filename);
       break;
     case "table":
       chunks = await tableChunking(text, filename);

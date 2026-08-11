@@ -1637,7 +1637,13 @@ function formatFTSQuery(query, intent) {
     "voce",
     "sao",
     "tem",
-    "ter"
+    "ter",
+    "conteudo",
+    "conte\xFAdo",
+    "disciplina",
+    "disciplinas",
+    "detalhes",
+    "programa"
   ]);
   const ordinalMap = {
     primeiro: "(primeiro | 1 | 1\xBA)",
@@ -1683,17 +1689,19 @@ function formatFTSQuery(query, intent) {
     return codeFTS || "dummy_fallback_query";
   const rawTerms = queryLimpa.split(/\s+/).filter((w) => w.length >= 2 && !stopWords.has(w));
   const terms = rawTerms.map((w) => ordinalMap[w] || w);
-  let mainFTS = terms.length > 0 ? terms.join(" & ") : "dummy_fallback_query";
+  let mainFTS = terms.length > 0 ? terms.join(" & ") : "";
   if (codeFTS) {
-    mainFTS = `${codeFTS} | (${mainFTS})`;
+    mainFTS = mainFTS ? `${codeFTS} | (${mainFTS})` : codeFTS;
   }
+  if (!mainFTS)
+    mainFTS = "dummy_fallback_query";
   const effectiveIntent = !intent || intent === "OUTRAS" ? inferIntentionFromKeywords(query) : intent;
   const intentKeywords = {
     CURSO: "matriz | curricular | periodo",
     ESTRUTURA_CURSOS: "matriz | curricular | periodo",
-    DISCIPLINA: "ementa",
-    DISCIPLINA_EMENTA: "ementa",
-    CONTEUDO: "ementa | conteudo",
+    DISCIPLINA: "ementa | ementario | conteudo",
+    DISCIPLINA_EMENTA: "ementa | ementario | conteudo",
+    CONTEUDO: "ementa | ementario | conteudo",
     INGRESSO_MATRICULA: "matricula | ingresso",
     AVALIACAO_FREQUENCIA: "frequencia | faltas | nota",
     ESTAGIO_TCC: "tcc | estagio",
@@ -1703,7 +1711,7 @@ function formatFTSQuery(query, intent) {
     DIREITOS_DEVERES: "direitos | deveres"
   };
   if (effectiveIntent && (effectiveIntent === "DISCIPLINA_EMENTA" || effectiveIntent === "DISCIPLINA" || effectiveIntent === "CONTEUDO")) {
-    mainFTS = `(${mainFTS}) & (ementa | ementario)`;
+    mainFTS = `(${mainFTS}) | (ementa | ementario | conteudo | programa)`;
   } else if (effectiveIntent && intentKeywords[effectiveIntent]) {
     mainFTS = `(${mainFTS}) | (${intentKeywords[effectiveIntent]})`;
   }
@@ -26826,7 +26834,7 @@ function pruneAppendices(text) {
   }
   return text;
 }
-function prepareJuridicalChunking(text) {
+function prepareNormativeChunking(text) {
   let resultText = text;
   resultText = resultText.replace(/([^\n])\n(?!\n)([^\n])/g, (_, antes, depois) => {
     if (/^(?:Art\.\s|CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o|RESOLU[CÇ])/i.test(depois + resultText.charAt(0))) {
@@ -26919,7 +26927,7 @@ function sanitizeText(text) {
   resultText = resultText.replace(PATTERNS.curlyQuotes, '"');
   resultText = resultText.replace(PATTERNS.singleQuotes, "'");
   resultText = resultText.replace(PATTERNS.dash, "-");
-  resultText = prepareJuridicalChunking(resultText);
+  resultText = prepareNormativeChunking(resultText);
   resultText = resultText.replace(PATTERNS.multipleSpaces, " ");
   resultText = resultText.replace(PATTERNS.noiseLines, "");
   resultText = resultText.replace(PATTERNS.tripleLineBreaks, "\n\n");
@@ -27033,16 +27041,82 @@ function detectChunkingType(text, filename) {
   const pipeLines = (text.match(/^\|.+\|$/gm) || []).length;
   if (tableSeparators >= 1 && pipeLines >= 5)
     return "table";
+  const ementasCount = (text.match(/\bEmenta:\s*/gi) || []).length;
+  const codigosCount = (text.match(/\bC[oó]digo:\s*(?:OBBG|OBLC|OBLP|[A-Z]{4})/gi) || []).length;
+  const nomeDisciplinaCount = (text.match(/\bNome da disciplina:\s*/gi) || []).length;
+  if (ementasCount >= 2 || codigosCount >= 2 || nomeDisciplinaCount >= 2 && ementasCount >= 1) {
+    return "syllabus";
+  }
+  if (/ementar|ementas/i.test(filename)) {
+    return "syllabus";
+  }
   const articles = (text.match(/\bArt\.\s+\d+/g) || []).length;
   const chapters = (text.match(/\bCAP[IÍ]TULO\s+[IVXLCDM\d]+/gi) || []).length;
   if (articles >= 3 || chapters >= 2)
-    return "juridical";
+    return "normative";
   if (/regulament|norma|resolu[çc]|portaria|edital|delibera|estatut|regimento|ppc/i.test(filename)) {
-    return "juridical";
+    return "normative";
   }
   return "general";
 }
-async function juridicalChunking(text, filename) {
+async function syllabusChunking(text, filename) {
+  const documentName = generateDocumentName(filename);
+  const chunks = [];
+  const splitter = new RecursiveCharacterTextSplitter({
+    chunkSize: CHUNK_SIZE_GENERAL,
+    chunkOverlap: CHUNK_OVERLAP_GENERAL,
+    separators: [
+      "\nC\xF3digo:",
+      "\nNome da disciplina:",
+      "\nDISCIPLINAS OBRIGAT\xD3RIAS",
+      "\nDISCIPLINAS OPTATIVAS",
+      "\n1\xBA Per\xEDodo",
+      "\n2\xBA Per\xEDodo",
+      "\n3\xBA Per\xEDodo",
+      "\n4\xBA Per\xEDodo",
+      "\n5\xBA Per\xEDodo",
+      "\n6\xBA Per\xEDodo",
+      "\n7\xBA Per\xEDodo",
+      "\n8\xBA Per\xEDodo",
+      "\n9\xBA Per\xEDodo",
+      "\n10\xBA Per\xEDodo",
+      "\n\n",
+      "\n",
+      ". ",
+      " "
+    ],
+    keepSeparator: true
+  });
+  const parts = await splitter.splitText(text);
+  let currentDiscipline = "";
+  for (const part of parts) {
+    const partTrimmed = part.trim();
+    if (partTrimmed.length === 0)
+      continue;
+    const codeMatch = partTrimmed.match(/(?:C[oó]digo|Disciplina):\s*([A-Za-z0-9._-]+)/i);
+    const nameMatch = partTrimmed.match(/Nome da disciplina:\s*([^\n]+)/i);
+    if (nameMatch || codeMatch) {
+      const code = codeMatch ? codeMatch[1].trim() : "";
+      const name = nameMatch ? nameMatch[1].trim() : "";
+      currentDiscipline = [name, code].filter(Boolean).join(" ");
+    }
+    const context = currentDiscipline ? `Disciplina: ${currentDiscipline}` : "Ement\xE1rio";
+    const contentWithContext = injectContext(partTrimmed, documentName, context);
+    chunks.push({
+      content: contentWithContext,
+      metadata: {
+        filename,
+        chunkIndex: chunks.length,
+        totalChunks: 0,
+        documentName,
+        chunkingType: "syllabus",
+        sectionContext: context
+      }
+    });
+  }
+  return chunks;
+}
+async function normativeChunking(text, filename) {
   const documentName = generateDocumentName(filename);
   const chunks = [];
   const splitter = new RecursiveCharacterTextSplitter({
@@ -27056,33 +27130,6 @@ async function juridicalChunking(text, filename) {
       "\nMatriz Curricular",
       "\nDISCIPLINAS OBRIGAT\xD3RIAS",
       "\nPER\xCDODO ",
-      "\n1\xBA Per\xEDodo",
-      "\n2\xBA Per\xEDodo",
-      "\n3\xBA Per\xEDodo",
-      "\n4\xBA Per\xEDodo",
-      "\n5\xBA Per\xEDodo",
-      "\n6\xBA Per\xEDodo",
-      "\n7\xBA Per\xEDodo",
-      "\n8\xBA Per\xEDodo",
-      "\n9\xBA Per\xEDodo",
-      "\n10\xBA Per\xEDodo",
-      "\n1\xBA periodo",
-      "\n2\xBA periodo",
-      "\n3\xBA periodo",
-      "\n4\xBA periodo",
-      "\n5\xBA periodo",
-      "\n6\xBA periodo",
-      "\n7\xBA periodo",
-      "\n8\xBA periodo",
-      "\n9\xBA periodo",
-      "\n10\xBA periodo",
-      "\n8.1.1 ",
-      "\n8.1.2 ",
-      "\n8.1.3 ",
-      "\n8.3. ",
-      "\nEmenta:",
-      "\nObjetivo(s):",
-      "\nC\xF3digo:",
       "\n\n",
       "\n",
       ". ",
@@ -27096,7 +27143,7 @@ async function juridicalChunking(text, filename) {
     const partTrimmed = part.trim();
     if (partTrimmed.length === 0)
       continue;
-    const hierarchyMatch = partTrimmed.match(/^(?:CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o|8\.\d+(?:\.\d+)?|\d{1,2}º?\s+Per[íi]odo)\s+[IVXLCDM\d\w\s]+.*?(?:\n|$)/i);
+    const hierarchyMatch = partTrimmed.match(/^(?:CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o|Art\.\s+\d+º?)\s+[IVXLCDM\d\w\s]+.*?(?:\n|$)/i);
     if (hierarchyMatch) {
       currentContext = hierarchyMatch[0].trim();
     }
@@ -27108,7 +27155,7 @@ async function juridicalChunking(text, filename) {
         chunkIndex: chunks.length,
         totalChunks: 0,
         documentName,
-        chunkingType: "juridical",
+        chunkingType: "normative",
         sectionContext: currentContext
       }
     });
@@ -27231,8 +27278,11 @@ async function splitIntoChunks(text, filename) {
   console.log(`\u{1F500} [Roteamento] "${filename}" \u2192 estrat\xE9gia: ${chunkingType.toUpperCase()}`);
   let chunks;
   switch (chunkingType) {
-    case "juridical":
-      chunks = await juridicalChunking(text, filename);
+    case "syllabus":
+      chunks = await syllabusChunking(text, filename);
+      break;
+    case "normative":
+      chunks = await normativeChunking(text, filename);
       break;
     case "table":
       chunks = await tableChunking(text, filename);

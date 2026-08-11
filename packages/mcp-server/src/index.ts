@@ -82,6 +82,12 @@ async function generateEmbedding(text: string): Promise<number[]> {
  * Remove caracteres especiais, expande numerais ordinais e adiciona palavras de apoio da intenção (intent).
  */
 function formatFTSQuery(query: string, intent?: string): string {
+  const stopWords = new Set([
+    "qual", "quais", "como", "onde", "quando", "para", "sobre", "entre", "este", "esta",
+    "esses", "essas", "pode", "podia", "poderia", "favor", "voce", "sao", "tem", "ter",
+    "conteudo", "conteúdo", "disciplina", "disciplinas", "detalhes", "programa"
+  ]);
+
   const ordinalMap: Record<string, string> = {
     primeiro: "(primeiro | 1 | 1º)",
     "1º": "(primeiro | 1 | 1º)",
@@ -117,16 +123,29 @@ function formatFTSQuery(query: string, intent?: string): string {
     "10": "(decimo | décimo | 10 | 10º)",
   };
 
-  const queryLimpa = query.replace(/[^\p{L}\p{N}\s]/gu, " ").toLowerCase().trim();
-  if (!queryLimpa) return "dummy_fallback_query";
+  const codeMatch = query.match(/(OBBGSIN|OBBGADM|OBBGEMT|OBLCOMP|OBLPED)\.?(\d{3})/i);
+  let codeFTS = "";
+  if (codeMatch) {
+    codeFTS = `(${codeMatch[1].toLowerCase()} & ${codeMatch[2]})`;
+  }
 
-  const rawTerms = queryLimpa.split(/\s+/).filter(Boolean);
+  const queryLimpa = query.replace(/[^\p{L}\p{N}\s]/gu, " ").toLowerCase().trim();
+  if (!queryLimpa) return codeFTS || "dummy_fallback_query";
+
+  const rawTerms = queryLimpa.split(/\s+/).filter((w) => w.length >= 2 && !stopWords.has(w));
   const terms = rawTerms.map((w) => ordinalMap[w] || w);
-  let mainFTS = terms.length > 0 ? terms.join(" & ") : "dummy_fallback_query";
+  let mainFTS = terms.length > 0 ? terms.join(" & ") : "";
+
+  if (codeFTS) {
+    mainFTS = mainFTS ? `${codeFTS} | (${mainFTS})` : codeFTS;
+  }
+
+  if (!mainFTS) mainFTS = "dummy_fallback_query";
 
   const intentKeywords: Record<string, string> = {
     ESTRUTURA_CURSOS: "matriz | curricular | periodo",
-    DISCIPLINA_EMENTA: "ementa",
+    DISCIPLINA_EMENTA: "ementa | ementario | conteudo",
+    CONTEUDO: "ementa | ementario | conteudo",
     INGRESSO_MATRICULA: "matricula | ingresso",
     AVALIACAO_FREQUENCIA: "frequencia | faltas | nota",
     ESTAGIO_TCC: "tcc | estagio",
@@ -137,7 +156,7 @@ function formatFTSQuery(query: string, intent?: string): string {
   };
 
   if (intent && (intent === "DISCIPLINA_EMENTA" || intent === "DISCIPLINA" || intent === "CONTEUDO")) {
-    mainFTS = `(${mainFTS}) & (ementa | ementario | conteudo)`;
+    mainFTS = `(${mainFTS}) | (ementa | ementario | conteudo | programa)`;
   } else if (intent && intentKeywords[intent]) {
     mainFTS = `(${mainFTS}) | (${intentKeywords[intent]})`;
   }

@@ -47,7 +47,7 @@ export interface ChunkData {
     /** Nome legível do documento (sem extensão, ex: "Regulamento de TCC") */
     documentName: string;
     /** Estratégia de chunking utilizada */
-    chunkingType: "juridical" | "table" | "general";
+    chunkingType: "normative" | "syllabus" | "table" | "general";
     /** Seção/capítulo do documento onde este chunk se encontra */
     sectionContext: string;
   };

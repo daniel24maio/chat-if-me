@@ -1,6 +1,6 @@
 -- ==========================================================================
 -- Inicialização do banco de dados para o Chat Assistente Virtual IFMG
--- Habilita pgvector, FTS com unaccent e cria a tabela de documentos.
+-- Habilita pgvector, FTS com unaccent, tabelas de documentos e feedbacks.
 --
 -- Executar manualmente no PostgreSQL:
 --   psql -U usuario -d chatifme -f init.sql
@@ -33,40 +33,52 @@ $$;
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS documents (
-  -- Identificador único auto-incrementável
   id SERIAL PRIMARY KEY,
-
-  -- Conteúdo textual do trecho (chunk) do documento
   content TEXT NOT NULL,
-
-  -- Metadados em JSON: nome do arquivo, página, data de upload, etc.
-  -- Exemplo: {"filename": "PPC_SI_2023.pdf", "page": 12, "chunk_index": 3}
   metadata JSONB NOT NULL DEFAULT '{}',
-
-  -- Vetor de embedding gerado pelo modelo (bge-m3 = 1024 dimensões)
   embedding vector(1024) NOT NULL,
-
-  -- Full-Text Search: tsvector gerado automaticamente a partir do content
-  -- Usa configuração portuguese_unaccent para busca sem acentos com stemming
   content_tsv tsvector GENERATED ALWAYS AS (
     to_tsvector('portuguese_unaccent', content)
   ) STORED,
-
-  -- Data de criação do registro
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Índice HNSW para busca por similaridade eficiente (pgvector)
--- HNSW é superior ao IVFFlat para datasets < 100k registros
+-- Índices da tabela documents
 CREATE INDEX IF NOT EXISTS idx_documents_embedding
   ON documents
   USING hnsw (embedding vector_cosine_ops)
   WITH (m = 16, ef_construction = 200);
 
--- Índice GIN para Full-Text Search eficiente
 CREATE INDEX IF NOT EXISTS idx_documents_fts
   ON documents USING GIN (content_tsv);
 
--- Índice GIN no campo metadata para consultas JSONB rápidas
 CREATE INDEX IF NOT EXISTS idx_documents_metadata
   ON documents USING gin (metadata);
+
+-- ---------------------------------------------------------------------------
+-- Tabela de Feedbacks e ICL Dinâmico (Few-Shot / Penalização RRF)
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS chat_feedbacks (
+  id SERIAL PRIMARY KEY,
+  question TEXT NOT NULL,
+  response TEXT NOT NULL,
+  question_embedding vector(1024) NOT NULL,
+  feedback_type VARCHAR(10) NOT NULL CHECK (feedback_type IN ('positive', 'negative')),
+  chunk_ids INTEGER[] NOT NULL DEFAULT '{}',
+  metadata JSONB NOT NULL DEFAULT '{}',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Índices da tabela chat_feedbacks
+CREATE INDEX IF NOT EXISTS idx_feedbacks_question_embedding
+  ON chat_feedbacks
+  USING hnsw (question_embedding vector_cosine_ops)
+  WITH (m = 16, ef_construction = 100);
+
+CREATE INDEX IF NOT EXISTS idx_feedbacks_positive
+  ON chat_feedbacks (feedback_type)
+  WHERE feedback_type = 'positive';
+
+CREATE INDEX IF NOT EXISTS idx_feedbacks_chunk_ids
+  ON chat_feedbacks USING GIN (chunk_ids);
