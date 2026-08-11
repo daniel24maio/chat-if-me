@@ -467,11 +467,12 @@ export async function processAgentQuestion(
       model: LLM_MODEL,
       messages: messagesFinal,
       stream: true,
+      think: false,
       keep_alive: "1h",
       options: {
         num_ctx: NUM_CTX,
         temperature: 0.2,
-        num_predict: 8164,
+        num_predict: 2048,
       },
     }),
   });

@@ -971,19 +971,42 @@ async function rewriteWithLLM(systemPrompt, question) {
   return data.message.content.trim();
 }
 function extractDraftFromThinking(fullThought) {
-  if (!fullThought)
+  if (!fullThought || fullThought.trim().length < 20)
     return "";
-  const match = fullThought.match(/(?:Drafting the Response:|Resposta Final:|Content:)([\s\S]*)/i);
-  if (match && match[1].trim().length > 20) {
-    const candidate = match[1].trim();
-    if (!/^\s*(?:\d+\.\s*)?(?:Wait|Analyze|Correction|System Prompt|Current State)/i.test(candidate)) {
+  const coTSignals = [
+    /^\s*(?:\d+\.\s*)?Analyze/i,
+    /^\s*(?:\d+\.\s*)?Thinking/i,
+    /^\s*User Question:/i,
+    /^\s*Role:/i,
+    /^\s*Constraint\s*\d*:/i,
+    /^\s*Language:/i,
+    /^\s*Excerpt\s+\d+/i,
+    /^\s*Trecho\s+\d+/i,
+    /^\s*Let's\s+check/i,
+    /^\s*Wait[,!.]/i,
+    /^\s*I\s+need\s+to/i,
+    /^\s*I\s+have\s+access/i,
+    /^\s*Now,\s+let/i,
+    /^\s*Looking\s+at/i,
+    /^\s*Based\s+on\s+the\s+(provided|context|trecho|excerpt)/i,
+    /^\s*Let\s+me\s+(re-read|check|look|think)/i
+  ];
+  const firstLines = fullThought.split("\n").slice(0, 8).filter((l) => l.trim());
+  const hasCotSignal = firstLines.some((l) => coTSignals.some((rx) => rx.test(l)));
+  if (hasCotSignal)
+    return "";
+  const labelMatch = fullThought.match(/(?:Drafting the Response:|Resposta Final:|Content:)([\s\S]*)/i);
+  if (labelMatch && labelMatch[1].trim().length > 20) {
+    const candidate = labelMatch[1].trim();
+    const candidateFirstLines = candidate.split("\n").slice(0, 4).filter((l) => l.trim());
+    if (!candidateFirstLines.some((l) => coTSignals.some((rx) => rx.test(l)))) {
       return candidate;
     }
   }
-  const metaRegex = /^\s*(?:\d+\.\s*)?(?:Thinking|Analyze|Scan|Review|Wait|Correction|System Prompt|User Input|Current State|Looking at|First occurrence|My Previous Response|Previous Turn|The user is asking|Context Provided)/i;
+  const metaRegex = /^\s*(?:\d+\.\s*)?(?:Thinking|Analyze|Scan|Review|Wait|Correction|System Prompt|User Input|Current State|Looking at|First occurrence|My Previous Response|Previous Turn|The user is asking|Context Provided|User Question|Role:|Constraint|Language:|Excerpt|Trecho|Let's check|I need to|I have access|Now let|Let me)/i;
   const lines = fullThought.split("\n").map((l) => l.trim()).filter((l) => l.length > 0 && !metaRegex.test(l));
   const cleanThoughtText = lines.join("\n").trim();
-  if (cleanThoughtText.length > 50 && !metaRegex.test(cleanThoughtText)) {
+  if (cleanThoughtText.length > 100 && !metaRegex.test(cleanThoughtText.split("\n")[0])) {
     return cleanThoughtText;
   }
   return "";
@@ -1002,11 +1025,12 @@ async function streamOllamaResponse(messages, res, sources) {
       model: LLM_MODEL,
       messages: safeMessages,
       stream: true,
+      think: false,
       keep_alive: "24h",
       options: {
         num_ctx: NUM_CTX,
         temperature: 0.1,
-        num_predict: 8164,
+        num_predict: 2048,
         num_gpu: NUM_GPU
       }
     })
@@ -27850,11 +27874,12 @@ ${"\u2500".repeat(50)}`);
       model: LLM_MODEL2,
       messages: messagesFinal,
       stream: true,
+      think: false,
       keep_alive: "1h",
       options: {
         num_ctx: NUM_CTX2,
         temperature: 0.2,
-        num_predict: 8164
+        num_predict: 2048
       }
     })
   });
