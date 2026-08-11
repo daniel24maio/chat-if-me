@@ -327,6 +327,70 @@ export async function streamOllamaResponse(
   let fullThought = "";
   let generatedTokens = false;
 
+  // Estado do filtro de blocos <think>
+  let inThinkBlock = false;
+  let thinkBuffer = "";
+
+  /**
+   * Processa um token de content aplicando o filtro de blocos <think>.
+   * Retorna o texto que deve ser emitido ao SSE (pode ser vazio se for raciocínio).
+   */
+  function filterThinkToken(token: string): string {
+    let output = "";
+    thinkBuffer += token;
+
+    while (thinkBuffer.length > 0) {
+      if (inThinkBlock) {
+        // Dentro de um bloco think — procura pelo fechamento
+        const closeIdx = thinkBuffer.indexOf("</think>");
+        if (closeIdx !== -1) {
+          // Achou o fechamento: descarta tudo até e incluindo </think>
+          const thinkContent = thinkBuffer.slice(0, closeIdx);
+          fullThought += thinkContent;
+          thinkBuffer = thinkBuffer.slice(closeIdx + "</think>".length);
+          inThinkBlock = false;
+        } else if (thinkBuffer.length > 16) {
+          // Buffer grande sem fechamento — acumula no thought e limpa
+          fullThought += thinkBuffer.slice(0, thinkBuffer.length - 8);
+          thinkBuffer = thinkBuffer.slice(thinkBuffer.length - 8);
+          break;
+        } else {
+          // Buffer pequeno — aguarda mais tokens
+          break;
+        }
+      } else {
+        // Fora de bloco think — procura pela abertura
+        const openIdx = thinkBuffer.indexOf("<think>");
+        if (openIdx !== -1) {
+          // Tem abertura: emite o que veio antes e entra no modo think
+          output += thinkBuffer.slice(0, openIdx);
+          thinkBuffer = thinkBuffer.slice(openIdx + "<think>".length);
+          inThinkBlock = true;
+        } else if (thinkBuffer.length > 8) {
+          // Sem abertura e buffer grande — é conteúdo real
+          output += thinkBuffer.slice(0, thinkBuffer.length - 7);
+          thinkBuffer = thinkBuffer.slice(thinkBuffer.length - 7);
+          break;
+        } else {
+          // Buffer pequeno — aguarda mais tokens para confirmar
+          break;
+        }
+      }
+    }
+
+    return output;
+  }
+
+  function processToken(token: string | undefined) {
+    if (!token) return;
+    const safe = filterThinkToken(token);
+    if (safe) {
+      generatedTokens = true;
+      fullText += safe;
+      res.write(`data: ${JSON.stringify({ type: "token", content: safe })}\n\n`);
+    }
+  }
+
   try {
     while (true) {
       const { done, value } = await reader.read();
@@ -351,21 +415,14 @@ export async function streamOllamaResponse(
             console.error("❌ [Ollama LLM Stream] Erro retornado no chunk:", chunk.error);
           }
 
-          // 1. Se o Ollama enviar canal nativo de raciocínio (thinking / reasoning_content)
+          // 1. Canal nativo de raciocínio (thinking / reasoning_content) — apenas acumula, não exibe
           const thoughtToken = chunk.message?.thinking || chunk.message?.reasoning_content;
           if (thoughtToken) {
             fullThought += thoughtToken;
-            res.write(`data: ${JSON.stringify({ type: "thought", content: thoughtToken })}\n\n`);
           }
 
-          // 2. Canal de resposta para o aluno (content)
-          const textToken = chunk.message?.content;
-          if (textToken) {
-            if (textToken.trim() === "<think>" || textToken.trim() === "</think>") continue;
-            generatedTokens = true;
-            fullText += textToken;
-            res.write(`data: ${JSON.stringify({ type: "token", content: textToken })}\n\n`);
-          }
+          // 2. Canal de resposta (content) — passa pelo filtro stateful de <think>
+          processToken(chunk.message?.content);
 
           if (chunk.done) {
             console.log("🤖 [Stream] Geração concluída pelo Ollama");
@@ -376,26 +433,25 @@ export async function streamOllamaResponse(
       }
     }
 
+    // Processa buffer restante
     if (buffer.trim()) {
       try {
         const chunk = JSON.parse(buffer.trim()) as {
           message?: { content?: string; thinking?: string; reasoning_content?: string };
         };
         const thoughtToken = chunk.message?.thinking || chunk.message?.reasoning_content;
-        if (thoughtToken) {
-          fullThought += thoughtToken;
-          res.write(`data: ${JSON.stringify({ type: "thought", content: thoughtToken })}\n\n`);
-        }
-
-        const textToken = chunk.message?.content;
-        if (textToken && textToken.trim() !== "<think>" && textToken.trim() !== "</think>") {
-          generatedTokens = true;
-          fullText += textToken;
-          res.write(`data: ${JSON.stringify({ type: "token", content: textToken })}\n\n`);
-        }
+        if (thoughtToken) fullThought += thoughtToken;
+        processToken(chunk.message?.content);
       } catch {
         // Ignora
       }
+    }
+
+    // Flush do thinkBuffer residual (conteúdo após último bloco think)
+    if (thinkBuffer && !inThinkBlock && thinkBuffer.trim()) {
+      generatedTokens = true;
+      fullText += thinkBuffer;
+      res.write(`data: ${JSON.stringify({ type: "token", content: thinkBuffer })}\n\n`);
     }
   } finally {
     reader.releaseLock();

@@ -1048,6 +1048,55 @@ async function streamOllamaResponse(messages, res, sources) {
   let fullText = "";
   let fullThought = "";
   let generatedTokens = false;
+  let inThinkBlock = false;
+  let thinkBuffer = "";
+  function filterThinkToken(token) {
+    let output = "";
+    thinkBuffer += token;
+    while (thinkBuffer.length > 0) {
+      if (inThinkBlock) {
+        const closeIdx = thinkBuffer.indexOf("</think>");
+        if (closeIdx !== -1) {
+          const thinkContent = thinkBuffer.slice(0, closeIdx);
+          fullThought += thinkContent;
+          thinkBuffer = thinkBuffer.slice(closeIdx + "</think>".length);
+          inThinkBlock = false;
+        } else if (thinkBuffer.length > 16) {
+          fullThought += thinkBuffer.slice(0, thinkBuffer.length - 8);
+          thinkBuffer = thinkBuffer.slice(thinkBuffer.length - 8);
+          break;
+        } else {
+          break;
+        }
+      } else {
+        const openIdx = thinkBuffer.indexOf("<think>");
+        if (openIdx !== -1) {
+          output += thinkBuffer.slice(0, openIdx);
+          thinkBuffer = thinkBuffer.slice(openIdx + "<think>".length);
+          inThinkBlock = true;
+        } else if (thinkBuffer.length > 8) {
+          output += thinkBuffer.slice(0, thinkBuffer.length - 7);
+          thinkBuffer = thinkBuffer.slice(thinkBuffer.length - 7);
+          break;
+        } else {
+          break;
+        }
+      }
+    }
+    return output;
+  }
+  function processToken(token) {
+    if (!token)
+      return;
+    const safe = filterThinkToken(token);
+    if (safe) {
+      generatedTokens = true;
+      fullText += safe;
+      res.write(`data: ${JSON.stringify({ type: "token", content: safe })}
+
+`);
+    }
+  }
   try {
     while (true) {
       const { done, value } = await reader.read();
@@ -1068,20 +1117,8 @@ async function streamOllamaResponse(messages, res, sources) {
           const thoughtToken = chunk.message?.thinking || chunk.message?.reasoning_content;
           if (thoughtToken) {
             fullThought += thoughtToken;
-            res.write(`data: ${JSON.stringify({ type: "thought", content: thoughtToken })}
-
-`);
           }
-          const textToken = chunk.message?.content;
-          if (textToken) {
-            if (textToken.trim() === "<think>" || textToken.trim() === "</think>")
-              continue;
-            generatedTokens = true;
-            fullText += textToken;
-            res.write(`data: ${JSON.stringify({ type: "token", content: textToken })}
-
-`);
-          }
+          processToken(chunk.message?.content);
           if (chunk.done) {
             console.log("\u{1F916} [Stream] Gera\xE7\xE3o conclu\xEDda pelo Ollama");
           }
@@ -1093,22 +1130,18 @@ async function streamOllamaResponse(messages, res, sources) {
       try {
         const chunk = JSON.parse(buffer.trim());
         const thoughtToken = chunk.message?.thinking || chunk.message?.reasoning_content;
-        if (thoughtToken) {
+        if (thoughtToken)
           fullThought += thoughtToken;
-          res.write(`data: ${JSON.stringify({ type: "thought", content: thoughtToken })}
-
-`);
-        }
-        const textToken = chunk.message?.content;
-        if (textToken && textToken.trim() !== "<think>" && textToken.trim() !== "</think>") {
-          generatedTokens = true;
-          fullText += textToken;
-          res.write(`data: ${JSON.stringify({ type: "token", content: textToken })}
-
-`);
-        }
+        processToken(chunk.message?.content);
       } catch {
       }
+    }
+    if (thinkBuffer && !inThinkBlock && thinkBuffer.trim()) {
+      generatedTokens = true;
+      fullText += thinkBuffer;
+      res.write(`data: ${JSON.stringify({ type: "token", content: thinkBuffer })}
+
+`);
     }
   } finally {
     reader.releaseLock();
