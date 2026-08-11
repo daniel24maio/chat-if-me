@@ -352,6 +352,7 @@ async function hybridSearch(
   // ── Boost e Penalizações para Ementas ──
   const effectiveIntent = (!intention || intention === "OUTRAS") ? inferIntentionFromKeywords(queryText) : intention;
   const isEmentaQuery = effectiveIntent === "DISCIPLINA_EMENTA" || effectiveIntent === "DISCIPLINA" || effectiveIntent === "CONTEUDO";
+  const isCursoQuery = effectiveIntent === "CURSO" || effectiveIntent === "ESTRUTURA_CURSOS";
 
   const codeMatch = queryText.match(/(OBBGSIN|OBBGADM|OBBGEMT|OBLCOMP|OBLPED)\.?(\d{3})/i);
   const targetCode = codeMatch ? `${codeMatch[1]}.${codeMatch[2]}`.toLowerCase() : null;
@@ -369,6 +370,16 @@ async function hybridSearch(
       }
     } else if (isEmentaQuery && /ementa:/i.test(doc.content)) {
       doc.similarity += 0.10;
+    }
+
+    // Boost para chunks com Matriz Curricular quando pergunta é sobre estrutura/listagem de período
+    if (isCursoQuery && /PER[IÍ]ODO\s+COD\.?\s+DISCIPLINA|1[oº]\s+Per[íi]odo|Matriz\s+Curricular/i.test(doc.content)) {
+      doc.similarity += 0.12;
+    }
+
+    // Se for busca de estrutura e o chunk for uma ficha detalhada de ementa sem período, penaliza levemente
+    if (isCursoQuery && /\bEmenta:\s/i.test(doc.content) && !/PER[IÍ]ODO|per[íi]odo/i.test(doc.content)) {
+      doc.similarity -= 0.05;
     }
 
     // Se for busca de ementa e o trecho for apenas a tabela da Matriz Curricular, reduz prioridade (-0.15)

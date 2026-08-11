@@ -222,21 +222,47 @@ async function syllabusChunking(text: string, filename: string): Promise<ChunkDa
 
   const parts = await splitter.splitText(text);
   let currentDiscipline = "";
+  let currentPeriod = "";
 
   for (const part of parts) {
     const partTrimmed = part.trim();
     if (partTrimmed.length === 0) continue;
 
-    const codeMatch = partTrimmed.match(/(?:C[oó]digo|Disciplina):\s*([A-Za-z0-9._-]+)/i);
-    const nameMatch = partTrimmed.match(/Nome da disciplina:\s*([^\n]+)/i);
-
-    if (nameMatch || codeMatch) {
-      const code = codeMatch ? codeMatch[1].trim() : "";
-      const name = nameMatch ? nameMatch[1].trim() : "";
-      currentDiscipline = [name, code].filter(Boolean).join(" ");
+    // Detecta seção de período (ex: "1º Período", "2º Período")
+    const periodMatch = partTrimmed.match(/^(\d{1,2}[oOºª]?\s*Per[íi]odo)/im);
+    if (periodMatch) {
+      currentPeriod = periodMatch[1].trim();
     }
 
-    const context = currentDiscipline ? `Disciplina: ${currentDiscipline}` : "Ementário";
+    // Busca código de disciplina no texto completo do chunk (não apenas no início)
+    const codeMatchFull = partTrimmed.match(/\bC[oó]digo:\s*([A-Za-z]{3,}[\w._-]*\d{3})/i)
+      || partTrimmed.match(/\bNome da disciplina:\s*([^\n]+)/i)
+      // Fallback: código isolado tipo OBBGSIN.016 em qualquer lugar do chunk
+      || partTrimmed.match(/\b((?:OBBG|OBL)[A-Z]{2,6}\.\d{3})\b/);
+
+    if (codeMatchFull) {
+      // Nome da disciplina via "Nome da disciplina:"
+      const nameMatch = partTrimmed.match(/Nome da disciplina:\s*([^\n]+)/i);
+      const codeOnlyMatch = partTrimmed.match(/\bC[oó]digo:\s*([A-Za-z0-9._-]+)/i)
+        || partTrimmed.match(/\b((?:OBBG|OBL)[A-Z]{2,6}\.\d{3})\b/);
+
+      const code = codeOnlyMatch ? codeOnlyMatch[1].trim() : "";
+      const name = nameMatch ? nameMatch[1].trim() : "";
+      if (name || code) {
+        currentDiscipline = [name, code].filter(Boolean).join(" ");
+      }
+    }
+
+    // Determina contexto: disciplina específica > seção de período > fallback Ementário
+    let context: string;
+    if (currentDiscipline) {
+      context = `Disciplina: ${currentDiscipline}`;
+    } else if (currentPeriod) {
+      context = `Grade Curricular — ${currentPeriod}`;
+    } else {
+      context = "Ementário";
+    }
+
     const contentWithContext = injectContext(partTrimmed, documentName, context);
 
     chunks.push({

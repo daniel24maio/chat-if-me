@@ -1832,6 +1832,7 @@ async function hybridSearch(embedding, queryText, limit = 5, intention) {
   }));
   const effectiveIntent = !intention || intention === "OUTRAS" ? inferIntentionFromKeywords(queryText) : intention;
   const isEmentaQuery = effectiveIntent === "DISCIPLINA_EMENTA" || effectiveIntent === "DISCIPLINA" || effectiveIntent === "CONTEUDO";
+  const isCursoQuery = effectiveIntent === "CURSO" || effectiveIntent === "ESTRUTURA_CURSOS";
   const codeMatch = queryText.match(/(OBBGSIN|OBBGADM|OBBGEMT|OBLCOMP|OBLPED)\.?(\d{3})/i);
   const targetCode = codeMatch ? `${codeMatch[1]}.${codeMatch[2]}`.toLowerCase() : null;
   for (const doc of documents) {
@@ -1843,6 +1844,12 @@ async function hybridSearch(embedding, queryText, limit = 5, intention) {
       }
     } else if (isEmentaQuery && /ementa:/i.test(doc.content)) {
       doc.similarity += 0.1;
+    }
+    if (isCursoQuery && /PER[IÍ]ODO\s+COD\.?\s+DISCIPLINA|1[oº]\s+Per[íi]odo|Matriz\s+Curricular/i.test(doc.content)) {
+      doc.similarity += 0.12;
+    }
+    if (isCursoQuery && /\bEmenta:\s/i.test(doc.content) && !/PER[IÍ]ODO|per[íi]odo/i.test(doc.content)) {
+      doc.similarity -= 0.05;
     }
     if (isEmentaQuery && /PERÍODO\s+COD\.\s+DISCIPLINA/i.test(doc.content)) {
       doc.similarity -= 0.15;
@@ -27154,18 +27161,33 @@ async function syllabusChunking(text, filename) {
   });
   const parts = await splitter.splitText(text);
   let currentDiscipline = "";
+  let currentPeriod = "";
   for (const part of parts) {
     const partTrimmed = part.trim();
     if (partTrimmed.length === 0)
       continue;
-    const codeMatch = partTrimmed.match(/(?:C[oó]digo|Disciplina):\s*([A-Za-z0-9._-]+)/i);
-    const nameMatch = partTrimmed.match(/Nome da disciplina:\s*([^\n]+)/i);
-    if (nameMatch || codeMatch) {
-      const code = codeMatch ? codeMatch[1].trim() : "";
-      const name = nameMatch ? nameMatch[1].trim() : "";
-      currentDiscipline = [name, code].filter(Boolean).join(" ");
+    const periodMatch = partTrimmed.match(/^(\d{1,2}[oOºª]?\s*Per[íi]odo)/im);
+    if (periodMatch) {
+      currentPeriod = periodMatch[1].trim();
     }
-    const context = currentDiscipline ? `Disciplina: ${currentDiscipline}` : "Ement\xE1rio";
+    const codeMatchFull = partTrimmed.match(/\bC[oó]digo:\s*([A-Za-z]{3,}[\w._-]*\d{3})/i) || partTrimmed.match(/\bNome da disciplina:\s*([^\n]+)/i) || partTrimmed.match(/\b((?:OBBG|OBL)[A-Z]{2,6}\.\d{3})\b/);
+    if (codeMatchFull) {
+      const nameMatch = partTrimmed.match(/Nome da disciplina:\s*([^\n]+)/i);
+      const codeOnlyMatch = partTrimmed.match(/\bC[oó]digo:\s*([A-Za-z0-9._-]+)/i) || partTrimmed.match(/\b((?:OBBG|OBL)[A-Z]{2,6}\.\d{3})\b/);
+      const code = codeOnlyMatch ? codeOnlyMatch[1].trim() : "";
+      const name = nameMatch ? nameMatch[1].trim() : "";
+      if (name || code) {
+        currentDiscipline = [name, code].filter(Boolean).join(" ");
+      }
+    }
+    let context;
+    if (currentDiscipline) {
+      context = `Disciplina: ${currentDiscipline}`;
+    } else if (currentPeriod) {
+      context = `Grade Curricular \u2014 ${currentPeriod}`;
+    } else {
+      context = "Ement\xE1rio";
+    }
     const contentWithContext = injectContext(partTrimmed, documentName, context);
     chunks.push({
       content: contentWithContext,
@@ -27618,8 +27640,8 @@ REGRAS OBRIGAT\xD3RIAS:
    - SEMPRE EXPANDA SIGLAS acad\xEAmicas (ex: TCC -> Trabalho de Conclus\xE3o de Curso, PPC -> Projeto Pedag\xF3gico do Curso, AC -> Atividades Complementares, IRA -> \xCDndice de Rendimento Acad\xEAmico).
 3. Ao gerar o par\xE2metro 'intent', classifique a inten\xE7\xE3o estritamente em uma destas 10 categorias:
    - INGRESSO_MATRICULA: Vestibular, SISU, transfer\xEAncias, trancamento, renova\xE7\xE3o de matr\xEDcula.
-   - ESTRUTURA_CURSOS: Matriz curricular, PPC, dura\xE7\xE3o de cursos, regras gerais dos cursos do campus.
-   - DISCIPLINA_EMENTA: Carga hor\xE1ria espec\xEDfica, pr\xE9-requisitos, conte\xFAdo program\xE1tico, ementas, bibliografia.
+   - ESTRUTURA_CURSOS: Matriz curricular, listagem de disciplinas de um per\xEDodo/semestre espec\xEDfico (ex: "quais s\xE3o as mat\xE9rias do 1\xBA per\xEDodo?", "disciplinas do 3\xBA semestre"), grade do curso, PPC, dura\xE7\xE3o de cursos, regras gerais dos cursos do campus.
+   - DISCIPLINA_EMENTA: Conte\xFAdo program\xE1tico (ementa) de UMA disciplina ESPEC\xCDFICA (ex: "qual a ementa de Banco de Dados I?"), pr\xE9-requisitos de uma disciplina espec\xEDfica, bibliografia, objetivos de aprendizagem de uma disciplina pelo c\xF3digo (OBBGSIN.xxx).
    - AVALIACAO_FREQUENCIA: Pontua\xE7\xE3o, provas, aprova\xE7\xE3o, limite de faltas (25%), abono/atestados.
    - TCC: Regras, documenta\xE7\xE3o, orientadores e bancas de Trabalho de Conclus\xE3o de Curso.
    - ATIVIDADES_EXTRAS: Horas complementares (AAC), pesquisa, extens\xE3o, monitoria.

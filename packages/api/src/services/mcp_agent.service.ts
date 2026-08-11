@@ -54,8 +54,8 @@ REGRAS OBRIGATÓRIAS:
    - SEMPRE EXPANDA SIGLAS acadêmicas (ex: TCC -> Trabalho de Conclusão de Curso, PPC -> Projeto Pedagógico do Curso, AC -> Atividades Complementares, IRA -> Índice de Rendimento Acadêmico).
 3. Ao gerar o parâmetro 'intent', classifique a intenção estritamente em uma destas 10 categorias:
    - INGRESSO_MATRICULA: Vestibular, SISU, transferências, trancamento, renovação de matrícula.
-   - ESTRUTURA_CURSOS: Matriz curricular, PPC, duração de cursos, regras gerais dos cursos do campus.
-   - DISCIPLINA_EMENTA: Carga horária específica, pré-requisitos, conteúdo programático, ementas, bibliografia.
+   - ESTRUTURA_CURSOS: Matriz curricular, listagem de disciplinas de um período/semestre específico (ex: "quais são as matérias do 1º período?", "disciplinas do 3º semestre"), grade do curso, PPC, duração de cursos, regras gerais dos cursos do campus.
+   - DISCIPLINA_EMENTA: Conteúdo programático (ementa) de UMA disciplina ESPECÍFICA (ex: "qual a ementa de Banco de Dados I?"), pré-requisitos de uma disciplina específica, bibliografia, objetivos de aprendizagem de uma disciplina pelo código (OBBGSIN.xxx).
    - AVALIACAO_FREQUENCIA: Pontuação, provas, aprovação, limite de faltas (25%), abono/atestados.
    - TCC: Regras, documentação, orientadores e bancas de Trabalho de Conclusão de Curso.
    - ATIVIDADES_EXTRAS: Horas complementares (AAC), pesquisa, extensão, monitoria.
