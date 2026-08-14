@@ -10,8 +10,10 @@ As seguintes regras foram definidas pelo orientador e devem ser rigorosamente co
 2. **Eliminar clichês e "marcas de IA"**:
    - Evitar aberturas genéricas como "No âmbito dos...", "No cenário atual...". Preferir construções diretas (ex: "Em assistentes virtuais voltados a ambientes universitários...").
    - Evitar adjetivos hiperbólicos de valor (ex: "indispensável", "crucial", "fundamental", "drástico"). Apresentar fatos de maneira sóbria e neutra.
+   - **Vocabulário Direto e Acessível:** Preferir termos claros do cotidiano técnico-acadêmico em vez de vocabulário excessivamente rebuscado, arcaico ou pedante (ex: preferir "responder a dúvidas" a "sanar dúvidas de discentes", "diferem" a "diferem de forma drástica", "mudança" a "transição de paradigma"). Manter o rigor acadêmico sem artificialidade.
 
 3. **Citações e Referência a Trabalhos**:
-   - Evitar o vício de linguagem "o referido autor" / "o citado autor". Referenciar os trabalhos e autores de forma explícita (ex: "Modran \cite{modran2025leveraging}", "Barbosa \cite{barbosa2023chatbot}", "no trabalho de Oliveira \cite{oliveira2025arquitetura}").
+   - **Regra de Estilo de Citação:** Não prefixar a citação com o sobrenome do autor (evitar "Monteiro \cite{monteiro2021helena}", "Barbosa \cite{barbosa2023chatbot}"). Utilizar citações diretas no corpo da frase (ex: "Em \cite{monteiro2021helena}, foi desenvolvido...", "O trabalho \cite{barbosa2023chatbot} propõe...", "Conforme demonstrado em \cite{modran2025leveraging}...").
+   - Evitar o vício de linguagem "o referido autor" / "o citado autor". Referenciar o próprio trabalho ou a proposta (ex: "em \cite{oliveira2025arquitetura}").
    - Manter autores institucionais com siglas limpas em `referencias.bib` (ex: `author = {{IFMG Campus Ouro Branco}}`).
-   - Não utilizar marcadores de rascunho de revisão no texto final (ex: trocar `\ederson{em} \sout{por Modran} \cite{modran2025leveraging}` por `em \cite{modran2025leveraging}`).
+   - Não utilizar marcadores de rascunho de revisão no texto final (ex: `\ederson{...}`, `\daniel{...}`).
