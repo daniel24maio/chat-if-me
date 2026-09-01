@@ -17,3 +17,7 @@ As seguintes regras foram definidas pelo orientador e devem ser rigorosamente co
    - Evitar o vício de linguagem "o referido autor" / "o citado autor". Referenciar o próprio trabalho ou a proposta (ex: "em \cite{oliveira2025arquitetura}").
    - Manter autores institucionais com siglas limpas em `referencias.bib` (ex: `author = {{IFMG Campus Ouro Branco}}`).
    - Não utilizar marcadores de rascunho de revisão no texto final (ex: `\ederson{...}`, `\daniel{...}`).
+
+4. **Definição e Uso de Siglas e Acrônimos**:
+   - Definir toda sigla/acrônimo formalmente em sua **primeira aparição** no texto (ex: `Reconhecimento Óptico de Caracteres (\textit{Optical Character Recognition} -- OCR)`).
+   - Nas ocorrências posteriores, utilizar apenas a sigla (ex: `OCR`), removendo definições repetidas ou tardias.
