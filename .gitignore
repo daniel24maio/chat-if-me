@@ -46,14 +46,16 @@ Thumbs.db
 pgdata/
 
 # ==============================
-# Documentação Interna / TCC (Overleaf)
+# LaTeX / Arquivos temporários de compilação
 # ==============================
-tcc/
-overleaf/
-*.tex
-*.bib
 *.aux
 *.log
 *.toc
 *.fls
 *.fdb_latexmk
+*.synctex.gz
+*.bbl
+*.blg
+*.out
+*.bcf
+*.run.xml

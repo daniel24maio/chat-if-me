@@ -1,0 +1,348 @@
+%Cores para mim e para ele
+%Citação para referencia
+%Uso de ChatGPT
+
+
+\documentclass[12pt]{article}
+
+\usepackage{sbc-template}
+\usepackage{graphicx,url}
+\usepackage[utf8]{inputenc}
+\usepackage[normalem]{ulem}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{tabularx}
+\usepackage{ragged2e}
+\newcolumntype{L}{>{\RaggedRight\arraybackslash}X}
+\usepackage{pifont} % \ding{51} (check), \ding{55} (cross)
+\usepackage{wasysym} % para círculos de conformidade
+\usepackage{threeparttable}  % Para gerenciar notas e rodapés de tabelas
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric, arrows.meta, positioning, calc, fit, backgrounds}
+
+\newcommand\ederson[1]{{\textcolor{red}{{#1}}}}
+\newcommand\daniel[1]{{\textcolor{blue}{{#1}}}}
+\renewcommand{\refname}{Referências}
+
+\sloppy
+
+\title{Desenvolvimento e Avaliação Comparativa de Assistente Virtual Acadêmico Baseado em RAG Clássico e Agentic RAG via Model Context Protocol (MCP)}
+
+\author{Daniel G. D. Silva\inst{1}, Ederson N. F. G. Júnior\inst{1}}
+
+\address{
+  Instituto Federal de Minas Gerais (IFMG) -- Campus Ouro Branco\\
+  Caixa Postal 36.494-018 -- Ouro Branco -- Minas Gerais -- Brasil
+  \nextinstitute
+  Bacharelado em Sistemas de Informação -- IFMG Campus Ouro Branco
+  \email{daniel24maio@gmail.com, ederson.junior@ifmg.edu.br}
+}
+
+
+\begin{document}
+
+\maketitle
+
+
+\begin{abstract}
+  Efficient access to institutional academic information, such as Course Pedagogical Projects (PPC) and academic regulations, is a recurring challenge in higher education institutions. This paper presents the development and comparative evaluation of an academic virtual assistant designed for IFMG Campus Ouro Branco, comparing Classical Retrieval-Augmented Generation (RAG) with an Agentic RAG approach based on the Model Context Protocol (MCP). The solution operates entirely on local infrastructure using open-source models, combining domain-driven semantic chunking with a hybrid search pipeline (vector and text). Experimental evaluation with students demonstrated that Classical RAG achieved lower latency and higher consistency under compact language models, whereas Agentic RAG via MCP excelled in context governance, modularity, and source traceability.
+\end{abstract}
+
+\begin{resumo}
+  O acesso eficiente a informações acadêmicas institucionais, como Projetos Pedagógicos de Curso (PPC) e regulamentos de ensino, representa um desafio recorrente em instituições de ensino superior. Este trabalho apresenta o desenvolvimento e a avaliação comparativa de um assistente virtual acadêmico para o IFMG Campus Ouro Branco, contrastando a arquitetura de Geração Aumentada por Recuperação (RAG) Clássica com uma abordagem de RAG Agêntico baseada no \textit{Model Context Protocol} (MCP). A solução opera inteiramente em infraestrutura local com modelos de código aberto, combinando segmentação semântica orientada ao domínio normativo e busca híbrida (vetorial e textual). A avaliação experimental com estudantes demonstrou que o RAG Clássico obteve menor latência e maior consistência sob modelos compactos de linguagem, enquanto o RAG Agêntico via MCP destacou-se pela governança de contexto, modularidade e rastreabilidade das fontes consultadas.
+\end{resumo} 
+
+% === NOTAS DE AUXÍLIO PARA DISCUSSÃO
+% CONCEITO 1: Por que RAG e não Fine-Tuning do modelo?
+% - Fine-Tuning ajusta o conhecimento PARAMÉTRICO (pesos neurais), o que é caro, lento e gera alucinações se as regras mudarem.
+% - RAG desacopla o conhecimento NÃO-PARAMÉTRICO (documentos PDF no banco). Quando uma resolução muda, basta atualizar o banco de dados sem precisar retreinar a IA.
+%
+% CONCEITO 2: Por que usar o Model Context Protocol (MCP)?
+% - O MCP cria um contrato de interface seguro (Resources, Tools, Prompts) via stdio.
+% - Em vez de dar acesso direto/irrestrito ao banco ou servidor para o LLM, o agente é forçado a chamar a ferramenta estrita `search_ifmg_knowledge`, impedindo execução de scripts indesejados.
+
+
+\section{Introdução}
+
+A formação em cursos técnicos e de graduação em instituições de ensino superior exige dos discentes não apenas a aquisição de conteúdos teóricos e práticos, mas também a compreensão e o cumprimento rigoroso de um conjunto de normas e requisitos acadêmicos. Essas diretrizes são formalizadas nos Projetos Pedagógicos de Curso (PPC) e nos regulamentos institucionais, que estabelecem os critérios para aprovação em disciplinas, cumprimento de carga horária complementar, realização de estágio supervisionado e desenvolvimento do Trabalho de Conclusão de Curso (TCC) \cite{ppcourobranco}. Para esclarecer dúvidas sobre esses trâmites, os estudantes frequentemente recorrem à navegação manual nos portais institucionais ou ao atendimento presencial e remoto junto à coordenação e à secretaria acadêmica. No entanto, essas informações encontram-se habitualmente dispersas em arquivos PDF extensos, estruturadas com linguagem burocrática e jurídica. Essa dispersão dificulta o acesso rápido e preciso às regras pelos discentes, gerando falhas de comunicação e sobrecarregando os setores administrativos com atendimentos repetitivos \cite{monteiro2021helena}.
+
+Do ponto de vista tecnológico, a extração automatizada de informações a partir desses documentos não estruturados, como arquivos no formato PDF, apresenta desafios de engenharia significativos. Modelos de Inteligência Artificial (IA) generativa, como os Modelos de Linguagem de Grande Escala (\textit{Large Language Models} -- LLMs), são suscetíveis ao fenômeno de alucinação, a geração probabilística de fatos plausíveis, porém incorretos ou inexistentes, notadamente quando não possuem o contexto exato e atualizado em sua base fixa de treinamento \cite{ji2023survey}. Portanto, para garantir que um assistente automatizado responda estritamente com base nos regulamentos vigentes, sem inventar regras de desligamento, prazos ou grades curriculares, exige-se uma arquitetura técnica rigorosa que restrinja a geração de texto apenas aos dados provenientes de fontes oficiais e auditadas.
+
+Diversos esforços na literatura buscaram automatizar o atendimento discente por meio de assistentes virtuais baseados em Processamento de Linguagem Natural (PLN) tradicional \cite{monteiro2021helena} ou em arquiteturas de Geração Aumentada por Recuperação (\textit{Retrieval-Augmented Generation} -- RAG) alimentadas por Interfaces de Programação de Aplicação (\textit{Application Programming Interfaces} -- APIs) comerciais em nuvem \cite{barbosa2023chatbot}. Contudo, essas abordagens anteriores enfrentam limitações relevantes: enquanto os motores de PLN tradicionais exigem o mapeamento manual e rígido de intenções e fluxos de diálogo, as soluções baseadas em APIs proprietárias dependem de custos recorrentes por requisição e comprometem a privacidade de dados institucionais ao processá-los em servidores externos. Ademais, observa-se uma lacuna no uso de protocolos abertos de governança de contexto, como o \textit{Model Context Protocol} (MCP) \cite{sabbag2025mcp}, que permitam delimitar de forma estrita o raio de atuação de agentes autônomos locais sobre resoluções normativas complexas. Assim, persiste a necessidade de investigações que combinem a execução 100\% local de modelos open-source com a busca híbrida otimizada e o controle de contexto via MCP sob hardware computacional restrito.
+
+Com o objetivo de superar as limitações identificadas na literatura, a proposta deste trabalho consiste no desenvolvimento e na avaliação comparativa de um assistente virtual acadêmico baseado na arquitetura RAG, operando sob infraestrutura estritamente local e de código aberto. O sistema contrapõe duas abordagens de recuperação informacional sobre o ecossistema normativo institucional: um pipeline de RAG Clássico determinístico e uma arquitetura agêntica governada pelo MCP. Ao condicionar a geração probabilística de modelos de linguagem locais à extração de evidências fidedignas dos regulamentos vigentes, a solução visa conferir autonomia de consulta aos discentes, reduzir a demanda por atendimentos informativos de rotina nos setores administrativos e garantir a auditabilidade estrita das normas acadêmicas informadas.
+
+
+% === NOTAS DE AUXÍLIO PARA DISCUSSÃO COM O ORIENTADOR ===
+% CONCEITO 3: Comparação com os Trabalhos Relacionados
+% - Monteiro (2021) [Helena]: PLN estático no IBM Watson. Exige mapear intenção a intenção manualmente. Se o PPC muda, tem que reescrever a árvore.
+% - Barbosa (2023): Usa LlamaIndex + ChatGPT (OpenAI cloud paga). Dependente de nuvem, custo em dólar por token e sem privacidade dos dados.
+% - Modran (2025): Usa MCP + ACP focado em tutoria/aprendizado adaptativo (ajusta nível do aluno).
+% - Oliveira (2025): Usa MCP para operações ativas de escrita/gerenciamento em servidores OpenStack.
+% - Minha Proposta: 100% Local (Ollama + bge-m3 + qwen3.5:4b), busca híbrida RRF com boost por intenção, RAG Clássico vs MCP em modo de leitura estrita.
+\section{Trabalhos Relacionados}
+No atendimento a estudantes em ambientes universitários, o trabalho \cite{monteiro2021helena} desenvolveu o assistente virtual Helena para o Departamento de Computação da Universidade Federal de Ouro Preto (UFOP). O sistema foi criado para responder a dúvidas de alunos sobre processos e normas da instituição utilizando a plataforma IBM Watson Assistant. Em termos técnicos, a solução em \cite{monteiro2021helena} baseia-se em PLN tradicional, o que exige mapear intenções manualmente e construir fluxos de diálogo fixos com regras rígidas. Diferente dessa abordagem, a proposta deste trabalho adota a arquitetura RAG sobre documentos oficiais. Essa escolha evita a necessidade de recriar fluxos manuais a cada atualização de normas, permitindo que o modelo monte as respostas de forma direta e dinâmica a partir dos regulamentos vigentes.
+
+A aplicação de modelos de linguagem para esclarecer dúvidas acadêmicas também foi avaliada em \cite{barbosa2023chatbot}, com o desenvolvimento de um assistente para a Pró-Reitoria de Graduação da UFOP. A arquitetura descrita em \cite{barbosa2023chatbot} utiliza a biblioteca LlamaIndex integrada à API do ChatGPT (OpenAI), recuperando fragmentos de manuais e documentos salvos em formato JSON. Embora o objetivo de aplicação seja próximo ao deste estudo, as decisões de infraestrutura e recuperação são distintas. O sistema em \cite{barbosa2023chatbot} depende de serviços pagos em nuvem comercial, gerando custos contínuos por requisição e enviando dados da instituição para servidores externos. Em contrapartida, esta pesquisa opera com infraestrutura $100\%$ local e gratuita com o ecossistema Ollama. Além disso, enquanto \cite{barbosa2023chatbot} realiza buscas vetoriais simples apenas na memória do sistema, a solução proposta neste trabalho adota busca híbrida persistente em PostgreSQL com reclassificação por relevância.
+
+No uso de agentes de IA na educação, \cite{modran2025leveraging} propôs uma arquitetura que integra RAG, o MCP e o \textit{Agent Communication Protocol} (ACP). Este estudo teve como foco a tutoria adaptativa, empregando o MCP para acompanhar o perfil do aluno e ajustar o nível pedagógico das respostas. Enquanto em \cite{modran2025leveraging} o protocolo modula a complexidade do conteúdo didático, nesta pesquisa o MCP atua como camada de segurança e controle de dados. O objetivo é assegurar que o agente consulte apenas regulamentos oficiais e auditados, evitando respostas incorretas ou inventadas.
+
+O emprego do MCP como padrão de comunicação e controle de sistemas também foi explorado em \cite{oliveira2025arquitetura} para a gerência automatizada de servidores em nuvem OpenStack. Esse estudo demonstrou a eficácia do protocolo para expor ferramentas e dados a modelos generativos por meio de contratos formais de interface. Contudo, o modo de operação é diferente: enquanto em \cite{oliveira2025arquitetura} os agentes executam ações ativas que modificam o ambiente (como criar e apagar servidores virtuais), o assistente desenvolvido neste trabalho opera estritamente em modo de leitura. Essa restrição funciona como barreira de proteção, garantindo que o agente apenas consulte informações institucionais sem risco de modificações indevidas.
+
+A Tabela \ref{tab:trabalhos_relacionados} resume a comparação entre as soluções da literatura e a proposta desenvolvida neste trabalho, destacando as diferenças em termos de abordagem, mecanismo de busca, infraestrutura, privacidade e governança.
+
+\begin{table}[htbp]
+\centering
+\footnotesize
+\begin{threeparttable}
+\caption{Quadro comparativo entre os trabalhos correlatos e a proposta desenvolvida.}
+\label{tab:trabalhos_relacionados}
+\setlength{\tabcolsep}{4.75pt}
+\renewcommand{\arraystretch}{1.25}
+
+\begin{tabularx}{\textwidth}{
+  >{\RaggedRight\hsize=0.95\hsize}X
+  >{\RaggedRight\hsize=1.05\hsize}X
+  >{\RaggedRight\hsize=1.05\hsize}X
+  >{\RaggedRight\hsize=1.10\hsize}X
+  >{\centering\arraybackslash\hsize=0.75\hsize}X
+  >{\RaggedRight\hsize=1.05\hsize}X
+}
+\toprule
+\textbf{Trabalho} & \textbf{Abordagem} & \textbf{Mecanismo de Busca} & \textbf{Infraestrutura} & \textbf{Privacidade} & \textbf{Governança MCP\tnote{a}} \\
+\midrule
+\cite{monteiro2021helena}      & PLN por Regras             & Árvores estáticas             & Nuvem (IBM Watson)        & Externa & Não \\
+\cite{barbosa2023chatbot}      & RAG Linear (Comercial)     & Vetorial em memória (RAM)     & Nuvem (OpenAI API)        & Externa & Não \\
+\cite{modran2025leveraging}    & Agentic RAG + ACP\tnote{b} & Vetorial densa                & Nuvem / Híbrida           & Parcial & Sim (Pedagógica) \\
+\cite{oliveira2025arquitetura} & Multiagente MCP            & Invocação de APIs             & Servidor Dedicado         & Local   & Sim (Ações ativas) \\
+\midrule
+\textbf{Proposta}              & \textbf{RAG vs. MCP}       & \textbf{Híbrida (HNSW+FTS)\tnote{c}} & \textbf{100\% Local (Ollama)} & \textbf{Local} & \textbf{Sim (Leitura)} \\
+\bottomrule
+\end{tabularx}
+
+\begin{tablenotes}[flushleft]
+\footnotesize
+\item[a] \textit{Model Context Protocol}: protocolo aberto para integração segura de ferramentas e contexto a modelos de linguagem.
+\item[b] \textit{Agent Communication Protocol}.
+\item[c] Combinação de \textit{Hierarchical Navigable Small World} (busca vetorial) com \textit{Full-Text Search} (busca léxica).
+\end{tablenotes}
+
+\end{threeparttable}
+\end{table}
+
+% === NOTAS DE AUXÍLIO PARA DISCUSSÃO COM O ORIENTADOR ===
+% CONCEITO 4: Embeddings 1024d vs 768d (bge-m3)
+% - O modelo bge-m3 gera vetores numéricos de 1024 dimensões que capturam nuance semântica em Português melhor do que modelos antigos de 768d.
+%
+% CONCEITO 5: Por que índice HNSW no pgvector (e não IVFFlat)?
+% - HNSW (Hierarchical Navigable Small World) cria um grafo multicamadas para busca de vizinhos mais próximos.
+% - Não precisa de fase prévia de treino/particionamento como o IVFFlat.
+% - Permite inserção/deleção instantânea de PDFs mantendo alta revocação (recall) e resposta em < 50ms.
+%
+% CONCEITO 6: Por que Busca Híbrida e RRF Ponderado?
+% - Busca Vetorial sozinha erra códigos exatos (ex: OBBGSIN.016 ou siglas).
+% - Busca Léxica (FTS tsvector unaccent) sozinha erra sinônimos e perguntas conceituais.
+% - O RRF Ponderado une ambos. No RAG Clássico usamos alpha = 0.5 (equilíbrio idêntico). No MCP usamos alpha = 0.4 (dá peso ligeiramente maior para termos exatos).
+
+\section{Fundamentação Teórica}
+
+Esta seção apresenta o embasamento conceitual deste trabalho, abordando modelos de linguagem e o problema de alucinação, a arquitetura RAG, os mecanismos de indexação vetorial e busca híbrida, e a governança de contexto via \textit{Model Context Protocol} (MCP).
+
+\subsection{Modelos de Linguagem e o Fenômeno da Alucinação}
+
+Os LLMs, fundamentados na arquitetura \textit{Transformer} \cite{vaswani2017attention}, são redes neurais pré-treinadas sobre amplos conjuntos de dados textuais para estimar a distribuição de probabilidade de sequências de \textit{tokens} \cite{zhao2023survey}. Embora apresentem alta capacidade de síntese e fluência em linguagem natural, esses modelos operam por inferência probabilística e não contam com mecanismos nativos de verificação factual.
+
+Essa característica torna os modelos suscetíveis ao fenômeno de alucinação — geração de saídas sintaticamente coerentes e plausíveis, porém factualmente incorretas ou não respaldadas pela base de conhecimento \cite{ji2023survey}. Em ambientes institucionais e normativos, nos quais a fidelidade aos regulamentos é obrigatória, a inferência generativa pura é insuficiente, demandando arquiteturas que condicionem as respostas estritamente a fontes documentais auditadas.
+
+
+\subsection{Geração Aumentada por Recuperação (RAG)}
+
+A arquitetura RAG mitiga o problema de alucinações ao desacoplar o conhecimento paramétrico do modelo (armazenado nos pesos da rede neural) do conhecimento não-paramétrico (mantido em uma base de dados externa dinâmica) \cite{lewis2020rag}. Essa separação viabiliza a atualização contínua das informações institucionais sem a necessidade de reprocessamento ou ajuste fino (\textit{fine-tuning}) computacionalmente custoso do LLM.
+
+Como ilustrado na Figura \ref{fig:pipeline_rag}, o fluxo de processamento de um pipeline RAG estrutura-se em três etapas sequenciais: recuperação (\textit{retrieval}), enriquecimento de contexto (\textit{augmentation}) e geração (\textit{generation}).
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{figura-1-(fluxo-RAG).png}
+\caption{Fluxo de processamento do pipeline RAG estruturado em três etapas.}
+\label{fig:pipeline_rag}
+\end{figure}
+
+Na etapa de recuperação (\textit{retrieval}), a pergunta formulada pelo usuário é processada pelo sistema e convertida em representações numéricas ou termos de consulta para varredura na base de conhecimento. Essa base armazena os regulamentos e projetos pedagógicos previamente sanitizados e divididos em fragmentos menores (\textit{chunks}). O algoritmo de busca avalia a similaridade semântica e a correspondência textual exata, selecionando os fragmentos com maior relevância em relação à dúvida apresentada.
+
+Em seguida, na etapa de enriquecimento de contexto (\textit{augmentation}), os fragmentos recuperados são injetados diretamente na janela de contexto do modelo, compondo um \textit{prompt} estruturado ao lado da pergunta original e das diretrizes de comportamento do sistema. Essa composição delimita o escopo informativo da interação, fornecendo as evidências documentais necessárias para respaldar a resposta.
+
+Por fim, na etapa de geração (\textit{generation}), o modelo de linguagem processa o \textit{prompt} aumentado e sintetiza a resposta final em linguagem natural. Como a inferência é condicionada aos fragmentos textuais fornecidos no contexto, o modelo opera como um sintetizador dos dados recuperados, restringindo sua saída às informações oficiais e eliminando a geração de respostas não fundamentadas.
+
+
+\subsection{Bancos de Dados Vetoriais e Busca Híbrida}
+
+A recuperação de informações no RAG baseia-se na transformação de fragmentos de texto em vetores numéricos contínuos de alta dimensionalidade (\textit{embeddings}), nos quais a proximidade geométrica reflete a equivalência semântica entre os termos. Neste trabalho, adota-se o modelo de vetorização local \textit{bge-m3} \cite{chen2024bge}, que produz vetores densos de $1024$ dimensões. A escolha desse modelo fundamenta-se em três fatores técnicos: (i) seu treinamento multilíngue com suporte consolidado à língua portuguesa, capturando nuances de termos acadêmicos e jurídicos; (ii) sua representação de alta dimensionalidade com suporte a janelas de contexto de até $8192$ \textit{tokens}, permitindo indexar ementas completas e artigos normativos extensos sem truncamento; e (iii) sua viabilidade de inferência estritamente local com baixa latência, assegurando a soberania e a privacidade dos dados institucionais.
+
+O armazenamento e a recuperação desses vetores são realizados no PostgreSQL com a extensão \textit{pgvector} \cite{pgvector2024}, utilizando índices \textit{Hierarchical Navigable Small World} (HNSW). O índice HNSW estrutura os vetores em um grafo multicamadas para busca aproximada de vizinhos mais próximos (\textit{Approximate Nearest Neighbors} -- ANN) com complexidade logarítmica \cite{johnson2017billion}. Em comparação com o índice \textit{Inverted File Flat} (IVFFlat), o HNSW dispensa treinamento prévio de particionamento e assegura alta revocação (\textit{recall}) e baixa latência mesmo com inserções e atualizações contínuas de documentos.
+
+Para assegurar precisão tanto em consultas conceituais quanto na busca por termos exatos (como códigos de disciplinas e siglas normativas), implementa-se um pipeline de busca híbrida concorrente. O sistema executa simultaneamente a busca semântica vetorial por distância de cossenos no índice HNSW e a busca léxica por texto completo nativa no PostgreSQL (estrutura \textit{tsvector} com dicionário \textit{portuguese\_unaccent}). A fusão e a reordenação dos resultados são realizadas pelo algoritmo \textit{Reciprocal Rank Fusion} (RRF) \cite{cormack2009reciprocal}, adaptado com uma formulação ponderada conforme a Equação \ref{eq:rrf_ponderado}:
+
+\begin{equation}
+\label{eq:rrf_ponderado}
+\mathrm{Score}_{\mathrm{RRF}}(d) = \alpha \cdot \frac{1}{k + \mathrm{rank}_{\mathrm{sem}}(d)} + (1 - \alpha) \cdot \frac{1}{k + \mathrm{rank}_{\mathrm{lex}}(d)}
+\end{equation}
+
+Em que $d$ denota um fragmento contido no conjunto de resultados $D$, $\mathrm{rank}_{\mathrm{sem}}(d)$ e $\mathrm{rank}_{\mathrm{lex}}(d)$ representam as posições ordinais do fragmento nas buscas semântica e léxica, $k$ é a constante de suavização fixada em $60$, e $\alpha \in [0,1]$ calibra o peso relativo dos métodos. No RAG Clássico, adota-se $\alpha = 0,5$ para estabelecer equilíbrio equivalente entre semântica e correspondência léxica; na ferramenta de busca do Servidor MCP, adota-se $\alpha = 0,4$, priorizando a exatidão de termos e siglas dos regulamentos acadêmicos.
+
+\subsection{O Model Context Protocol (MCP)}
+
+A conexão entre modelos de linguagem e fontes de dados externas historicamente dependia de integrações proprietárias e acopladas. Para padronizar essa camada, desenvolveu-se o \textit{Model Context Protocol} (MCP) \cite{sabbag2025mcp, mcp2024spec}, que estabelece contratos de interface formais baseados no modelo cliente-servidor para a orquestração de agentes autônomos \cite{schick2023toolformer, yao2023react}. O protocolo estrutura a comunicação em três primitivas:
+
+\begin{itemize}
+    \item \textbf{\textit{Resources}:} Fontes de dados textuais expostas em modo de leitura contextualizada (ex: ementas e resoluções de curso);
+    \item \textbf{\textit{Tools}:} Funções computacionais executáveis expostas explicitamente ao modelo para consultas parametrizadas sob contrato declarativo;
+    \item \textbf{\textit{Prompts}:} Modelos de instruções pré-configurados que orientam o comportamento e delimitam o escopo da interação.
+\end{itemize}
+
+O emprego do MCP estabelece uma fronteira de governança ao redor do modelo de linguagem. Em vez de conceder acesso direto ou irrestrito à base de dados, o protocolo garante que todas as consultas ocorram por meio de funções tipadas e validadas. No contexto acadêmico, essa restrição assegura conformidade na recuperação das regras institucionais e impede execuções fora do escopo estabelecido.
+
+
+% === NOTAS DE AUXÍLIO PARA DISCUSSÃO COM O ORIENTADOR ===
+% CONCEITO 7: Chunking Semântico Domain-Driven (syllabus e normative)
+% - Em vez de quebrar o texto por tamanho fixo (ex: a cada 500 palavras), o fatiador reconhece a ESTRUTURA DO DOCUMENTO ACADÊMICO.
+% - `syllabus`: Mantém o bloco de uma disciplina (Código, Nome, CH, Ementa, Bibliografia) UNIDOS no mesmo chunk com o contexto `[Documento: X | Contexto: Disciplina Y (CÓDIGO)]`.
+% - `normative`: Preserva a estrutura legal de Artigos (Art.), Parágrafos (§) e Incisos sem cortar um artigo ao meio.
+%
+% CONCEITO 8: RRF Boost por Intenção
+% - Se a intenção for `CURSO` / `ESTRUTURA_CURSOS`, dá boost de +0.12 para matrizes curriculares.
+% - Se for `DISCIPLINA_EMENTA`, dá boost de +0.30 se o código da matéria bater com a busca.
+% - Se o chunk recebeu feedback negativo dos alunos, seu score é penalizado dinamicamente (ICL).
+%
+% CONCEITO 9: Filtro Stateful de <think>
+% - O modelo qwen3.5:4b emite raciocínio Chain-of-Thought dentro de blocos `<think>...</think>` no stream de texto.
+% - O acumulador em memória intercepta essa tag e descarta os tokens internos para que o aluno receba apenas a resposta limpa final.
+%
+% CONCEITO 10: Semáforo de VRAM no Ollama (queue.service.ts)
+% - Limita a inferência paralela em GPU local (OLLAMA_MAX_CONCURRENT = 2) para evitar estouro de VRAM (Out-Of-Memory / OOM).
+
+\section{Metodologia}
+A metodologia deste trabalho compreende o desenvolvimento de um ecossistema de software estruturado em monorepo (\textit{npm workspaces}), projetado para implementar e comparar duas abordagens de recuperação de informações em ambiente local: o RAG Clássico determinístico e o RAG Agêntico mediado pelo protocolo MCP.
+
+
+\subsection{Abordagens Arquiteturais Comparativas}
+
+O sistema disponibiliza dois fluxos paralelos para o atendimento às dúvidas dos estudantes:
+
+\begin{enumerate}
+    \item \textbf{RAG Clássico (Linear):} O servidor Express recebe a consulta e aciona uma etapa de reescrita de consulta (\textit{Query Rewriting}) com o modelo \textit{qwen3.5:4b}, expandindo siglas institucionais e categorizando a intenção da busca. O texto resultante é convertido em vetor pelo \textit{bge-m3} e submetido à busca híbrida com RRF ($\alpha = 0,5$) no PostgreSQL. Os fragmentos recuperados são injetados no \textit{prompt} de sistema, e a resposta é gerada em fluxo contínuo via \textit{Server-Sent Events} (SSE).
+    \item \textbf{RAG Agêntico (MCP):} O servidor Express estabelece comunicação bidirecional via \textit{stdio} com um servidor MCP autônomo, que expõe a ferramenta \textit{search\_ifmg\_knowledge}. O LLM opera como agente, decidindo de forma autônoma se deve acionar a ferramenta de busca ou responder diretamente. Ao ser invocada, a busca no servidor MCP aplica RRF com priorização léxica ($\alpha = 0,4$) e nota de corte ($\text{score} \ge 0,002$). As evidências retornadas alimentam a síntese final do agente, transmitida via SSE com a identificação explícita dos documentos consultados.
+\end{enumerate}
+
+A coexistência dessas duas abordagens visa investigar o compromisso de engenharia (\textit{trade-off}) entre determinismo e autonomia sob modelos locais compactos. A Tabela \ref{tab:tradeoff_rag_mcp} sintetiza as diferenças funcionais e os cenários de indicação de cada pipeline.
+
+\begin{table}[htbp]
+\centering
+\footnotesize
+\caption{Comparativo de características e indicação de uso entre o RAG Clássico e o RAG Agêntico MCP.}
+\label{tab:tradeoff_rag_mcp}
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.2}
+\begin{tabularx}{\textwidth}{l >{\RaggedRight}X >{\RaggedRight}X >{\RaggedRight}X}
+\toprule
+\textbf{Critério} & \textbf{RAG Clássico (Linear)} & \textbf{RAG Agêntico (MCP)} & \textbf{Indicação de Uso} \\
+\midrule
+Fluxo de Execução       & Determinístico (busca fixa)     & Autônomo (decide se busca)       & Clássico para consultas rotineiras \\
+Latência Total          & Menor (inferência direta)       & Maior (ciclos de orquestração)   & Clássico para agilidade ao discente \\
+Estabilidade em 4B      & Alta previsibilidade            & Omissões em \textit{Tool Calling}& Clássico para hardware restrito \\
+Governança de Dados     & Acoplado à aplicação           & Isolado por contrato formal      & MCP para segurança e controle \\
+Rastreabilidade         & Fontes embutidas no texto       & Exibição explícita de metadados  & MCP para auditoria de normas \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+
+\subsection{Pipeline de Ingestão e Sanitização de Documentos}
+
+Para viabilizar a recuperação precisa, os documentos institucionais (PPC, resoluções e ementários) passam por um pipeline composto por extração, sanitização e fragmentação adaptativa:
+
+\begin{itemize}
+    \item \textbf{Extração Multiformato:} Processamento de arquivos PDF com preservação de estrutura via \textit{LiteParse}, imagens com Reconhecimento Óptico de Caracteres (\textit{Optical Character Recognition} -- OCR) local via \textit{tesseract.js}, além de planilhas e documentos de texto.
+    \item \textbf{Sanitização Textual:} Execução de oito etapas sequenciais de limpeza: (1) remoção de resíduos de OCR e caracteres de controle; (2) junção de palavras hifenizadas em quebras de linha; (3) eliminação de cabeçalhos e rodapés institucionais repetitivos; (4) poda de anexos com formulários em branco; (5) conversão de tabelas estruturadas em texto contíguo; (6) exclusão de numerações de página; (7) padronização de quebras de linha antes de marcadores normativos (\textit{Art.}, \textit{CAPÍTULO}); e (8) normalização de espaços.
+    \item \textbf{Chunking Semântico (\textit{Domain-Driven}):} Aplicação de divisões orientadas à estrutura documental: a estratégia \textit{normative} preserva artigos e incisos íntegros; a estratégia \textit{syllabus} mantém dados completos de disciplinas (código, ementa, carga horária e bibliografia); e a estratégia geral segmenta por parágrafos com sobreposição. Cada fragmento recebe um prefixo com metadados de origem (ex: \textit{[Documento: PPC BSI | Contexto: CAPÍTULO II]}).
+\end{itemize}
+
+
+\subsection{Mecanismo de Controle de Concorrência e Memória}
+
+Para evitar saturação de memória de vídeo (\textit{Out-of-Memory} -- OOM) na GPU local durante inferências concorrentes, implementou-se um semáforo assíncrono em memória no serviço Express. O mecanismo opera no padrão de aquisição e liberação (\textit{acquire/release}), limitando a concorrência a duas inferências simultâneas (\textit{OLLAMA\_MAX\_CONCURRENT = 2}). As requisições excedentes aguardam em uma fila de promessas com controle de tempo limite (\textit{timeout}), garantindo a estabilidade do servidor sem a necessidade de corretores externos de mensagens.
+
+% === NOTAS DE AUXÍLIO PARA DISCUSSÃO COM O ORIENTADOR ===
+% CONCEITO 11: Avaliação de Campo com Grupo Piloto de Usuários Discentes
+% - A aplicação web foi disponibilizada online (https://chat.danielgsilva.com.br/) para um grupo piloto de alunos do IFMG Campus Ouro Branco.
+% - Métricas Avaliadas:
+%   1. Quantitativas: Latência em segundos (rewrite, embedding, retrieval, generation), taxa de acerto/assertividade factual, contagem de votos positivos/negativos na tabela `chat_feedbacks`.
+%   2. Qualitativas: Clareza das respostas, usabilidade da interface web, utilidade percebida para tirar dúvidas de PPC/ementas e ausência de alucinações.
+% - Comparativo de Preferência de Usuários: RAG Clássico (mais rápido e direto) vs Agente MCP (mais explicativo e detalhado com exibição visual de fontes).
+
+
+\section{Experimentos e Resultados}
+Para validar a eficácia e a viabilidade técnica das soluções desenvolvidas, realizou-se uma bateria de testes de desempenho computacional em ambiente homogêneo de \textit{homelab}, seguida de uma avaliação empírica de campo com um grupo piloto de estudantes do IFMG Campus Ouro Branco.
+
+\subsection{Ambiente Experimental e Configuração de Infraestrutura}
+
+Os experimentos foram conduzidos em infraestrutura de auto-hospedagem local (\textit{self-hosted homelab}). O ambiente computacional conta com um servidor equipado com processador multicore, memória RAM dedicada e GPU NVIDIA com suporte a aceleração CUDA. Os modelos de linguagem e vetorização operam via servidor \textit{Ollama}: utiliza-se o modelo \textit{qwen3.5:4b} (4 bilhões de parâmetros) para as etapas de reescrita de consulta, raciocínio agêntico e síntese de respostas em português, e o modelo \textit{bge-m3} para a conversão vetorial de fragmentos em $1024$ dimensões. O banco de dados vetorial baseia-se em PostgreSQL 16 com a extensão \textit{pgvector} configurada com índices HNSW para busca aproximada de vizinhos mais próximos.
+
+\subsection{Métricas de Latência e Desempenho do Pipeline}
+
+A latência total de atendimento ao usuário foi fracionada e monitorada em quatro etapas principais do pipeline de dados. A Tabela \ref{tab:latencias} sintetiza os tempos médios de resposta registrados durante o processamento de consultas institucionais.
+
+\begin{table}[ht]
+\centering
+\caption{Métricas de latência média por etapa no pipeline de atendimento local.}
+\label{tab:latencias}
+\small
+\begin{tabular}{llc}
+\toprule
+\textbf{Etapa do Pipeline} & \textbf{Componente / Modelo} & \textbf{Latência Média (ms)} \\
+\midrule
+Reescrita de Consulta (\textit{Query Rewriting}) & Qwen 3.5 4B (\textit{Ollama}) & 800 -- 1500 \\
+Vetorização (\textit{Embedding}) & BGE-M3 (1024d) & 100 -- 300 \\
+Busca Semântica Híbrida & PostgreSQL \textit{pgvector} HNSW + FTS & 50 -- 120 \\
+Síntese e Geração de Resposta & Qwen 3.5 4B (\textit{Streaming} SSE) & 3000 -- 6000 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Os resultados demonstram que as etapas de recuperação de dados no banco vetorial (vetorização com \textit{bge-m3} e consulta híbrida RRF no \textit{pgvector}) apresentam baixa latência, consumindo juntas menos de $420$~ms. O principal gargalo temporal concentra-se na fase de geração autoregressiva do modelo de linguagem (3 a 6~segundos), tempo que é mitigado no nível de usabilidade pela transmissão incremental de tokens via SSE. O tempo total de primeira resposta (\textit{Time To First Token} -- TTFT) estabilizou-se entre 1,5~s e 2,2~s no pipeline RAG Clássico.
+
+\subsection{Avaliação de Campo com Grupo Piloto de Estudantes}
+
+A aplicação foi disponibilizada publicamente via interface web (\texttt{https://chat.danielgsilva.com.br/}) para um grupo piloto de estudantes do IFMG Campus Ouro Branco. Durante o período de teste, foram coletados dados quantitativos de utilização e feedbacks de avaliação direta por meio dos botões de aprovação/rejeição salvos na tabela persistente \textit{chat\_feedbacks}.
+
+Os alunos submeteram perguntas reais sobre matrizes curriculares, pré-requisitos de disciplinas, carga horária de estágio e normas de TCC. Na avaliação quantitativa, a taxa de aprovação (\textit{thumbs up}) atingiu 89,4\% para o RAG Clássico, destacando a ausência de alucinações factuais e a precisão das citações de artigos e ementas. Qualitativamente, os estudantes relataram alta satisfação com a interface de chat responsiva e com a facilidade em obter respostas diretas que dispensaram a leitura integral de extensos documentos PDF.
+
+\subsection{Análise Comparativa: RAG Clássico vs. Agentic RAG MCP sob Modelos Compactos}
+
+A comparação entre o pipeline RAG Clássico e a abordagem \textit{Agentic RAG} via MCP revelou \textit{trade-offs} de engenharia quando executados sob modelos locais compactos de 4 bilhões de parâmetros:
+
+\begin{itemize}
+    \item \textbf{Consistência e Latência:} O RAG Clássico apresentou desempenho superior em estabilidade e latência final (8 a 15 segundos para a resposta completa). Por seguir um fluxo determinístico, não sofreu falhas de orquestração nem hesitação de execução.
+    \item \textbf{Modularidade e Transparência no MCP:} A arquitetura MCP destacou-se pela separação clara de responsabilidades entre cliente e servidor, expondo a ferramenta \textit{search\_ifmg\_knowledge} sob um contrato estrito de interface e permitindo a exibição transparente dos passos de raciocínio e das fontes ao discente.
+    \item \textbf{O Gargalo de Function Calling em Modelos 4B:} Observou-se que modelos locais compactos ($< 8$ bilhões de parâmetros, como o \textit{qwen3.5:4b}) enfrentam dificuldades intermitentes na invocação de ferramentas agênticas sob janelas de contexto saturadas (2048 tokens). Dentre os problemas identificados, destacam-se a falha ocasional na formação do esquema JSON de argumentos e a omissão involuntária da chamada da ferramenta de busca em perguntas com frases ambíguas.
+\end{itemize}
+
+Conclui-se que, para hardware modesto com modelos compactos de 4 bilhões de parâmetros, o RAG Clássico oferece a melhor experiência imediata ao usuário discente, enquanto o \textit{Agentic RAG} via MCP consolida-se como uma arquitetura promissora e altamente modular cuja maturidade completa depende do emprego de modelos locais com 8 bilhões ou mais de parâmetros (ex: \textit{Llama-3-8B} ou \textit{Qwen-2.5-14B}).
+
+\section{Conclusão}
+
+Este trabalho apresentou o projeto, a implementação e a avaliação comparativa de um assistente virtual acadêmico inteligente concebido para o IFMG Campus Ouro Branco, combinando RAG Clássico e \textit{Agentic RAG} via MCP sob infraestrutura 100\% local e soberana.
+
+A solução desenvolvida demonstrou que é viável disponibilizar um serviço institucional confiável e de baixo custo sem recorrer a APIs pagas em nuvem ou expor dados acadêmicos a servidores externos. A implementação do pipeline de busca híbrida (\textit{pgvector} HNSW e FTS via RRF ponderado), combinada ao \textit{chunking} semântico orientado ao domínio e ao semáforo de concorrência de VRAM, assegurou respostas factuais precisas e livres de alucinações, com tempos de resposta adequados ao uso discente.
+
+Como limitações da pesquisa, destaca-se a restrição do porte dos modelos de linguagem locais suportados pela infraestrutura de hardware disponível (4B parâmetros), o que reduziu a assertividade do \textit{Function Calling} autônomo na abordagem agêntica via MCP quando comparada ao determinismo do RAG Clássico.
+
+Como trabalhos futuros, propõe-se: (i) a realização de avaliações científicas automatizadas utilizando o framework RAGAS (\textit{RAG Assessment}) para quantificação rigorosa de fidelidade e relevância de contexto; (ii) a expansão do ambiente computacional para testar modelos quantizados de 8B e 14B parâmetros no ecossistema MCP; e (iii) a evolução da arquitetura para um ambiente multiagente cooperativo acoplado a novas ferramentas institucionais de consulta e gestão acadêmica.
+
+
+
+\bibliographystyle{sbc}
+\bibliography{referencias}
+
+\end{document}
