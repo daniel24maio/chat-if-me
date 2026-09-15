@@ -7,7 +7,9 @@
 
 \usepackage{sbc-template}
 \usepackage{graphicx,url}
+\usepackage[T1]{fontenc}
 \usepackage[utf8]{inputenc}
+\usepackage[english,brazil]{babel}
 \usepackage[normalem]{ulem}
 \usepackage{xcolor}
 \usepackage{booktabs}
@@ -89,46 +91,31 @@ A aplicação de modelos de linguagem para esclarecer dúvidas acadêmicas tamb�
 No uso de agentes de IA na educação, \cite{modran2025leveraging} propôs uma arquitetura que integra RAG, o MCP e o \textit{Agent Communication Protocol} (ACP). Este estudo teve como foco a tutoria adaptativa, empregando o MCP para acompanhar o perfil do aluno e ajustar o nível pedagógico das respostas. Enquanto em \cite{modran2025leveraging} o protocolo modula a complexidade do conteúdo didático, nesta pesquisa o MCP atua como camada de segurança e controle de dados. O objetivo é assegurar que o agente consulte apenas regulamentos oficiais e auditados, evitando respostas incorretas ou inventadas.
 
 O emprego do MCP como padrão de comunicação e controle de sistemas também foi explorado em \cite{oliveira2025arquitetura} para a gerência automatizada de servidores em nuvem OpenStack. Esse estudo demonstrou a eficácia do protocolo para expor ferramentas e dados a modelos generativos por meio de contratos formais de interface. Contudo, o modo de operação é diferente: enquanto em \cite{oliveira2025arquitetura} os agentes executam ações ativas que modificam o ambiente (como criar e apagar servidores virtuais), o assistente desenvolvido neste trabalho opera estritamente em modo de leitura. Essa restrição funciona como barreira de proteção, garantindo que o agente apenas consulte informações institucionais sem risco de modificações indevidas.
-
-A Tabela \ref{tab:trabalhos_relacionados} resume a comparação entre as soluções da literatura e a proposta desenvolvida neste trabalho, destacando as diferenças em termos de abordagem, mecanismo de busca, infraestrutura, privacidade e governança.
+A análise conjunta dos trabalhos correlatos revela que as soluções existentes para suporte discente ou dependem de fluxos manuais rígidos \cite{monteiro2021helena}, ou utilizam modelos proprietários em nuvem que inviabilizam a privacidade institucional e demandam custos recorrentes por requisição \cite{barbosa2023chatbot}. Por outro lado, as iniciativas que utilizam protocolos agênticos concentram-se em objetivos didáticos \cite{modran2025leveraging} ou realizam operações ativas de infraestrutura com comandos potencialmente destrutivos \cite{oliveira2025arquitetura}. A Tabela \ref{tab:trabalhos_relacionados} sintetiza esse comparativo, evidenciando as limitações identificadas na literatura e o contraponto adotado na presente proposta: a integração de busca híbrida com governança de leitura via MCP sob infraestrutura estritamente local.
 
 \begin{table}[htbp]
 \centering
 \footnotesize
-\begin{threeparttable}
-\caption{Quadro comparativo entre os trabalhos correlatos e a proposta desenvolvida.}
+\caption{Síntese dos trabalhos correlatos, limitações identificadas e contraponto da proposta.}
 \label{tab:trabalhos_relacionados}
-\setlength{\tabcolsep}{4.75pt}
-\renewcommand{\arraystretch}{1.25}
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.3}
 
 \begin{tabularx}{\textwidth}{
+  >{\RaggedRight\hsize=0.60\hsize}X
   >{\RaggedRight\hsize=0.95\hsize}X
-  >{\RaggedRight\hsize=1.05\hsize}X
-  >{\RaggedRight\hsize=1.05\hsize}X
-  >{\RaggedRight\hsize=1.10\hsize}X
-  >{\centering\arraybackslash\hsize=0.75\hsize}X
-  >{\RaggedRight\hsize=1.05\hsize}X
+  >{\RaggedRight\hsize=1.20\hsize}X
+  >{\RaggedRight\arraybackslash\hsize=1.25\hsize}X
 }
 \toprule
-\textbf{Trabalho} & \textbf{Abordagem} & \textbf{Mecanismo de Busca} & \textbf{Infraestrutura} & \textbf{Privacidade} & \textbf{Governança MCP\tnote{a}} \\
+\textbf{Trabalho} & \textbf{Foco e Abordagem} & \textbf{Limitação Identificada} & \textbf{Contraponto da Proposta} \\
 \midrule
-\cite{monteiro2021helena}      & PLN por Regras             & Árvores estáticas             & Nuvem (IBM Watson)        & Externa & Não \\
-\cite{barbosa2023chatbot}      & RAG Linear (Comercial)     & Vetorial em memória (RAM)     & Nuvem (OpenAI API)        & Externa & Não \\
-\cite{modran2025leveraging}    & Agentic RAG + ACP\tnote{b} & Vetorial densa                & Nuvem / Híbrida           & Parcial & Sim (Pedagógica) \\
-\cite{oliveira2025arquitetura} & Multiagente MCP            & Invocação de APIs             & Servidor Dedicado         & Local   & Sim (Ações ativas) \\
-\midrule
-\textbf{Proposta}              & \textbf{RAG vs. MCP}       & \textbf{Híbrida (HNSW+FTS)\tnote{c}} & \textbf{100\% Local (Ollama)} & \textbf{Local} & \textbf{Sim (Leitura)} \\
+\cite{monteiro2021helena}      & Atendimento discente (PLN tradicional)     & Mapeamento manual de intenções e fluxos de diálogo rígidos. & Extração dinâmica via RAG sobre regulamentos institucionais vigentes. \\
+\cite{barbosa2023chatbot}      & Atendimento discente (RAG linear)          & Custos por requisição em API externa e busca em memória (RAM). & Execução 100\% local (Ollama) com busca híbrida persistente em banco. \\
+\cite{modran2025leveraging}    & Tutoria adaptativa (RAG e ACP)             & Foco em modulação pedagógica, sem controle de fidelidade normativa. & MCP empregado como camada de governança estrita e restrição de alucinações. \\
+\cite{oliveira2025arquitetura} & Gestão de nuvem (Multiagente MCP)          & Agentes com permissões ativas de modificação do ambiente. & Operação restrita a consultas somente leitura sobre normas oficiais. \\
 \bottomrule
 \end{tabularx}
-
-\begin{tablenotes}[flushleft]
-\footnotesize
-\item[a] \textit{Model Context Protocol}: protocolo aberto para integração segura de ferramentas e contexto a modelos de linguagem.
-\item[b] \textit{Agent Communication Protocol}.
-\item[c] Combinação de \textit{Hierarchical Navigable Small World} (busca vetorial) com \textit{Full-Text Search} (busca léxica).
-\end{tablenotes}
-
-\end{threeparttable}
 \end{table}
 
 % === NOTAS DE AUXÍLIO PARA DISCUSSÃO COM O ORIENTADOR ===
