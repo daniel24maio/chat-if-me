@@ -28437,37 +28437,105 @@ Sua resposta deve basear-se ESTRITAMENTE nos trechos de documentos retornados pe
     const errorText = await streamResponse.text();
     throw new Error(`[Ollama S\xEDntese] Erro ${streamResponse.status}: ${errorText}`);
   }
-  let fullResponse = "";
+  if (!streamResponse.body) {
+    throw new Error("[Ollama Stream] Corpo da resposta vazio");
+  }
+  const reader = streamResponse.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let fullText = "";
+  let fullThought = "";
+  let generatedTokens = false;
   try {
-    fullResponse = await streamOllamaResponse(
-      streamResponse,
-      res,
-      () => {
-      },
-      (cleaned) => {
-        fullResponse = cleaned;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done)
+        break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed)
+          continue;
+        try {
+          const chunk = JSON.parse(trimmed);
+          const thoughtToken = chunk.message?.thinking || chunk.message?.reasoning_content;
+          if (thoughtToken) {
+            fullThought += thoughtToken;
+            res.write(`data: ${JSON.stringify({ type: "thought", content: thoughtToken })}
+
+`);
+          }
+          const textToken = chunk.message?.content;
+          if (textToken) {
+            if (textToken.trim() === "<think>" || textToken.trim() === "</think>")
+              continue;
+            generatedTokens = true;
+            fullText += textToken;
+            res.write(
+              `data: ${JSON.stringify({ type: "token", content: textToken })}
+
+`
+            );
+          }
+          if (chunk.done) {
+            console.log("\u{1F916} [Agente Beta] Gera\xE7\xE3o conclu\xEDda pelo Ollama");
+          }
+        } catch {
+        }
       }
-    );
-  } catch (streamError) {
-    console.error("\u274C [Agente Beta] Erro durante o stream da resposta:", streamError);
-    if (!res.writableEnded) {
+    }
+    if (buffer.trim()) {
+      try {
+        const chunk = JSON.parse(buffer.trim());
+        const thoughtToken = chunk.message?.thinking || chunk.message?.reasoning_content;
+        if (thoughtToken) {
+          fullThought += thoughtToken;
+          res.write(`data: ${JSON.stringify({ type: "thought", content: thoughtToken })}
+
+`);
+        }
+        const textToken = chunk.message?.content;
+        if (textToken && textToken.trim() !== "<think>" && textToken.trim() !== "</think>") {
+          generatedTokens = true;
+          fullText += textToken;
+          res.write(
+            `data: ${JSON.stringify({ type: "token", content: textToken })}
+
+`
+          );
+        }
+      } catch {
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  if (!generatedTokens) {
+    const extractedResponse = extractDraftFromThinking(fullThought);
+    if (extractedResponse) {
+      console.log("\u{1F4A1} [Agente Beta] Extraindo resposta rascunhada do canal de thinking...");
+      generatedTokens = true;
+      fullText = extractedResponse;
+      res.write(`data: ${JSON.stringify({ type: "token", content: extractedResponse })}
+
+`);
+    } else {
+      console.warn("\u26A0\uFE0F [Agente Beta] Resposta vazia no streaming. Enviando fallback.");
+      const fallbackMsg = "N\xE3o encontrei essa informa\xE7\xE3o nos documentos dispon\xEDveis. Recomendo consultar a coordena\xE7\xE3o do curso ou acessar o portal do IFMG.";
       res.write(
-        `data: ${JSON.stringify({
-          type: "error",
-          message: "Ocorreu uma instabilidade na transmiss\xE3o da resposta."
-        })}
+        `data: ${JSON.stringify({ type: "token", content: fallbackMsg })}
 
 `
       );
-      res.write(`data: [DONE]
+    }
+  }
+  res.write(`data: [DONE]
 
 `);
-    }
-    return;
-  }
-  fullResponse = extractDraftFromThinking(fullResponse);
-  if (session && fullResponse) {
-    updateSession(session.sessionId, question, "", fullResponse);
+  if (session && fullText) {
+    updateSession(session.sessionId, question, "", fullText);
   }
   const duration2 = ((Date.now() - start) / 1e3).toFixed(1);
   console.log(`\u23F1\uFE0F  [Agente Beta] Pipeline conclu\xEDdo com sucesso em ${duration2}s

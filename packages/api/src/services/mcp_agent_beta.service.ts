@@ -12,10 +12,8 @@ import {
   STATIC_GREETING_RESPONSE,
 } from "./fast_path.util.js";
 import {
-  streamOllamaResponse,
   extractDraftFromThinking,
   generateOllamaEmbedding,
-  type OllamaChatMessage,
 } from "../config/ollama.js";
 import { getPositiveExamples, type FewShotExample } from "./feedback.service.js";
 import { getMCPClient, getMCPBetaTools } from "./mcp_agent.service.js";
@@ -389,37 +387,116 @@ Sua resposta deve basear-se ESTRITAMENTE nos trechos de documentos retornados pe
     throw new Error(`[Ollama Síntese] Erro ${streamResponse.status}: ${errorText}`);
   }
 
-  // Envia os tokens via SSE
-  let fullResponse = "";
-  try {
-    fullResponse = await streamOllamaResponse(
-      streamResponse,
-      res,
-      () => {},
-      (cleaned) => {
-        fullResponse = cleaned;
-      }
-    );
-  } catch (streamError) {
-    console.error("❌ [Agente Beta] Erro durante o stream da resposta:", streamError);
-    if (!res.writableEnded) {
-      res.write(
-        `data: ${JSON.stringify({
-          type: "error",
-          message: "Ocorreu uma instabilidade na transmissão da resposta.",
-        })}\n\n`
-      );
-      res.write(`data: [DONE]\n\n`);
-    }
-    return;
+  if (!streamResponse.body) {
+    throw new Error("[Ollama Stream] Corpo da resposta vazio");
   }
 
-  // Limpeza de raciocínio residual se necessário
-  fullResponse = extractDraftFromThinking(fullResponse);
+  // Lê o stream NDJSON e faz pipe para SSE
+  const reader = streamResponse.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let fullText = "";
+  let fullThought = "";
+  let generatedTokens = false;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+
+        try {
+          const chunk = JSON.parse(trimmed) as {
+            message?: { content?: string; thinking?: string; reasoning_content?: string };
+            done?: boolean;
+          };
+
+          // 1. Canal de raciocínio / thinking
+          const thoughtToken = chunk.message?.thinking || chunk.message?.reasoning_content;
+          if (thoughtToken) {
+            fullThought += thoughtToken;
+            res.write(`data: ${JSON.stringify({ type: "thought", content: thoughtToken })}\n\n`);
+          }
+
+          // 2. Envia apenas o conteúdo final da resposta
+          const textToken = chunk.message?.content;
+          if (textToken) {
+            if (textToken.trim() === "<think>" || textToken.trim() === "</think>") continue;
+            generatedTokens = true;
+            fullText += textToken;
+            res.write(
+              `data: ${JSON.stringify({ type: "token", content: textToken })}\n\n`
+            );
+          }
+
+          if (chunk.done) {
+            console.log("🤖 [Agente Beta] Geração concluída pelo Ollama");
+          }
+        } catch {
+          // Ignora linhas não-JSON
+        }
+      }
+    }
+
+    // Processa resto do buffer
+    if (buffer.trim()) {
+      try {
+        const chunk = JSON.parse(buffer.trim()) as {
+          message?: { content?: string; thinking?: string; reasoning_content?: string };
+        };
+        const thoughtToken = chunk.message?.thinking || chunk.message?.reasoning_content;
+        if (thoughtToken) {
+          fullThought += thoughtToken;
+          res.write(`data: ${JSON.stringify({ type: "thought", content: thoughtToken })}\n\n`);
+        }
+
+        const textToken = chunk.message?.content;
+        if (textToken && textToken.trim() !== "<think>" && textToken.trim() !== "</think>") {
+          generatedTokens = true;
+          fullText += textToken;
+          res.write(
+            `data: ${JSON.stringify({ type: "token", content: textToken })}\n\n`
+          );
+        }
+      } catch {
+        // Ignora
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  // Se nenhum token de conteúdo foi gerado, mas houve pensamento
+  if (!generatedTokens) {
+    const extractedResponse = extractDraftFromThinking(fullThought);
+
+    if (extractedResponse) {
+      console.log("💡 [Agente Beta] Extraindo resposta rascunhada do canal de thinking...");
+      generatedTokens = true;
+      fullText = extractedResponse;
+      res.write(`data: ${JSON.stringify({ type: "token", content: extractedResponse })}\n\n`);
+    } else {
+      console.warn("⚠️ [Agente Beta] Resposta vazia no streaming. Enviando fallback.");
+      const fallbackMsg = "Não encontrei essa informação nos documentos disponíveis. Recomendo consultar a coordenação do curso ou acessar o portal do IFMG.";
+      res.write(
+        `data: ${JSON.stringify({ type: "token", content: fallbackMsg })}\n\n`
+      );
+    }
+  }
+
+  // Sinaliza fim do stream
+  res.write(`data: [DONE]\n\n`);
 
   // Atualiza memória
-  if (session && fullResponse) {
-    updateSession(session.sessionId, question, "", fullResponse);
+  if (session && fullText) {
+    updateSession(session.sessionId, question, "", fullText);
   }
 
   const duration = ((Date.now() - start) / 1000).toFixed(1);

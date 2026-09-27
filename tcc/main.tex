@@ -73,7 +73,8 @@ Do ponto de vista tecnológico, a extração automatizada de informações a par
 
 Diversos esforços na literatura buscaram automatizar o atendimento discente por meio de assistentes virtuais baseados em Processamento de Linguagem Natural (PLN) tradicional \cite{monteiro2021helena} ou em arquiteturas de Geração Aumentada por Recuperação (\textit{Retrieval-Augmented Generation} -- RAG) alimentadas por Interfaces de Programação de Aplicação (\textit{Application Programming Interfaces} -- APIs) comerciais em nuvem \cite{barbosa2023chatbot}. Contudo, essas abordagens anteriores enfrentam limitações relevantes: enquanto os motores de PLN tradicionais exigem o mapeamento manual e rígido de intenções e fluxos de diálogo, as soluções baseadas em APIs proprietárias dependem de custos recorrentes por requisição e comprometem a privacidade de dados institucionais ao processá-los em servidores externos. Ademais, observa-se uma lacuna no uso de protocolos abertos de governança de contexto, como o \textit{Model Context Protocol} (MCP) \cite{sabbag2025mcp}, que permitam delimitar de forma estrita o raio de atuação de agentes autônomos locais sobre resoluções normativas complexas. Assim, persiste a necessidade de investigações que combinem a execução 100\% local de modelos open-source com a busca híbrida otimizada e o controle de contexto via MCP sob hardware computacional restrito.
 
-Com o objetivo de superar as limitações identificadas na literatura, a proposta deste trabalho consiste no desenvolvimento e na avaliação comparativa de um assistente virtual acadêmico baseado na arquitetura RAG, operando sob infraestrutura estritamente local e de código aberto. O sistema contrapõe duas abordagens de recuperação informacional sobre o ecossistema normativo institucional: um pipeline de RAG Clássico determinístico e uma arquitetura agêntica governada pelo MCP. Ao condicionar a geração probabilística de modelos de linguagem locais à extração de evidências fidedignas dos regulamentos vigentes, a solução visa conferir autonomia de consulta aos discentes, reduzir a demanda por atendimentos informativos de rotina nos setores administrativos e garantir a auditabilidade estrita das normas acadêmicas informadas. \ederson{Resultados virão aqui.}
+Com o objetivo de superar as limitações identificadas na literatura, a proposta deste trabalho consiste no desenvolvimento e na avaliação comparativa de um assistente virtual acadêmico baseado na arquitetura RAG, operando sob infraestrutura estritamente local e de código aberto. O sistema contrapõe duas abordagens de recuperação informacional sobre o ecossistema normativo institucional: um pipeline de RAG Clássico determinístico e uma arquitetura agêntica governada pelo MCP. Ao condicionar a geração probabilística de modelos de linguagem locais à extração de evidências fidedignas dos regulamentos vigentes, a solução visa conferir autonomia de consulta aos discentes, reduzir a demanda por atendimentos informativos de rotina nos setores administrativos e garantir a auditabilidade estrita das normas acadêmicas informadas.
+%\ederson{Resultados virão aqui.}
 
 
 % === NOTAS DE AUXÍLIO PARA DISCUSSÃO COM O ORIENTADOR ===
@@ -93,7 +94,6 @@ No uso de agentes de inteligência artificial na educação, \cite{modran2025lev
 O emprego do MCP como padrão de comunicação e controle de sistemas também foi explorado em \cite{oliveira2025arquitetura} para a gerência automatizada de servidores em nuvem OpenStack. Esse estudo demonstrou a eficácia do protocolo para expor ferramentas e dados a modelos generativos por meio de contratos formais de interface. Contudo, o modo de operação é diferente: enquanto em \cite{oliveira2025arquitetura} os agentes executam ações ativas que modificam o ambiente (como criar e apagar servidores virtuais), o assistente desenvolvido neste trabalho opera estritamente em modo de leitura. Essa restrição funciona como barreira de proteção, garantindo que o agente apenas consulte informações institucionais sem risco de modificações indevidas.
 
 A análise conjunta dos trabalhos correlatos revela que as soluções existentes para suporte discente ou dependem de fluxos manuais rígidos \cite{monteiro2021helena}, ou utilizam modelos proprietários em nuvem que inviabilizam a privacidade institucional e demandam custos recorrentes por requisição \cite{barbosa2023chatbot}. Por outro lado, as iniciativas que utilizam protocolos agênticos concentram-se em objetivos didáticos \cite{modran2025leveraging} ou realizam operações ativas de infraestrutura com comandos potencialmente destrutivos \cite{oliveira2025arquitetura}. A Tabela \ref{tab:trabalhos_relacionados} sintetiza esse comparativo, evidenciando as limitações identificadas na literatura e o contraponto adotado na presente proposta: a integração de busca híbrida com governança de leitura via MCP sob infraestrutura estritamente local.
-
 \begin{table}[htbp]
 \centering
 \caption{Síntese dos trabalhos correlatos, limitações identificadas e contraponto da proposta.}
@@ -230,6 +230,7 @@ Rastreabilidade         & Fontes embutidas no texto       & Exibição explícit
 
 \FloatBarrier
 
+
 \subsection{Pipeline de Ingestão e Sanitização de Documentos}
 
 Para viabilizar a recuperação precisa, os documentos institucionais (PPC, resoluções e ementários) passam por um pipeline composto por extração, sanitização e fragmentação adaptativa:
@@ -290,6 +291,7 @@ Síntese e Geração de Resposta & Qwen 3.5 4B (\textit{Streaming} SSE) & 3000 -
 {\small Fonte: Elaborado pelo Próprio Autor.}
 \end{table}
 
+
 Os resultados demonstram que as etapas de recuperação de dados no banco vetorial (vetorização com \textit{bge-m3} e consulta híbrida RRF no \textit{pgvector}) apresentam baixa latência, consumindo juntas menos de $420$~ms. O principal gargalo temporal concentra-se na fase de geração autoregressiva do modelo de linguagem (3 a 6~segundos), tempo que é mitigado no nível de usabilidade pela transmissão incremental de tokens via SSE. O tempo total de primeira resposta (\textit{Time To First Token} -- TTFT) estabilizou-se entre 1,5~s e 2,2~s no pipeline RAG Clássico.
 
 \subsection{Avaliação de Campo com Grupo Piloto Discente}
@@ -312,7 +314,7 @@ Conclui-se que, para hardware modesto com modelos compactos de 4 bilhões de par
 
 \section{Conclusão}
 
-\ederson{A fazer futuramente .}
+%\ederson{A fazer futuramente .}
 
 Este trabalho apresentou o projeto, a implementação e a avaliação comparativa de um assistente virtual acadêmico inteligente concebido para o IFMG Campus Ouro Branco, combinando RAG Clássico e \textit{Agentic RAG} via MCP sob infraestrutura 100\% local e soberana.
 
