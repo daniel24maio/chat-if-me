@@ -21,3 +21,9 @@ As seguintes regras foram definidas pelo orientador e devem ser rigorosamente co
 4. **Definição e Uso de Siglas e Acrônimos**:
    - Definir toda sigla/acrônimo formalmente em sua **primeira aparição** no texto (ex: `Reconhecimento Óptico de Caracteres (\textit{Optical Character Recognition} -- OCR)`).
    - Nas ocorrências posteriores, utilizar apenas a sigla (ex: `OCR`), removendo definições repetidas ou tardias.
+
+5. **Formatação de Tabelas e Ilustrações**:
+   - **Estrutura Topo / Rodapé:** Inserir sempre o `\caption{...}` e `\label{...}` no **topo** (antes da tabela/imagem), seguido de espaçamento de respiro (`\vspace{0.3cm}`). A fonte deve ficar **obrigatoriamente no rodapé** (`\vspace{0.15cm}` seguido de `{\small Fonte: Elaborado pelo Próprio Autor.}`). Nunca colocar a fonte no topo ou entre o caption e a tabela.
+   - **Contextualização Textual:** Toda tabela deve ser introduzida e discutida criticamente no parágrafo adjacente (evitar tabelas soltas com apenas "A Tabela X sintetiza...").
+   - **Largura e Margens:** Utilizar `tabularx` com largura `\textwidth` e colunas `>{\RaggedRight}X` em tabelas com texto descritivo para evitar estouro de margem (`Overfull \hbox`).
+   - **Controle de Vazamento:** Utilizar `\FloatBarrier` (pacote `placeins`) antes de novas subseções para impedir que elementos flutuantes cortem tópicos ou listas posteriores.

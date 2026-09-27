@@ -47,6 +47,21 @@ Este documento consolida as diretrizes de estilo, tom e norma culta acadêmica d
 
 ---
 
+### 5. Formatação e Padrão de Tabelas e Ilustrações
+* **Estrutura de Topo e Rodapé (Padrão ABNT / SBC):**
+  * **Topo (antes do corpo):** Inserir sempre o título (`\caption{...}`) acompanhado do identificador (`\label{...}`) e seguido de espaçamento vertical de respiro (`\vspace{0.3cm}`) antes da tabela ou imagem.
+  * **Rodapé (após o corpo):** Inserir sempre a indicação padronizada de autoria (`\vspace{0.15cm}` e `{\small Fonte: Elaborado pelo Próprio Autor.}`) logo após o fechamento da tabela (`\end{tabularx}`) ou imagem (`\includegraphics`).
+  * ❌ *Não usar:* Fonte no topo ou espremida entre o caption e a tabela.
+  * ❌ *Não usar:* Caption colado diretamente na primeira linha da tabela sem espaçamento.
+* **Contextualização Textual Obrigatória (Evitar Tabelas Soltas):**
+  * Toda tabela deve ser introduzida formalmente no texto antes dela e acompanhada de discussão sobre seus eixos comparativos ou resultados. Evitar apenas citar "A Tabela X sintetiza..." e encerrar o parágrafo.
+* **Ajuste de Margens e Largura (Prevenção de `Overfull \hbox`):**
+  * Para tabelas com texto descritivo em múltiplas colunas, utilizar sempre `\begin{tabularx}{\textwidth}` com colunas `>{\RaggedRight}X` (ou tipo `L`), garantindo que a largura total respeite rigorosamente as margens do documento.
+* **Controle de Vazamento de Floats:**
+  * Utilizar `\FloatBarrier` (do pacote `placeins`) antes de novas subseções para garantir que a tabela não vaze para o meio de tópicos ou listas posteriores.
+
+---
+
 ## 📋 Lista de Verificação (Checklist de Revisão de Texto)
 
 Ao redigir ou revisar qualquer seção em `main.tex`:
@@ -56,3 +71,7 @@ Ao redigir ou revisar qualquer seção em `main.tex`:
 - [ ] As citações usam nomes limpos de autor/siglas e mencionam os autores de forma explícita?
 - [ ] As siglas e acrônimos estão definidos formalmente em sua primeira ocorrência no texto e utilizados de forma reduzida nas ocorrências subsequentes?
 - [ ] Foram removidos comandos de tachado/rascunho (`\sout{}`) das versões anteriores?
+- [ ] Todas as tabelas e figuras têm o `\caption` no topo com `\vspace{0.3cm}` de separação?
+- [ ] Todas as tabelas e figuras têm a indicação `Fonte: Elaborado pelo Próprio Autor.` no rodapé?
+- [ ] Tabelas com textos longos utilizam `tabularx` com `\textwidth` para não vazar a margem direita?
+- [ ] Há `\FloatBarrier` antes de novas subseções onde há risco de flutuação de tabelas?
