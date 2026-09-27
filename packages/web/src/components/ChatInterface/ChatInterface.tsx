@@ -5,6 +5,7 @@ import logoDark from '../../assets/logo-ifmg-dark-mode.png';
 import ThemeToggle from '../ThemeToggle/ThemeToggle';
 import MarkdownRenderer from '../MarkdownRenderer/MarkdownRenderer';
 import { useTheme } from '../../contexts/ThemeContext';
+import { Link } from 'react-router-dom';
 
 /**
  * URL base da API backend.
@@ -392,6 +393,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ isBeta = false }) => {
               ℹ️
             </button>
           </div>
+          <Link to="/estatisticas" className="header-nav-btn" title="Painel de Métricas e Observabilidade">
+            📊 Estatísticas
+          </Link>
           <ThemeToggle />
         </div>
       </header>
@@ -557,6 +561,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ isBeta = false }) => {
                 <p>
                   <strong>Dica para o Experimento:</strong> Envie a mesma pergunta alternando entre os modos para comparar as respostas e nos ajude avaliando com <strong>👍</strong> ou <strong>👎</strong>!
                 </p>
+              </div>
+
+              <div style={{ marginTop: '0.75rem', textAlign: 'center' }}>
+                <Link to="/estatisticas" className="header-nav-btn" style={{ display: 'inline-flex' }}>
+                  📊 Acessar Painel de Métricas e Histórico
+                </Link>
               </div>
             </div>
           </div>

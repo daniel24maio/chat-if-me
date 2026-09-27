@@ -4,6 +4,7 @@ import { processQuestionStream } from "../services/rag.service.js";
 import { withConcurrencyControl } from "../services/queue.service.js";
 import { saveFeedback } from "../services/feedback.service.js";
 import { getSessionChunkIds } from "../services/memory.service.js";
+import { updateInteractionFeedback } from "../services/analytics.service.js";
 
 /**
  * Controller do módulo de chat com Server-Sent Events (SSE).
@@ -170,6 +171,12 @@ export async function registerFeedback(
     }).catch((err) => {
       console.error("❌ [Feedback] Erro ao salvar no banco:", err);
     });
+
+    if (sessionId) {
+      updateInteractionFeedback(sessionId, feedback).catch((err) => {
+        console.error("❌ [Analytics] Erro ao sincronizar feedback com a interação:", err);
+      });
+    }
 
     res.status(200).json({ success: true });
   } catch (error) {

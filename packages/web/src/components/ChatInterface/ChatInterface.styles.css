@@ -1053,3 +1053,230 @@
   from { transform: scale(0.9); opacity: 0; }
   to { transform: scale(1); opacity: 1; }
 }
+
+/* ==========================================================================
+   Seletor de Modos Segmentado & Botão de Estatísticas
+   ========================================================================== */
+
+.mode-selector-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.mode-selector-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+@media (max-width: 768px) {
+  .mode-selector-label {
+    display: none;
+  }
+}
+
+.mode-segmented-control {
+  display: inline-flex;
+  background-color: var(--bg-body);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.mode-segment-btn {
+  padding: 0.35rem 0.65rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.mode-segment-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.mode-segment-btn.active.mode-rag {
+  background-color: #0284c7;
+  color: #ffffff;
+  box-shadow: 0 1px 3px rgba(2, 132, 199, 0.3);
+}
+
+.mode-segment-btn.active.mode-agent {
+  background-color: #7c3aed;
+  color: #ffffff;
+  box-shadow: 0 1px 3px rgba(124, 58, 237, 0.3);
+}
+
+.mode-segment-btn.active.mode-beta {
+  background-color: #059669;
+  color: #ffffff;
+  box-shadow: 0 1px 3px rgba(5, 150, 105, 0.3);
+}
+
+.mode-info-btn {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 0.25rem 0.45rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  color: var(--text-secondary);
+}
+
+.mode-info-btn:hover {
+  border-color: var(--ifmg-verde);
+  background-color: var(--bg-card);
+}
+
+.header-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.38rem 0.75rem;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.header-nav-btn:hover {
+  border-color: var(--ifmg-verde);
+  color: var(--ifmg-verde);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+/* Modal Explicativo dos Modos */
+.mode-info-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(10, 15, 12, 0.65);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: 1rem;
+}
+
+.mode-info-modal {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  width: 100%;
+  max-width: 540px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  text-align: left;
+}
+
+.mode-info-header {
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.mode-info-header h3 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.mode-info-close {
+  background: transparent;
+  border: none;
+  font-size: 1.2rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0.2rem 0.4rem;
+  border-radius: 6px;
+}
+
+.mode-info-close:hover {
+  color: var(--text-primary);
+}
+
+.mode-info-content {
+  padding: 1.25rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.mode-info-card {
+  padding: 1rem;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-body);
+}
+
+.mode-info-card h4 {
+  margin: 0 0 0.4rem 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.card-rag h4 {
+  color: #0284c7;
+}
+
+.card-agent h4 {
+  color: #7c3aed;
+}
+
+.card-beta h4 {
+  color: #059669;
+}
+
+.mode-info-card p {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.card-tag {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.mode-info-tip {
+  display: flex;
+  gap: 0.6rem;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  background-color: rgba(47, 158, 65, 0.08);
+  border: 1px solid rgba(47, 158, 65, 0.2);
+  align-items: flex-start;
+}
+
+.tip-icon {
+  font-size: 1.1rem;
+}
+
+.mode-info-tip p {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--text-primary);
+  line-height: 1.4;
+}

@@ -16,6 +16,7 @@ import {
   STATIC_GREETING_RESPONSE,
 } from "./fast_path.util.js";
 import { streamOllamaResponse, extractDraftFromThinking, type OllamaChatMessage } from "../config/ollama.js";
+import { logInteraction } from "./analytics.service.js";
 
 /**
  * Serviço do Agente MCP — Agentic RAG.
@@ -276,7 +277,18 @@ export async function processAgentQuestion(
       updateSession(session.sessionId, question, "GREETING", STATIC_GREETING_RESPONSE);
     }
 
-    const duration = ((Date.now() - start) / 1000).toFixed(1);
+    const totalMs = Date.now() - start;
+    logInteraction({
+      sessionId: session?.sessionId ?? "anonymous",
+      mode: "agent",
+      question,
+      contextualizedQuestion,
+      intent: "GREETING",
+      response: STATIC_GREETING_RESPONSE,
+      totalDurationMs: totalMs,
+    }).catch((err) => console.error("Erro ao registrar log Agente (fast-path):", err));
+
+    const duration = (totalMs / 1000).toFixed(1);
     console.log(`⏱️  [Agente] Fast-path concluído em ${duration}s (sem busca/ferramentas)\n`);
     return;
   }
@@ -349,6 +361,10 @@ export async function processAgentQuestion(
   }
 
   // ── Passo 2: Verificar se há tool_calls ──
+  const sources: string[] = [];
+  const executedToolCalls: Array<{ name: string; arguments?: Record<string, unknown> }> = [];
+  let detectedIntent: string | undefined = undefined;
+
   if (
     assistantMessage.tool_calls &&
     assistantMessage.tool_calls.length > 0
@@ -364,13 +380,14 @@ export async function processAgentQuestion(
       tool_calls: assistantMessage.tool_calls,
     });
 
-    // Executa cada tool call via MCP
-    const sources: string[] = [];
-
     res.write(`data: ${JSON.stringify({ type: "status", status: "Buscando nos documentos..." })}\n\n`);
 
     for (const toolCall of assistantMessage.tool_calls) {
       const { name, arguments: args } = toolCall.function;
+      executedToolCalls.push({ name, arguments: args as Record<string, unknown> });
+      if (args && typeof (args as Record<string, unknown>).intent === "string") {
+        detectedIntent = (args as Record<string, unknown>).intent as string;
+      }
       console.log(
         `   📞 [Agente] Chamando ferramenta: ${name}(${JSON.stringify(args)})`
       );
@@ -618,12 +635,25 @@ export async function processAgentQuestion(
   // Sinaliza fim do stream
   res.write(`data: [DONE]\n\n`);
 
-  const duration = ((Date.now() - start) / 1000).toFixed(1);
+  const totalMs = Date.now() - start;
+  const duration = (totalMs / 1000).toFixed(1);
 
   // ── Atualizar memória da sessão ──
   if (session) {
     updateSession(session.sessionId, question, "", fullText);
   }
+
+  logInteraction({
+    sessionId: session?.sessionId ?? "anonymous",
+    mode: "agent",
+    question,
+    contextualizedQuestion,
+    intent: detectedIntent,
+    toolCalls: executedToolCalls,
+    sources,
+    response: fullText,
+    totalDurationMs: totalMs,
+  }).catch((err) => console.error("Erro ao registrar log Agente:", err));
 
   console.log(`⏱️  [Agente] Pipeline streaming concluído em ${duration}s\n`);
 }

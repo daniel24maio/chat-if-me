@@ -5,7 +5,8 @@ import { chatRouter } from "./routes/chat.routes.js";
 import { embeddingRouter } from "./routes/embedding.routes.js";
 import { agentRouter } from "./routes/agent.routes.js";
 import { agentBetaRouter } from "./routes/agent_beta.routes.js";
-import { pool, testDBConnection, verifyEmbeddingDimension, verifyFeedbacksTable } from "./config/database.js";
+import { statsRouter } from "./routes/stats.routes.js";
+import { pool, testDBConnection, verifyEmbeddingDimension, verifyFeedbacksTable, verifyInteractionsTable } from "./config/database.js";
 import { checkOllama } from "./config/ollama.js";
 import { chatLimiter, uploadLimiter } from "./middlewares/rateLimiter.js";
 import { adminAuth } from "./middlewares/adminAuth.js";
@@ -84,6 +85,9 @@ app.use("/api/agent-beta", chatLimiter, agentBetaRouter);
 /** Rotas do módulo de ingestão de documentos — rate limited + admin auth */
 app.use("/api/embedding", uploadLimiter, adminAuth, embeddingRouter);
 
+/** Rotas do módulo de estatísticas e métricas de execução */
+app.use("/api/stats", statsRouter);
+
 /** Rota de health check expandida — status de todos os serviços */
 app.get("/api/health", async (_req, res) => {
   // ── Database ──
@@ -135,12 +139,14 @@ const server = app.listen(PORT, async () => {
   console.log(`🧪 Agent Beta (MCP):   POST /api/agent-beta`);
   console.log(`📤 Upload endpoint:    POST /api/embedding/upload`);
   console.log(`📋 Documentos:         GET  /api/embedding/documentos`);
+  console.log(`📈 Estatísticas:       GET  /api/stats/overview`);
   console.log(`💚 Health check:       GET  /api/health\n`);
 
   // Testa conexões externas (não bloqueia a subida do servidor)
   await testDBConnection();
   await verifyEmbeddingDimension(); // Auto-migra 768→1024 se necessário
   await verifyFeedbacksTable(); // Garante tabela de feedback (ICL)
+  await verifyInteractionsTable(); // Garante tabela de interações e métricas (Dashboard)
   await checkOllama();
 
   // Inicializa o MCP Client (conecta ao servidor como subprocesso)

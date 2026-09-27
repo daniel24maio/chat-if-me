@@ -17,6 +17,7 @@ import {
 } from "../config/ollama.js";
 import { getPositiveExamples, type FewShotExample } from "./feedback.service.js";
 import { getMCPClient, getMCPBetaTools } from "./mcp_agent.service.js";
+import { logInteraction } from "./analytics.service.js";
 
 /**
  * Serviço do Agente MCP Beta (Otimizado).
@@ -143,7 +144,18 @@ export async function processAgentBetaQuestionStream(
     if (session) {
       updateSession(session.sessionId, question, "GREETING", STATIC_GREETING_RESPONSE);
     }
-    const duration = ((Date.now() - start) / 1000).toFixed(1);
+    const totalMs = Date.now() - start;
+    logInteraction({
+      sessionId: session?.sessionId ?? "anonymous",
+      mode: "agent_beta",
+      question,
+      contextualizedQuestion,
+      intent: "GREETING",
+      response: STATIC_GREETING_RESPONSE,
+      totalDurationMs: totalMs,
+    }).catch((err) => console.error("Erro ao registrar log Agente Beta (fast-path):", err));
+
+    const duration = (totalMs / 1000).toFixed(1);
     console.log(`⏱️  [Agente Beta] Fast-path concluído em ${duration}s\n`);
     return;
   }
@@ -223,6 +235,8 @@ export async function processAgentBetaQuestionStream(
   }
 
   const sources: string[] = [];
+  const executedToolCalls: Array<{ name: string; arguments?: Record<string, unknown> }> = [];
+  let detectedIntent: string | undefined = undefined;
 
   // ── Passo 2: Execução das ferramentas solicitadas ──
   if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
@@ -238,6 +252,10 @@ export async function processAgentBetaQuestionStream(
 
     for (const toolCall of assistantMessage.tool_calls) {
       const { name, arguments: args } = toolCall.function;
+      executedToolCalls.push({ name, arguments: args });
+      if (args && typeof args.intent === "string") {
+        detectedIntent = args.intent;
+      }
       console.log(`   📞 [Agente Beta] Chamando ferramenta: ${name}(${JSON.stringify(args)})`);
 
       try {
@@ -499,6 +517,20 @@ Sua resposta deve basear-se ESTRITAMENTE nos trechos de documentos retornados pe
     updateSession(session.sessionId, question, "", fullText);
   }
 
-  const duration = ((Date.now() - start) / 1000).toFixed(1);
+  const totalMs = Date.now() - start;
+  const duration = (totalMs / 1000).toFixed(1);
+
+  logInteraction({
+    sessionId: session?.sessionId ?? "anonymous",
+    mode: "agent_beta",
+    question,
+    contextualizedQuestion,
+    intent: detectedIntent,
+    toolCalls: executedToolCalls,
+    sources,
+    response: fullText,
+    totalDurationMs: totalMs,
+  }).catch((err) => console.error("Erro ao registrar log Agente Beta:", err));
+
   console.log(`⏱️  [Agente Beta] Pipeline concluído com sucesso em ${duration}s\n`);
 }

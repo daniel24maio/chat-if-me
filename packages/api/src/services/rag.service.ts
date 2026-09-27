@@ -25,6 +25,7 @@ import {
   PENALTY_BETA,
   type FewShotExample,
 } from "./feedback.service.js";
+import { logInteraction } from "./analytics.service.js";
 
 /**
  * Serviço RAG (Retrieval-Augmented Generation) com Streaming.
@@ -570,6 +571,17 @@ export async function processQuestionStream(
       updateSession(session.sessionId, question, "GREETING", STATIC_GREETING_RESPONSE);
     }
 
+    logInteraction({
+      sessionId: session?.sessionId ?? "anonymous",
+      mode: "rag",
+      question,
+      contextualizedQuestion,
+      intent: "GREETING",
+      response: STATIC_GREETING_RESPONSE,
+      timings: { rewrite_ms: 0, embedding_ms: 0, retrieval_ms: 0, generation_ms: generationMs, total_ms: totalMs },
+      totalDurationMs: totalMs,
+    }).catch((err) => console.error("Erro ao registrar log RAG (fast-path):", err));
+
     console.log(`⏱️  [RAG] Fast-path concluído em ${(totalMs / 1000).toFixed(1)}s (sem busca)\n`);
     return;
   }
@@ -594,6 +606,17 @@ export async function processQuestionStream(
     if (session) {
       updateSession(session.sessionId, question, "GREETING", STATIC_GREETING_RESPONSE);
     }
+
+    logInteraction({
+      sessionId: session?.sessionId ?? "anonymous",
+      mode: "rag",
+      question,
+      contextualizedQuestion,
+      intent: "GREETING",
+      response: STATIC_GREETING_RESPONSE,
+      timings: { rewrite_ms: rewriteMs, embedding_ms: 0, retrieval_ms: 0, generation_ms: generationMs, total_ms: totalMs },
+      totalDurationMs: totalMs,
+    }).catch((err) => console.error("Erro ao registrar log RAG (fast-path LLM):", err));
 
     console.log(`⏱️  [RAG] Fast-path LLM concluído em ${(totalMs / 1000).toFixed(1)}s (sem busca)\n`);
     return;
@@ -666,6 +689,25 @@ export async function processQuestionStream(
     updateSession(session.sessionId, question, intention, fullResponse);
     session.lastDocuments = documents;
   }
+
+  logInteraction({
+    sessionId: session?.sessionId ?? "anonymous",
+    mode: "rag",
+    question,
+    contextualizedQuestion,
+    intent: intention,
+    sources,
+    chunkIds: documents.map((d) => d.id).filter((id): id is number => typeof id === "number"),
+    response: fullResponse,
+    timings: {
+      rewrite_ms: rewriteMs,
+      embedding_ms: embedMs,
+      retrieval_ms: retrievalMs,
+      generation_ms: generationMs,
+      total_ms: totalMs,
+    },
+    totalDurationMs: totalMs,
+  }).catch((err) => console.error("Erro ao registrar log RAG:", err));
 
   console.log(
     `⏱️  [RAG] Pipeline concluído em ${(totalMs / 1000).toFixed(1)}s ` +

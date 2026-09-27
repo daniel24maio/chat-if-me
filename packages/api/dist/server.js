@@ -874,6 +874,51 @@ async function verifyFeedbacksTable() {
     );
   }
 }
+async function verifyInteractionsTable() {
+  try {
+    const tableExists = await pool.query(`
+      SELECT EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_name = 'chat_interactions'
+      ) AS exists
+    `);
+    if (!tableExists.rows[0]?.exists) {
+      console.log("\u{1F504} [Database] Tabela 'chat_interactions' n\xE3o encontrada. Criando...");
+      const sql = `
+        CREATE TABLE chat_interactions (
+          id SERIAL PRIMARY KEY,
+          session_id VARCHAR(64) NOT NULL,
+          mode VARCHAR(30) NOT NULL,
+          question TEXT NOT NULL,
+          contextualized_question TEXT,
+          intent VARCHAR(50),
+          tool_calls JSONB DEFAULT '[]',
+          sources JSONB DEFAULT '[]',
+          chunk_ids INTEGER[] DEFAULT '{}',
+          response TEXT NOT NULL,
+          timings JSONB DEFAULT '{}',
+          total_duration_ms INTEGER,
+          feedback VARCHAR(10),
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
+        CREATE INDEX idx_interactions_created_at ON chat_interactions (created_at DESC);
+        CREATE INDEX idx_interactions_mode ON chat_interactions (mode);
+        CREATE INDEX idx_interactions_session ON chat_interactions (session_id);
+        CREATE INDEX idx_interactions_intent ON chat_interactions (intent);
+        CREATE INDEX idx_interactions_feedback ON chat_interactions (feedback);
+      `;
+      await pool.query(sql);
+      console.log("\u2705 [Database] Tabela 'chat_interactions' e \xEDndices criados com sucesso!");
+    } else {
+      console.log("\u2705 [Database] Tabela 'chat_interactions' j\xE1 existe \u2713");
+    }
+  } catch (error) {
+    console.error(
+      "\u274C [Database] Falha na verifica\xE7\xE3o da tabela chat_interactions:",
+      error instanceof Error ? error.message : error
+    );
+  }
+}
 
 // src/config/ollama.ts
 var OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
@@ -1592,6 +1637,269 @@ async function countNegativesByChunk(chunkIds) {
   return negatives;
 }
 
+// src/services/analytics.service.ts
+async function logInteraction(params) {
+  const {
+    sessionId,
+    mode,
+    question,
+    contextualizedQuestion,
+    intent,
+    toolCalls = [],
+    sources = [],
+    chunkIds = [],
+    response,
+    timings = {},
+    totalDurationMs,
+    feedback
+  } = params;
+  try {
+    await pool.query(
+      `INSERT INTO chat_interactions
+        (session_id, mode, question, contextualized_question, intent, tool_calls, sources, chunk_ids, response, timings, total_duration_ms, feedback)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+      [
+        sessionId,
+        mode,
+        question,
+        contextualizedQuestion || null,
+        intent || "OUTRAS",
+        JSON.stringify(toolCalls),
+        JSON.stringify(sources),
+        chunkIds,
+        response,
+        JSON.stringify(timings),
+        totalDurationMs || timings.total_ms || 0,
+        feedback || null
+      ]
+    );
+    console.log(
+      `\u{1F4CA} [Analytics] Intera\xE7\xE3o registrada: [${mode.toUpperCase()}] "${question.substring(0, 40)}..." (${totalDurationMs || timings.total_ms || 0}ms)`
+    );
+  } catch (error) {
+    console.error("\u274C [Analytics] Erro ao persistir intera\xE7\xE3o no banco:", error);
+  }
+}
+async function updateInteractionFeedback(sessionId, feedback) {
+  try {
+    const result = await pool.query(
+      `UPDATE chat_interactions
+       SET feedback = $1
+       WHERE id = (
+         SELECT id FROM chat_interactions
+         WHERE session_id = $2
+         ORDER BY created_at DESC
+         LIMIT 1
+       )`,
+      [feedback, sessionId]
+    );
+    if ((result.rowCount ?? 0) > 0) {
+      console.log(`\u{1F4CA} [Analytics] Voto '${feedback}' registrado na tabela de intera\xE7\xF5es para a sess\xE3o ${sessionId.substring(0, 8)}...`);
+    }
+  } catch (error) {
+    console.error("\u274C [Analytics] Erro ao atualizar feedback da intera\xE7\xE3o:", error);
+  }
+}
+async function getAnalyticsOverview(filters) {
+  const conditions = ["1=1"];
+  const params = [];
+  let paramIdx = 1;
+  if (filters.startDate) {
+    conditions.push(`created_at >= $${paramIdx++}::timestamp`);
+    params.push(filters.startDate);
+  }
+  if (filters.endDate) {
+    conditions.push(`created_at <= ($${paramIdx++}::timestamp + interval '1 day')`);
+    params.push(filters.endDate);
+  }
+  if (filters.mode && filters.mode !== "all") {
+    conditions.push(`mode = $${paramIdx++}`);
+    params.push(filters.mode);
+  }
+  const whereClause = conditions.join(" AND ");
+  const globalQuery = await pool.query(
+    `SELECT
+       COUNT(*) AS total_interactions,
+       COUNT(CASE WHEN mode = 'rag' THEN 1 END) AS count_rag,
+       COUNT(CASE WHEN mode = 'agent' THEN 1 END) AS count_agent,
+       COUNT(CASE WHEN mode = 'agent_beta' THEN 1 END) AS count_agent_beta,
+       COALESCE(AVG(total_duration_ms), 0) AS avg_duration_ms,
+       COALESCE(AVG(CASE WHEN mode = 'rag' THEN total_duration_ms END), 0) AS avg_duration_rag,
+       COALESCE(AVG(CASE WHEN mode = 'agent' THEN total_duration_ms END), 0) AS avg_duration_agent,
+       COALESCE(AVG(CASE WHEN mode = 'agent_beta' THEN total_duration_ms END), 0) AS avg_duration_beta,
+       COUNT(CASE WHEN feedback = 'up' THEN 1 END) AS feedback_up,
+       COUNT(CASE WHEN feedback = 'down' THEN 1 END) AS feedback_down,
+       COUNT(CASE WHEN feedback IS NULL THEN 1 END) AS feedback_none
+     FROM chat_interactions
+     WHERE ${whereClause}`,
+    params
+  );
+  const row = globalQuery.rows[0];
+  const total = Number(row.total_interactions) || 0;
+  const up = Number(row.feedback_up) || 0;
+  const down = Number(row.feedback_down) || 0;
+  const totalRated = up + down;
+  const satisfactionRate = totalRated > 0 ? up / totalRated * 100 : 0;
+  const intentsQuery = await pool.query(
+    `SELECT intent, COUNT(*) as count
+     FROM chat_interactions
+     WHERE ${whereClause} AND intent IS NOT NULL
+     GROUP BY intent
+     ORDER BY count DESC
+     LIMIT 10`,
+    params
+  );
+  const sourcesQuery = await pool.query(
+    `SELECT source, COUNT(*) as count
+     FROM (
+       SELECT jsonb_array_elements_text(sources) AS source
+       FROM chat_interactions
+       WHERE ${whereClause}
+     ) sub
+     WHERE source <> 'documento desconhecido'
+     GROUP BY source
+     ORDER BY count DESC
+     LIMIT 8`,
+    params
+  );
+  return {
+    totalInteractions: total,
+    byMode: {
+      rag: Number(row.count_rag) || 0,
+      agent: Number(row.count_agent) || 0,
+      agent_beta: Number(row.count_agent_beta) || 0
+    },
+    latency: {
+      overallAvgMs: Math.round(Number(row.avg_duration_ms)),
+      ragAvgMs: Math.round(Number(row.avg_duration_rag)),
+      agentAvgMs: Math.round(Number(row.avg_duration_agent)),
+      betaAvgMs: Math.round(Number(row.avg_duration_beta))
+    },
+    feedback: {
+      up,
+      down,
+      unrated: Number(row.feedback_none) || 0,
+      satisfactionRate: Number(satisfactionRate.toFixed(1))
+    },
+    intentsDistribution: intentsQuery.rows.map((r) => ({
+      intent: r.intent,
+      count: Number(r.count)
+    })),
+    topSources: sourcesQuery.rows.map((r) => ({
+      source: r.source,
+      count: Number(r.count)
+    }))
+  };
+}
+async function getAnalyticsHistory(filters, page = 1, limit = 15) {
+  const conditions = ["1=1"];
+  const params = [];
+  let paramIdx = 1;
+  if (filters.startDate) {
+    conditions.push(`created_at >= $${paramIdx++}::timestamp`);
+    params.push(filters.startDate);
+  }
+  if (filters.endDate) {
+    conditions.push(`created_at <= ($${paramIdx++}::timestamp + interval '1 day')`);
+    params.push(filters.endDate);
+  }
+  if (filters.mode && filters.mode !== "all") {
+    conditions.push(`mode = $${paramIdx++}`);
+    params.push(filters.mode);
+  }
+  if (filters.intent && filters.intent !== "all") {
+    conditions.push(`intent = $${paramIdx++}`);
+    params.push(filters.intent);
+  }
+  if (filters.feedback && filters.feedback !== "all") {
+    if (filters.feedback === "none") {
+      conditions.push(`feedback IS NULL`);
+    } else {
+      conditions.push(`feedback = $${paramIdx++}`);
+      params.push(filters.feedback);
+    }
+  }
+  if (filters.search && filters.search.trim()) {
+    conditions.push(`(question ILIKE $${paramIdx} OR response ILIKE $${paramIdx})`);
+    params.push(`%${filters.search.trim()}%`);
+    paramIdx++;
+  }
+  const whereClause = conditions.join(" AND ");
+  const countResult = await pool.query(
+    `SELECT COUNT(*) AS total FROM chat_interactions WHERE ${whereClause}`,
+    params
+  );
+  const total = Number(countResult.rows[0]?.total) || 0;
+  const offset = (page - 1) * limit;
+  const listParams = [...params, limit, offset];
+  const listResult = await pool.query(
+    `SELECT
+       id,
+       session_id,
+       mode,
+       question,
+       intent,
+       sources,
+       tool_calls,
+       response,
+       timings,
+       total_duration_ms,
+       feedback,
+       created_at
+     FROM chat_interactions
+     WHERE ${whereClause}
+     ORDER BY created_at DESC
+     LIMIT $${paramIdx++} OFFSET $${paramIdx++}`,
+    listParams
+  );
+  return {
+    interactions: listResult.rows,
+    total,
+    page,
+    limit,
+    totalPages: Math.ceil(total / limit) || 1
+  };
+}
+async function getInteractionById(id) {
+  const result = await pool.query(
+    `SELECT * FROM chat_interactions WHERE id = $1`,
+    [id]
+  );
+  return result.rows[0] || null;
+}
+async function exportAnalyticsCSV(filters) {
+  const { interactions } = await getAnalyticsHistory(filters, 1, 1e4);
+  const header = [
+    "ID",
+    "Data/Hora",
+    "Modo",
+    "Intencao",
+    "Pergunta",
+    "Latencia_Total_ms",
+    "Feedback",
+    "Fontes",
+    "Resposta"
+  ];
+  const escapeCSV = (value) => {
+    if (value === null || value === void 0)
+      return '""';
+    const str = typeof value === "object" ? JSON.stringify(value) : String(value);
+    return `"${str.replace(/"/g, '""')}"`;
+  };
+  const rows = interactions.map((item) => [
+    item.id,
+    new Date(item.created_at).toLocaleString("pt-BR"),
+    item.mode,
+    item.intent,
+    escapeCSV(item.question),
+    item.total_duration_ms,
+    item.feedback || "sem_avaliacao",
+    escapeCSV((item.sources || []).join("; ")),
+    escapeCSV(item.response)
+  ]);
+  return [header.join(","), ...rows.map((r) => r.join(","))].join("\n");
+}
+
 // src/services/rag.service.ts
 var REWRITE_SYSTEM_PROMPT = `Voc\xEA \xE9 um assistente de pr\xE9-processamento de consultas para um sistema de busca de documentos acad\xEAmicos do IFMG (Instituto Federal de Gerais), Campus Ouro Branco.
 
@@ -1966,6 +2274,16 @@ ${"\u2500".repeat(50)}`);
     if (session) {
       updateSession(session.sessionId, question, "GREETING", STATIC_GREETING_RESPONSE);
     }
+    logInteraction({
+      sessionId: session?.sessionId ?? "anonymous",
+      mode: "rag",
+      question,
+      contextualizedQuestion,
+      intent: "GREETING",
+      response: STATIC_GREETING_RESPONSE,
+      timings: { rewrite_ms: 0, embedding_ms: 0, retrieval_ms: 0, generation_ms: generationMs2, total_ms: totalMs2 },
+      totalDurationMs: totalMs2
+    }).catch((err) => console.error("Erro ao registrar log RAG (fast-path):", err));
     console.log(`\u23F1\uFE0F  [RAG] Fast-path conclu\xEDdo em ${(totalMs2 / 1e3).toFixed(1)}s (sem busca)
 `);
     return;
@@ -1988,6 +2306,16 @@ ${"\u2500".repeat(50)}`);
     if (session) {
       updateSession(session.sessionId, question, "GREETING", STATIC_GREETING_RESPONSE);
     }
+    logInteraction({
+      sessionId: session?.sessionId ?? "anonymous",
+      mode: "rag",
+      question,
+      contextualizedQuestion,
+      intent: "GREETING",
+      response: STATIC_GREETING_RESPONSE,
+      timings: { rewrite_ms: rewriteMs, embedding_ms: 0, retrieval_ms: 0, generation_ms: generationMs2, total_ms: totalMs2 },
+      totalDurationMs: totalMs2
+    }).catch((err) => console.error("Erro ao registrar log RAG (fast-path LLM):", err));
     console.log(`\u23F1\uFE0F  [RAG] Fast-path LLM conclu\xEDdo em ${(totalMs2 / 1e3).toFixed(1)}s (sem busca)
 `);
     return;
@@ -2038,6 +2366,24 @@ ${"\u2500".repeat(50)}`);
     updateSession(session.sessionId, question, intention, fullResponse);
     session.lastDocuments = documents;
   }
+  logInteraction({
+    sessionId: session?.sessionId ?? "anonymous",
+    mode: "rag",
+    question,
+    contextualizedQuestion,
+    intent: intention,
+    sources,
+    chunkIds: documents.map((d) => d.id).filter((id) => typeof id === "number"),
+    response: fullResponse,
+    timings: {
+      rewrite_ms: rewriteMs,
+      embedding_ms: embedMs,
+      retrieval_ms: retrievalMs,
+      generation_ms: generationMs,
+      total_ms: totalMs
+    },
+    totalDurationMs: totalMs
+  }).catch((err) => console.error("Erro ao registrar log RAG:", err));
   console.log(
     `\u23F1\uFE0F  [RAG] Pipeline conclu\xEDdo em ${(totalMs / 1e3).toFixed(1)}s (rewrite: ${rewriteMs}ms, embed: ${embedMs}ms, retrieval: ${retrievalMs}ms, gen: ${generationMs}ms)
 `
@@ -2191,6 +2537,11 @@ async function registerFeedback(req, res) {
     }).catch((err) => {
       console.error("\u274C [Feedback] Erro ao salvar no banco:", err);
     });
+    if (sessionId) {
+      updateInteractionFeedback(sessionId, feedback).catch((err) => {
+        console.error("\u274C [Analytics] Erro ao sincronizar feedback com a intera\xE7\xE3o:", err);
+      });
+    }
     res.status(200).json({ success: true });
   } catch (error) {
     console.error("[ChatController] Erro ao registrar feedback:", error);
@@ -27771,7 +28122,17 @@ ${"\u2500".repeat(50)}`);
     if (session) {
       updateSession(session.sessionId, question, "GREETING", STATIC_GREETING_RESPONSE);
     }
-    const duration3 = ((Date.now() - start) / 1e3).toFixed(1);
+    const totalMs2 = Date.now() - start;
+    logInteraction({
+      sessionId: session?.sessionId ?? "anonymous",
+      mode: "agent",
+      question,
+      contextualizedQuestion,
+      intent: "GREETING",
+      response: STATIC_GREETING_RESPONSE,
+      totalDurationMs: totalMs2
+    }).catch((err) => console.error("Erro ao registrar log Agente (fast-path):", err));
+    const duration3 = (totalMs2 / 1e3).toFixed(1);
     console.log(`\u23F1\uFE0F  [Agente] Fast-path conclu\xEDdo em ${duration3}s (sem busca/ferramentas)
 `);
     return;
@@ -27830,6 +28191,9 @@ ${"\u2500".repeat(50)}`);
       }
     ];
   }
+  const sources = [];
+  const executedToolCalls = [];
+  let detectedIntent = void 0;
   if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
     console.log(
       `\u{1F527} [Agente] Passo 2: Ollama solicitou ${assistantMessage.tool_calls.length} chamada(s) de ferramenta`
@@ -27839,12 +28203,15 @@ ${"\u2500".repeat(50)}`);
       content: assistantMessage.content || "",
       tool_calls: assistantMessage.tool_calls
     });
-    const sources = [];
     res.write(`data: ${JSON.stringify({ type: "status", status: "Buscando nos documentos..." })}
 
 `);
     for (const toolCall of assistantMessage.tool_calls) {
       const { name, arguments: args } = toolCall.function;
+      executedToolCalls.push({ name, arguments: args });
+      if (args && typeof args.intent === "string") {
+        detectedIntent = args.intent;
+      }
       console.log(
         `   \u{1F4DE} [Agente] Chamando ferramenta: ${name}(${JSON.stringify(args)})`
       );
@@ -28065,10 +28432,22 @@ ${"\u2500".repeat(50)}`);
   res.write(`data: [DONE]
 
 `);
-  const duration2 = ((Date.now() - start) / 1e3).toFixed(1);
+  const totalMs = Date.now() - start;
+  const duration2 = (totalMs / 1e3).toFixed(1);
   if (session) {
     updateSession(session.sessionId, question, "", fullText);
   }
+  logInteraction({
+    sessionId: session?.sessionId ?? "anonymous",
+    mode: "agent",
+    question,
+    contextualizedQuestion,
+    intent: detectedIntent,
+    toolCalls: executedToolCalls,
+    sources,
+    response: fullText,
+    totalDurationMs: totalMs
+  }).catch((err) => console.error("Erro ao registrar log Agente:", err));
   console.log(`\u23F1\uFE0F  [Agente] Pipeline streaming conclu\xEDdo em ${duration2}s
 `);
 }
@@ -28231,7 +28610,17 @@ ${"\u2500".repeat(50)}`);
     if (session) {
       updateSession(session.sessionId, question, "GREETING", STATIC_GREETING_RESPONSE);
     }
-    const duration3 = ((Date.now() - start) / 1e3).toFixed(1);
+    const totalMs2 = Date.now() - start;
+    logInteraction({
+      sessionId: session?.sessionId ?? "anonymous",
+      mode: "agent_beta",
+      question,
+      contextualizedQuestion,
+      intent: "GREETING",
+      response: STATIC_GREETING_RESPONSE,
+      totalDurationMs: totalMs2
+    }).catch((err) => console.error("Erro ao registrar log Agente Beta (fast-path):", err));
+    const duration3 = (totalMs2 / 1e3).toFixed(1);
     console.log(`\u23F1\uFE0F  [Agente Beta] Fast-path conclu\xEDdo em ${duration3}s
 `);
     return;
@@ -28295,6 +28684,8 @@ ${"\u2500".repeat(50)}`);
     ];
   }
   const sources = [];
+  const executedToolCalls = [];
+  let detectedIntent = void 0;
   if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
     console.log(`\u{1F527} [Agente Beta] Executando ${assistantMessage.tool_calls.length} chamada(s) de ferramenta...`);
     messages.push({
@@ -28307,6 +28698,10 @@ ${"\u2500".repeat(50)}`);
 `);
     for (const toolCall of assistantMessage.tool_calls) {
       const { name, arguments: args } = toolCall.function;
+      executedToolCalls.push({ name, arguments: args });
+      if (args && typeof args.intent === "string") {
+        detectedIntent = args.intent;
+      }
       console.log(`   \u{1F4DE} [Agente Beta] Chamando ferramenta: ${name}(${JSON.stringify(args)})`);
       try {
         let toolResult = await mcpClient2.callTool({
@@ -28537,7 +28932,19 @@ Sua resposta deve basear-se ESTRITAMENTE nos trechos de documentos retornados pe
   if (session && fullText) {
     updateSession(session.sessionId, question, "", fullText);
   }
-  const duration2 = ((Date.now() - start) / 1e3).toFixed(1);
+  const totalMs = Date.now() - start;
+  const duration2 = (totalMs / 1e3).toFixed(1);
+  logInteraction({
+    sessionId: session?.sessionId ?? "anonymous",
+    mode: "agent_beta",
+    question,
+    contextualizedQuestion,
+    intent: detectedIntent,
+    toolCalls: executedToolCalls,
+    sources,
+    response: fullText,
+    totalDurationMs: totalMs
+  }).catch((err) => console.error("Erro ao registrar log Agente Beta:", err));
   console.log(`\u23F1\uFE0F  [Agente Beta] Pipeline conclu\xEDdo com sucesso em ${duration2}s
 `);
 }
@@ -28599,6 +29006,91 @@ async function sendAgentBetaQuestion(req, res) {
 // src/routes/agent_beta.routes.ts
 var agentBetaRouter = Router4();
 agentBetaRouter.post("/", sendAgentBetaQuestion);
+
+// src/routes/stats.routes.ts
+import { Router as Router5 } from "express";
+
+// src/controllers/stats.controller.ts
+async function getOverview(req, res) {
+  try {
+    const filters = {
+      startDate: req.query.startDate,
+      endDate: req.query.endDate,
+      mode: req.query.mode
+    };
+    const overview = await getAnalyticsOverview(filters);
+    res.status(200).json(overview);
+  } catch (error) {
+    console.error("[StatsController] Erro ao carregar overview:", error);
+    res.status(500).json({ error: "Erro ao calcular m\xE9tricas de estat\xEDsticas." });
+  }
+}
+async function getHistory(req, res) {
+  try {
+    const filters = {
+      startDate: req.query.startDate,
+      endDate: req.query.endDate,
+      mode: req.query.mode,
+      intent: req.query.intent,
+      feedback: req.query.feedback,
+      search: req.query.search
+    };
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 15));
+    const history = await getAnalyticsHistory(filters, page, limit);
+    res.status(200).json(history);
+  } catch (error) {
+    console.error("[StatsController] Erro ao carregar hist\xF3rico:", error);
+    res.status(500).json({ error: "Erro ao listar hist\xF3rico de intera\xE7\xF5es." });
+  }
+}
+async function getDetails(req, res) {
+  try {
+    const id = Number(req.params.id);
+    if (!id || isNaN(id)) {
+      res.status(400).json({ error: "ID inv\xE1lido." });
+      return;
+    }
+    const interaction = await getInteractionById(id);
+    if (!interaction) {
+      res.status(404).json({ error: "Intera\xE7\xE3o n\xE3o encontrada." });
+      return;
+    }
+    res.status(200).json(interaction);
+  } catch (error) {
+    console.error("[StatsController] Erro ao obter detalhes da intera\xE7\xE3o:", error);
+    res.status(500).json({ error: "Erro interno ao buscar intera\xE7\xE3o." });
+  }
+}
+async function exportCSV(req, res) {
+  try {
+    const filters = {
+      startDate: req.query.startDate,
+      endDate: req.query.endDate,
+      mode: req.query.mode,
+      intent: req.query.intent,
+      feedback: req.query.feedback,
+      search: req.query.search
+    };
+    const csvData = await exportAnalyticsCSV(filters);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=chatifme_interacoes_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.csv`
+    );
+    res.status(200).send("\uFEFF" + csvData);
+  } catch (error) {
+    console.error("[StatsController] Erro ao exportar CSV:", error);
+    res.status(500).json({ error: "Erro ao gerar arquivo CSV." });
+  }
+}
+
+// src/routes/stats.routes.ts
+var statsRouter = Router5();
+statsRouter.get("/overview", getOverview);
+statsRouter.get("/history", getHistory);
+statsRouter.get("/history/:id", getDetails);
+statsRouter.get("/export", exportCSV);
 
 // src/middlewares/rateLimiter.ts
 import rateLimit from "express-rate-limit";
@@ -28664,6 +29156,7 @@ app.use("/api/chat", chatLimiter, chatRouter);
 app.use("/api/agent", chatLimiter, agentRouter);
 app.use("/api/agent-beta", chatLimiter, agentBetaRouter);
 app.use("/api/embedding", uploadLimiter, adminAuth, embeddingRouter);
+app.use("/api/stats", statsRouter);
 app.get("/api/health", async (_req, res) => {
   let dbOk = false;
   try {
@@ -28705,11 +29198,13 @@ var server = app.listen(PORT, async () => {
   console.log(`\u{1F9EA} Agent Beta (MCP):   POST /api/agent-beta`);
   console.log(`\u{1F4E4} Upload endpoint:    POST /api/embedding/upload`);
   console.log(`\u{1F4CB} Documentos:         GET  /api/embedding/documentos`);
+  console.log(`\u{1F4C8} Estat\xEDsticas:       GET  /api/stats/overview`);
   console.log(`\u{1F49A} Health check:       GET  /api/health
 `);
   await testDBConnection();
   await verifyEmbeddingDimension();
   await verifyFeedbacksTable();
+  await verifyInteractionsTable();
   await checkOllama();
   try {
     await initializeMCPClient();

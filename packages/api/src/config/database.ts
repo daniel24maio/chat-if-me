@@ -210,3 +210,55 @@ export async function verifyFeedbacksTable(): Promise<void> {
   }
 }
 
+/**
+ * Garante que a tabela chat_interactions (Histórico e Métricas de Execução) exista no banco.
+ * Se não existir, executa o script de criação e seus índices.
+ */
+export async function verifyInteractionsTable(): Promise<void> {
+  try {
+    const tableExists = await pool.query(`
+      SELECT EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_name = 'chat_interactions'
+      ) AS exists
+    `);
+
+    if (!tableExists.rows[0]?.exists) {
+      console.log("🔄 [Database] Tabela 'chat_interactions' não encontrada. Criando...");
+      const sql = `
+        CREATE TABLE chat_interactions (
+          id SERIAL PRIMARY KEY,
+          session_id VARCHAR(64) NOT NULL,
+          mode VARCHAR(30) NOT NULL,
+          question TEXT NOT NULL,
+          contextualized_question TEXT,
+          intent VARCHAR(50),
+          tool_calls JSONB DEFAULT '[]',
+          sources JSONB DEFAULT '[]',
+          chunk_ids INTEGER[] DEFAULT '{}',
+          response TEXT NOT NULL,
+          timings JSONB DEFAULT '{}',
+          total_duration_ms INTEGER,
+          feedback VARCHAR(10),
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
+        CREATE INDEX idx_interactions_created_at ON chat_interactions (created_at DESC);
+        CREATE INDEX idx_interactions_mode ON chat_interactions (mode);
+        CREATE INDEX idx_interactions_session ON chat_interactions (session_id);
+        CREATE INDEX idx_interactions_intent ON chat_interactions (intent);
+        CREATE INDEX idx_interactions_feedback ON chat_interactions (feedback);
+      `;
+      await pool.query(sql);
+      console.log("✅ [Database] Tabela 'chat_interactions' e índices criados com sucesso!");
+    } else {
+      console.log("✅ [Database] Tabela 'chat_interactions' já existe ✓");
+    }
+  } catch (error) {
+    console.error(
+      "❌ [Database] Falha na verificação da tabela chat_interactions:",
+      error instanceof Error ? error.message : error
+    );
+  }
+}
+
+
