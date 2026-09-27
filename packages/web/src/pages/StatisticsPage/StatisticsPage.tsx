@@ -225,8 +225,11 @@ export default function StatisticsPage() {
           </div>
         </div>
         <div className="stats-header-right">
-          <Link to="/" className="stats-back-link">
-            ← Voltar ao Chat
+          <Link to="/assistente-beta" className="stats-back-link" title="Retornar ao Assistente Beta">
+            ← Voltar ao Assistente Beta
+          </Link>
+          <Link to="/" className="stats-back-link" style={{ opacity: 0.85 }} title="Ir para o Chat Principal">
+            Chat Principal
           </Link>
           <ThemeToggle />
         </div>
