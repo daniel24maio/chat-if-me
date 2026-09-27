@@ -394,17 +394,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ isBeta = false }) => {
             </button>
           </div>
 
-          {/* Navegação entre Versões (Principal vs Beta) */}
-          {isBeta ? (
-            <Link to="/" className="version-nav-btn version-nav-main" title="Retornar ao Chat Principal (Linha de Base do TCC)">
-              ← Chat Principal
-            </Link>
-          ) : (
-            <Link to="/assistente-beta" className="version-nav-btn version-nav-beta" title="Experimentar a versão otimizada com o Agente Beta">
-              🧪 Assistente Beta
-            </Link>
-          )}
-
           {/* Link de Estatísticas exclusivo para o modo Beta */}
           {isBeta && (
             <Link to="/estatisticas" className="header-nav-btn" title="Painel de Métricas e Observabilidade">
@@ -579,22 +568,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ isBeta = false }) => {
                 </p>
               </div>
 
-              <div style={{ marginTop: '0.85rem', display: 'flex', gap: '0.5rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-                {isBeta ? (
-                  <>
-                    <Link to="/estatisticas" className="header-nav-btn" style={{ display: 'inline-flex' }}>
-                      📊 Painel de Estatísticas e Logs
-                    </Link>
-                    <Link to="/" className="version-nav-btn version-nav-main" style={{ display: 'inline-flex' }}>
-                      ← Voltar ao Chat Principal
-                    </Link>
-                  </>
-                ) : (
-                  <Link to="/assistente-beta" className="version-nav-btn version-nav-beta" style={{ display: 'inline-flex' }}>
-                    🧪 Experimentar o Assistente Beta Otimizado
+              {isBeta && (
+                <div style={{ marginTop: '0.85rem', display: 'flex', justifyContent: 'center' }}>
+                  <Link to="/estatisticas" className="header-nav-btn" style={{ display: 'inline-flex' }}>
+                    📊 Painel de Estatísticas e Logs
                   </Link>
-                )}
-              </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
