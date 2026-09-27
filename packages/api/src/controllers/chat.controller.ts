@@ -128,7 +128,7 @@ export async function registerFeedback(
   res: Response
 ): Promise<void> {
   try {
-    const { sessionId, messageId, feedback, question, response: aiResponse } = req.body;
+    const { sessionId, messageId, feedback, question, response: aiResponse, metadata } = req.body;
 
     // Validação básica do feedback
     if (!feedback || (feedback !== "up" && feedback !== "down")) {
@@ -166,7 +166,7 @@ export async function registerFeedback(
       response: aiResponse,
       feedbackType: feedback === "up" ? "positive" : "negative",
       chunkIds,
-      metadata: { sessionId, messageId },
+      metadata: { sessionId, messageId, ...(metadata && typeof metadata === "object" ? metadata : {}) },
     }).catch((err) => {
       console.error("❌ [Feedback] Erro ao salvar no banco:", err);
     });

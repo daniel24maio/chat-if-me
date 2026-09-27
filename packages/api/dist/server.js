@@ -2157,7 +2157,7 @@ async function sendQuestion(req, res) {
 }
 async function registerFeedback(req, res) {
   try {
-    const { sessionId, messageId, feedback, question, response: aiResponse } = req.body;
+    const { sessionId, messageId, feedback, question, response: aiResponse, metadata } = req.body;
     if (!feedback || feedback !== "up" && feedback !== "down") {
       res.status(400).json({
         error: "O campo 'feedback' \xE9 obrigat\xF3rio e deve ser 'up' ou 'down'."
@@ -2187,7 +2187,7 @@ async function registerFeedback(req, res) {
       response: aiResponse,
       feedbackType: feedback === "up" ? "positive" : "negative",
       chunkIds,
-      metadata: { sessionId, messageId }
+      metadata: { sessionId, messageId, ...metadata && typeof metadata === "object" ? metadata : {} }
     }).catch((err) => {
       console.error("\u274C [Feedback] Erro ao salvar no banco:", err);
     });
@@ -27699,7 +27699,7 @@ async function initializeMCPClient() {
       `\u{1F527} [MCP Client] ${tools.length} ferramenta(s) dispon\xEDvel(is):`
     );
     tools.forEach((t) => console.log(`   \u2022 ${t.name}: ${t.description}`));
-    ollamaTools = tools.map((tool) => ({
+    ollamaTools = tools.filter((tool) => tool.name === "search_ifmg_knowledge").map((tool) => ({
       type: "function",
       function: {
         name: tool.name,
@@ -27711,6 +27711,22 @@ async function initializeMCPClient() {
     console.error("\u274C [MCP Client] Falha ao conectar:", error);
     throw error;
   }
+}
+function getMCPClient() {
+  return mcpClient;
+}
+async function getMCPBetaTools() {
+  if (!mcpClient)
+    return [];
+  const { tools } = await mcpClient.listTools();
+  return tools.filter((tool) => tool.name === "search_ifmg_knowledge_beta").map((tool) => ({
+    type: "function",
+    function: {
+      name: tool.name,
+      description: tool.description || "",
+      parameters: tool.inputSchema
+    }
+  }));
 }
 async function closeMCPClient() {
   if (mcpClient) {
@@ -28115,6 +28131,407 @@ async function sendAgentQuestion(req, res) {
 var agentRouter = Router3();
 agentRouter.post("/", sendAgentQuestion);
 
+// src/routes/agent_beta.routes.ts
+import { Router as Router4 } from "express";
+
+// src/services/mcp_agent_beta.service.ts
+var OLLAMA_BASE_URL3 = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
+var LLM_MODEL3 = process.env.OLLAMA_LLM_MODEL || "qwen3.5:4b";
+var NUM_CTX3 = Number(process.env.OLLAMA_NUM_CTX) || 10240;
+var FETCH_TIMEOUT_MS3 = 6e5;
+var AGENT_BETA_SYSTEM_PROMPT = `Voc\xEA \xE9 o assistente virtual oficial do IFMG Campus Ouro Branco no modo otimizado.
+
+Voc\xEA tem acesso \xE0 ferramenta de busca avan\xE7ada 'search_ifmg_knowledge_beta'. USE ESTA FERRAMENTA para responder perguntas sobre regulamentos acad\xEAmicos, PPC, matriz curricular, ementas, TCC, est\xE1gios, atividades complementares e normas do campus.
+
+REGRAS OBRIGAT\xD3RIAS:
+1. SEMPRE use a ferramenta search_ifmg_knowledge_beta antes de responder qualquer d\xFAvida acad\xEAmica ou institucional.
+2. Ao gerar os par\xE2metros para a ferramenta search_ifmg_knowledge_beta:
+   - 'semantic_query': Crie uma pergunta contextualizada, formal e completa com siglas expandidas (ex: 'Qual a ementa detalhada e objetivos de Banco de Dados I no curso de Sistemas?').
+   - 'keywords': Extraia os termos-chave essenciais, c\xF3digos de disciplina (ex: OBBGSIN.034) e nomes pr\xF3prios para a busca textual (ex: 'ementa Banco de Dados I OBBGSIN.034').
+   - 'intent': Classifique estritamente a inten\xE7\xE3o em UMA destas 10 categorias:
+     * INGRESSO_MATRICULA: Vestibular, SISU, transfer\xEAncias, trancamento, renova\xE7\xE3o de matr\xEDcula.
+     * ESTRUTURA_CURSOS: Matriz curricular, listagem de disciplinas de um per\xEDodo/semestre (ex: "mat\xE9rias do 1\xBA per\xEDodo", "grade do 3\xBA semestre"), PPC, dura\xE7\xE3o.
+     * DISCIPLINA_EMENTA: Ementa detalhada, pr\xE9-requisitos, bibliografia e objetivos de uma disciplina espec\xEDfica.
+     * AVALIACAO_FREQUENCIA: Pontua\xE7\xE3o, m\xE9dia, provas, faltas (25%), abono e atestados.
+     * ESTAGIO_TCC: Regras de est\xE1gio obrigat\xF3rio/n\xE3o obrigat\xF3rio, documenta\xE7\xE3o, orientadores e bancas de Trabalho de Conclus\xE3o de Curso.
+     * ATIVIDADES_EXTRAS: Horas complementares (AAC), pesquisa, extens\xE3o e monitoria.
+     * ASSISTENCIA_BOLSAS: Assist\xEAncia estudantil, aux\xEDlios e bolsas de estudo.
+     * INFRA_CAMPUS: Biblioteca, laborat\xF3rios, restaurante, hor\xE1rios de funcionamento.
+     * DIREITOS_DEVERES: Regime disciplinar, san\xE7\xF5es e direitos discentes.
+     * OUTRAS: Qualquer outro assunto geral do campus.
+3. Use EXCLUSIVAMENTE as informa\xE7\xF5es retornadas pela ferramenta. N\xE3o invente ou complemente com conhecimento externo.
+4. EMENTAS E NORMAS: Se o usu\xE1rio solicitar a EMENTA de uma disciplina ou normas espec\xEDficas, forne\xE7a o conte\xFAdo INTEGRAL retornado pela ferramenta, sem resumir ou omitir t\xF3picos. Se a pergunta for apenas para listar disciplinas de um per\xEDodo, cite os nomes das mat\xE9rias e seus c\xF3digos.
+5. Se a ferramenta n\xE3o retornar resultados relevantes, responda: "N\xE3o encontrei essa informa\xE7\xE3o nos documentos dispon\xEDveis. Recomendo consultar a coordena\xE7\xE3o do seu curso ou o setor correspondente do IFMG."
+6. Cite a fonte (nome do documento) sempre que poss\xEDvel.
+7. Para sauda\xE7\xF5es simples (ol\xE1, bom dia), responda cordialmente sem usar a ferramenta.
+
+DIRETIVAS DE IDIOMA E FORMATA\xC7\xC3O:
+- Responda EXCLUSIVAMENTE em Portugu\xEAs do Brasil (pt-BR).
+- PROIBIDO exibir blocos de racioc\xEDnio como 'Thinking Process:' ou 'Analyze the Request:'. Escreva apenas a resposta final diretamente para o aluno.
+- Use **negrito** para destacar nomes de disciplinas, c\xF3digos e prazos importantes.`;
+function inferIntentionFromKeywords2(text) {
+  const t = text.toLowerCase();
+  if (/(?:disciplinas?|mat[eé]rias?|grade)\s+(?:do|da|no|na|de)?\s*(?:\d+[oaºª]?\s*)?per[íi]odo/i.test(text))
+    return "ESTRUTURA_CURSOS";
+  if (/matriz|grade\s+curricular|ppc|dura[cç][aã]o\s+do\s+curso/i.test(t))
+    return "ESTRUTURA_CURSOS";
+  if (/ementa|pre-?requisito|conte[uú]do\s+(?:da|programático)/i.test(t))
+    return "DISCIPLINA_EMENTA";
+  if (/per[íi]odo|semestre|curso\s+de/i.test(t))
+    return "ESTRUTURA_CURSOS";
+  if (/disciplina/i.test(t))
+    return "DISCIPLINA_EMENTA";
+  if (/tcc|trabalho\s+de\s+conclus[aã]o|est[aá]gio/i.test(t))
+    return "ESTAGIO_TCC";
+  if (/matr[íi]cula|ingresso|sisu|vestibular|trancamento/i.test(t))
+    return "INGRESSO_MATRICULA";
+  if (/frequ[eê]ncia|falta|nota|abono|atestado|prova|exame/i.test(t))
+    return "AVALIACAO_FREQUENCIA";
+  if (/bolsa|aux[ií]lio|moradia|transporte/i.test(t))
+    return "ASSISTENCIA_BOLSAS";
+  if (/biblioteca|laborat[oó]rio|restaurante/i.test(t))
+    return "INFRA_CAMPUS";
+  if (/disciplinar|penalidade|deveres|direitos/i.test(t))
+    return "DIREITOS_DEVERES";
+  if (/horas?\s+complementar|extens[aã]o|monitoria|pesquisa/i.test(t))
+    return "ATIVIDADES_EXTRAS";
+  return "OUTRAS";
+}
+async function processAgentBetaQuestionStream(question, res, sessionId) {
+  const start = Date.now();
+  console.log(`
+${"\u2500".repeat(50)}`);
+  console.log(`\u{1F9EA} [Agente Beta] Nova pergunta: "${question}"`);
+  if (sessionId)
+    console.log(`\u{1F9E0} [Agente Beta] Sess\xE3o: ${sessionId.substring(0, 8)}...`);
+  if (sessionId && isSessionExpired(sessionId)) {
+    console.log(`\u23F0 [Agente Beta] Sess\xE3o expirada: ${sessionId.substring(0, 8)}...`);
+    res.write(`data: ${JSON.stringify({ type: "session_expired" })}
+
+`);
+    res.write(`data: [DONE]
+
+`);
+    return;
+  }
+  const session = sessionId ? getOrCreateSession(sessionId) : null;
+  const contextualizedQuestion = session ? resolveReferences(question, session) : question;
+  res.write(`data: ${JSON.stringify({ type: "status", status: "Analisando pergunta (Modo Beta)..." })}
+
+`);
+  if (detectGreetingBypass(contextualizedQuestion)) {
+    console.log(`\u{1F680} [Agente Beta] Fast-path ativado: sauda\xE7\xE3o detectada.`);
+    res.write(`data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}
+
+`);
+    res.write(`data: ${JSON.stringify({ type: "sources", sources: [] })}
+
+`);
+    await streamStaticGreeting(res);
+    if (session) {
+      updateSession(session.sessionId, question, "GREETING", STATIC_GREETING_RESPONSE);
+    }
+    const duration3 = ((Date.now() - start) / 1e3).toFixed(1);
+    console.log(`\u23F1\uFE0F  [Agente Beta] Fast-path conclu\xEDdo em ${duration3}s
+`);
+    return;
+  }
+  const mcpClient2 = getMCPClient();
+  if (!mcpClient2) {
+    throw new Error("Servidor MCP n\xE3o est\xE1 conectado.");
+  }
+  const betaTools = await getMCPBetaTools();
+  const historyMessages = (session?.messages ?? []).slice(-5).map((m) => ({ role: m.role, content: m.content }));
+  const messages = [
+    { role: "system", content: AGENT_BETA_SYSTEM_PROMPT },
+    ...historyMessages,
+    { role: "user", content: contextualizedQuestion }
+  ];
+  console.log(`\u{1F9E0} [Agente Beta] Passo 1: Avaliando inten\xE7\xE3o e ferramentas com ${betaTools.length} tool(s)...`);
+  res.write(`data: ${JSON.stringify({ type: "status", status: "Analisando inten\xE7\xE3o e ferramentas..." })}
+
+`);
+  const firstResponse = await fetch(`${OLLAMA_BASE_URL3}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS3),
+    body: JSON.stringify({
+      model: LLM_MODEL3,
+      messages,
+      tools: betaTools,
+      stream: false,
+      keep_alive: "24h",
+      options: {
+        num_ctx: NUM_CTX3,
+        temperature: 0,
+        num_predict: 512
+      }
+    })
+  });
+  if (!firstResponse.ok) {
+    const errorText = await firstResponse.text();
+    throw new Error(`[Ollama] Erro ${firstResponse.status}: ${errorText}`);
+  }
+  const firstData = await firstResponse.json();
+  const assistantMessage = firstData.message;
+  if (!assistantMessage) {
+    throw new Error("[Ollama] Resposta sem message");
+  }
+  const isGreetingQuery = /^(ol[áa]|bom\s+dia|boa\s+tarde|boa\s+noite|tudo\s+bem|oi|opa|e\s+a[ií])[\s!?.]*$/i.test(contextualizedQuestion.trim());
+  if ((!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) && !isGreetingQuery) {
+    console.log(`\u{1F4A1} [Agente Beta] For\xE7ando busca determin\xEDstica para pergunta factual: "${contextualizedQuestion}"`);
+    const inferredIntent = inferIntentionFromKeywords2(contextualizedQuestion);
+    assistantMessage.tool_calls = [
+      {
+        function: {
+          name: "search_ifmg_knowledge_beta",
+          arguments: {
+            semantic_query: contextualizedQuestion,
+            keywords: contextualizedQuestion.replace(/[?.,!;]/g, "").trim(),
+            intent: inferredIntent
+          }
+        }
+      }
+    ];
+  }
+  const sources = [];
+  if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
+    console.log(`\u{1F527} [Agente Beta] Executando ${assistantMessage.tool_calls.length} chamada(s) de ferramenta...`);
+    messages.push({
+      role: "assistant",
+      content: assistantMessage.content || "",
+      tool_calls: assistantMessage.tool_calls
+    });
+    res.write(`data: ${JSON.stringify({ type: "status", status: "Buscando nos documentos oficiais (Beta)..." })}
+
+`);
+    for (const toolCall of assistantMessage.tool_calls) {
+      const { name, arguments: args } = toolCall.function;
+      console.log(`   \u{1F4DE} [Agente Beta] Chamando ferramenta: ${name}(${JSON.stringify(args)})`);
+      try {
+        let toolResult = await mcpClient2.callTool({
+          name,
+          arguments: args
+        });
+        let resultText = toolResult.content.filter((c) => c.type === "text").map((c) => c.text).join("\n");
+        if (resultText.includes("Nenhum trecho relevante encontrado") && args.keywords) {
+          console.log(`\u{1F504} [Agente Beta] Busca corretiva ativada: ampliando termos de busca...`);
+          res.write(`data: ${JSON.stringify({ type: "status", status: "Refinando busca documental..." })}
+
+`);
+          const relaxedArgs = {
+            semantic_query: contextualizedQuestion,
+            keywords: contextualizedQuestion,
+            intent: args.intent || inferIntentionFromKeywords2(contextualizedQuestion)
+          };
+          const retryResult = await mcpClient2.callTool({
+            name,
+            arguments: relaxedArgs
+          });
+          const retryText = retryResult.content.filter((c) => c.type === "text").map((c) => c.text).join("\n");
+          if (!retryText.includes("Nenhum trecho relevante encontrado")) {
+            console.log(`   \u2705 [Agente Beta] Busca corretiva encontrou documentos relevantes!`);
+            resultText = retryText;
+          }
+        }
+        console.log(`   \u2705 [Agente Beta] Trechos recuperados: ${resultText.substring(0, 80)}...`);
+        const sourcesMatch = resultText.match(/\(fonte: ([^,]+), score RRF/g);
+        if (sourcesMatch) {
+          sourcesMatch.forEach((f3) => {
+            const match = f3.match(/fonte: ([^,]+)/);
+            if (match && !sources.includes(match[1]))
+              sources.push(match[1]);
+          });
+        }
+        messages.push({
+          role: "tool",
+          tool_name: name,
+          content: resultText
+        });
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : "Erro desconhecido";
+        console.error(`   \u274C [Agente Beta] Erro na ferramenta ${name}: ${msg}`);
+        messages.push({
+          role: "tool",
+          tool_name: name,
+          content: `Erro ao buscar documentos: ${msg}`
+        });
+      }
+    }
+    res.write(`data: ${JSON.stringify({ type: "sources", sources })}
+
+`);
+  } else {
+    console.log("\u{1F4AC} [Agente Beta] Resposta direta gerada pelo modelo");
+    const directContent = assistantMessage.content || "Ol\xE1! Como posso ajudar voc\xEA hoje com informa\xE7\xF5es sobre o IFMG?";
+    res.write(`data: ${JSON.stringify({ type: "sources", sources: [] })}
+
+`);
+    res.write(`data: ${JSON.stringify({ type: "token", content: directContent })}
+
+`);
+    res.write(`data: [DONE]
+
+`);
+    if (session) {
+      updateSession(session.sessionId, question, "", directContent);
+    }
+    return;
+  }
+  let fewShotBlock = "";
+  try {
+    const questionEmbedding = await generateOllamaEmbedding(contextualizedQuestion);
+    const positiveExamples = await getPositiveExamples(questionEmbedding, 2);
+    if (positiveExamples.length > 0) {
+      console.log(`\u{1F31F} [Agente Beta] ICL Din\xE2mico: ${positiveExamples.length} exemplo(s) com \u{1F44D} injetado(s)`);
+      const examplesFormatted = positiveExamples.map(
+        (ex, i) => `EXEMPLO ${i + 1}:
+PERGUNTA DO ALUNO: ${ex.question}
+SUA RESPOSTA (aprovada com nota m\xE1xima): ${ex.response}`
+      ).join("\n\n");
+      fewShotBlock = `
+\u2550\u2550\u2550 EXEMPLOS DE SUCESSO APROVADOS PELOS ALUNOS \u2550\u2550\u2550
+${examplesFormatted}
+\u2550\u2550\u2550 FIM DOS EXEMPLOS \u2550\u2550\u2550
+Use estes exemplos como refer\xEAncia de tom formal, clareza e estrutura.
+`;
+    }
+  } catch (error) {
+    console.warn("\u26A0\uFE0F  [Agente Beta] Falha ao recuperar exemplos de ICL:", error);
+  }
+  console.log("\u{1F30A} [Agente Beta] Passo 3: Gerando s\xEDntese final (temperatura: 0.0)...");
+  res.write(`data: ${JSON.stringify({ type: "status", status: "Sintetizando resposta final..." })}
+
+`);
+  const messagesFinal = [
+    ...messages,
+    {
+      role: "system",
+      content: `DIRETIVA FINAL OBRIGAT\xD3RIA:
+${fewShotBlock}
+Sua resposta deve basear-se ESTRITAMENTE nos trechos de documentos retornados pela ferramenta acima.
+- Responda em Portugu\xEAs do Brasil (pt-BR).
+- Forne\xE7a ementas ou normas de forma INTEGRAL sem resumir.
+- N\xC3O se apresente ou inclua pensamentos internos. V\xE1 direto ao ponto.`
+    }
+  ];
+  const streamResponse = await fetch(`${OLLAMA_BASE_URL3}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS3),
+    body: JSON.stringify({
+      model: LLM_MODEL3,
+      messages: messagesFinal,
+      stream: true,
+      think: false,
+      keep_alive: "1h",
+      options: {
+        num_ctx: NUM_CTX3,
+        temperature: 0,
+        // Determinação factual máxima
+        num_predict: 2048
+      }
+    })
+  });
+  if (!streamResponse.ok) {
+    const errorText = await streamResponse.text();
+    throw new Error(`[Ollama S\xEDntese] Erro ${streamResponse.status}: ${errorText}`);
+  }
+  let fullResponse = "";
+  try {
+    fullResponse = await streamOllamaResponse(
+      streamResponse,
+      res,
+      () => {
+      },
+      (cleaned) => {
+        fullResponse = cleaned;
+      }
+    );
+  } catch (streamError) {
+    console.error("\u274C [Agente Beta] Erro durante o stream da resposta:", streamError);
+    if (!res.writableEnded) {
+      res.write(
+        `data: ${JSON.stringify({
+          type: "error",
+          message: "Ocorreu uma instabilidade na transmiss\xE3o da resposta."
+        })}
+
+`
+      );
+      res.write(`data: [DONE]
+
+`);
+    }
+    return;
+  }
+  fullResponse = extractDraftFromThinking(fullResponse);
+  if (session && fullResponse) {
+    updateSession(session.sessionId, question, "", fullResponse);
+  }
+  const duration2 = ((Date.now() - start) / 1e3).toFixed(1);
+  console.log(`\u23F1\uFE0F  [Agente Beta] Pipeline conclu\xEDdo com sucesso em ${duration2}s
+`);
+}
+
+// src/controllers/agent_beta.controller.ts
+async function sendAgentBetaQuestion(req, res) {
+  try {
+    const { question, sessionId } = req.body;
+    if (!question || typeof question !== "string") {
+      res.status(400).json({
+        error: "O campo 'question' \xE9 obrigat\xF3rio e deve ser uma string."
+      });
+      return;
+    }
+    const questionTrimmed = question.trim();
+    if (questionTrimmed.length < 3) {
+      res.status(400).json({
+        error: "A pergunta deve ter pelo menos 3 caracteres."
+      });
+      return;
+    }
+    if (questionTrimmed.length > 1e3) {
+      res.status(400).json({
+        error: "A pergunta deve ter no m\xE1ximo 1000 caracteres."
+      });
+      return;
+    }
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no"
+    });
+    req.on("close", () => {
+      console.log("\u{1F50C} [SSE Agent Beta] Cliente desconectou");
+    });
+    await withConcurrencyControl(async () => {
+      await processAgentBetaQuestionStream(questionTrimmed, res, sessionId);
+    });
+    res.end();
+  } catch (error) {
+    console.error("[AgentBetaController] Erro:", error);
+    if (res.headersSent) {
+      const errorMessage = error instanceof Error && error.message.includes("Ollama") ? "O servidor de IA ficou inacess\xEDvel. Tente novamente." : "Ocorreu um erro durante o processamento no Agente Beta.";
+      res.write(
+        `data: ${JSON.stringify({ type: "error", message: errorMessage })}
+
+`
+      );
+      res.end();
+    } else {
+      res.status(500).json({
+        error: "Erro interno ao processar sua pergunta no modo Beta."
+      });
+    }
+  }
+}
+
+// src/routes/agent_beta.routes.ts
+var agentBetaRouter = Router4();
+agentBetaRouter.post("/", sendAgentBetaQuestion);
+
 // src/middlewares/rateLimiter.ts
 import rateLimit from "express-rate-limit";
 var chatLimiter = rateLimit({
@@ -28177,6 +28594,7 @@ app.use(
 app.use(express.json());
 app.use("/api/chat", chatLimiter, chatRouter);
 app.use("/api/agent", chatLimiter, agentRouter);
+app.use("/api/agent-beta", chatLimiter, agentBetaRouter);
 app.use("/api/embedding", uploadLimiter, adminAuth, embeddingRouter);
 app.get("/api/health", async (_req, res) => {
   let dbOk = false;
@@ -28216,6 +28634,7 @@ var server = app.listen(PORT, async () => {
 \u{1F680} Servidor rodando na porta ${PORT}`);
   console.log(`\u{1F4E1} Chat (RAG):         POST /api/chat`);
   console.log(`\u{1F916} Agent (MCP):        POST /api/agent`);
+  console.log(`\u{1F9EA} Agent Beta (MCP):   POST /api/agent-beta`);
   console.log(`\u{1F4E4} Upload endpoint:    POST /api/embedding/upload`);
   console.log(`\u{1F4CB} Documentos:         GET  /api/embedding/documentos`);
   console.log(`\u{1F49A} Health check:       GET  /api/health

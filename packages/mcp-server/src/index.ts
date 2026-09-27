@@ -289,6 +289,162 @@ async function searchDocuments(
   return documents;
 }
 
+/**
+ * Busca híbrida otimizada para o Modo Agente Beta.
+ * Incorpora:
+ *   1. Vetorização semântica da pergunta rica/contextualizada no bge-m3
+ *   2. Busca Full-Text (FTS) com termos-chave tratados
+ *   3. Re-ranking completo com bonificação por código de disciplina, matriz curricular
+ *      e penalizações cruzadas (idêntico ao pipeline do RAG Clássico).
+ */
+async function searchDocumentsBeta(
+  embedding: number[],
+  semanticQuery: string,
+  queryKeywords: string,
+  limit: number,
+  intent?: string
+): Promise<{ id: number; content: string; source: string; similarity: number }[]> {
+  const vectorStr = `[${embedding.join(",")}]`;
+  const ftsQuery = formatFTSQuery(queryKeywords || semanticQuery, intent);
+
+  console.error(
+    `🔍 [MCP Beta] Busca híbrida (α=${RRF_ALPHA}, k=${RRF_K}) | Intenção: [${intent || "N/A"}] | FTS: "${ftsQuery}"`
+  );
+
+  const result = await pool.query(
+    `WITH
+       semantic AS (
+         SELECT id, content AS content, metadata->>'filename' AS source,
+           1 - (embedding <=> $1::vector) AS similarity,
+           ROW_NUMBER() OVER (ORDER BY embedding <=> $1::vector) AS rank
+         FROM documents
+         ORDER BY embedding <=> $1::vector
+         LIMIT 40
+       ),
+       lexical AS (
+         SELECT id, content AS content, metadata->>'filename' AS source,
+           ts_rank_cd(content_tsv, to_tsquery('portuguese_unaccent', $2::text)) AS ts_score,
+           ROW_NUMBER() OVER (
+             ORDER BY ts_rank_cd(content_tsv, to_tsquery('portuguese_unaccent', $2::text)) DESC
+           ) AS rank
+         FROM documents
+         WHERE content_tsv @@ to_tsquery('portuguese_unaccent', $2::text)
+         ORDER BY ts_score DESC
+         LIMIT 40
+       ),
+       hybrid_results AS (
+         SELECT
+           COALESCE(s.id, l.id) AS id,
+           COALESCE(s.content, l.content) AS content,
+           COALESCE(s.source, l.source) AS source,
+           COALESCE(s.similarity, 0) AS similarity,
+           (
+             ${RRF_ALPHA} * COALESCE(1.0 / (${RRF_K} + s.rank), 0.0) +
+             ${1 - RRF_ALPHA} * COALESCE(1.0 / (${RRF_K} + l.rank), 0.0)
+           ) AS rrf_score
+         FROM semantic s
+         FULL OUTER JOIN lexical l ON s.id = l.id
+       )
+     SELECT * FROM hybrid_results
+     WHERE rrf_score >= ${MIN_RRF_SCORE}
+     ORDER BY rrf_score DESC
+     LIMIT $3`,
+    [vectorStr, ftsQuery, limit]
+  );
+
+  let documents = result.rows.map((row) => ({
+    id: Number(row.id),
+    content: row.content,
+    source: row.source || "documento desconhecido",
+    similarity: Number(row.rrf_score),
+  }));
+
+  // ── Boost e Penalizações de Re-ranking Alinhados ao RAG Clássico ──
+  const isEmentaQuery = intent === "DISCIPLINA_EMENTA" || intent === "DISCIPLINA" || intent === "CONTEUDO";
+  const isCursoQuery = intent === "CURSO" || intent === "ESTRUTURA_CURSOS";
+
+  const fullSearchText = `${semanticQuery} ${queryKeywords}`;
+  const codeMatch = fullSearchText.match(/(OBBGSIN|OBBGADM|OBBGEMT|OBLCOMP|OBLPED)\.?(\d{3})/i);
+  const targetCode = codeMatch ? `${codeMatch[1]}.${codeMatch[2]}`.toLowerCase() : null;
+
+  for (const doc of documents) {
+    const contentLower = doc.content.toLowerCase();
+
+    // 1. Se a busca contém código específico (ex: OBBGSIN.034)
+    if (targetCode && contentLower.includes(targetCode)) {
+      doc.similarity += 0.15;
+
+      // Se for busca de ementa E o trecho contiver "ementa:", adiciona super boost (+0.30)
+      if (isEmentaQuery && /ementa:/i.test(doc.content)) {
+        doc.similarity += 0.30;
+      }
+    } else if (isEmentaQuery && /ementa:/i.test(doc.content)) {
+      doc.similarity += 0.10;
+    }
+
+    // 2. Boost para chunks com Matriz Curricular quando a pergunta for sobre estrutura/período
+    if (isCursoQuery && /PER[IÍ]ODO\s+COD\.?\s+DISCIPLINA|1[oº]\s+Per[íi]odo|Matriz\s+Curricular/i.test(doc.content)) {
+      doc.similarity += 0.12;
+    }
+
+    // 3. Penalização para ementa detalhada fora de contexto quando se busca estrutura
+    if (isCursoQuery && /\bEmenta:\s/i.test(doc.content) && !/PER[IÍ]ODO|per[íi]odo/i.test(doc.content)) {
+      doc.similarity -= 0.05;
+    }
+
+    // 4. Penalização para tabela de matriz quando se busca ementa específica
+    if (isEmentaQuery && /PERÍODO\s+COD\.\s+DISCIPLINA/i.test(doc.content)) {
+      doc.similarity -= 0.15;
+    }
+  }
+
+  documents.sort((a, b) => b.similarity - a.similarity);
+
+  // ── Penalização por feedback negativo (ICL Dinâmico) ──
+  if (documents.length > 0) {
+    try {
+      const chunkIds = documents.map((d) => d.id);
+      const negResult = await pool.query(
+        `SELECT unnest(chunk_ids) AS chunk_id, COUNT(*) AS neg_count
+          FROM chat_feedbacks
+          WHERE feedback_type = 'negative'
+            AND chunk_ids && $1::integer[]
+          GROUP BY chunk_id`,
+        [chunkIds]
+      );
+
+      if (negResult.rows.length > 0) {
+        const negatives = new Map<number, number>();
+        for (const row of negResult.rows) {
+          negatives.set(Number(row.chunk_id), Number(row.neg_count));
+        }
+
+        for (const doc of documents) {
+          const negCount = negatives.get(doc.id) || 0;
+          if (negCount > 0) {
+            const originalScore = doc.similarity;
+            doc.similarity *= 1 / (1 + PENALTY_BETA * negCount);
+            console.error(
+              `⚠️  [MCP Beta RRF] Chunk #${doc.id} penalizado: ` +
+              `${negCount} negativo(s), score ${originalScore.toFixed(4)} → ${doc.similarity.toFixed(4)}`
+            );
+          }
+        }
+
+        documents.sort((a, b) => b.similarity - a.similarity);
+        documents = documents.slice(0, limit);
+      }
+    } catch (error) {
+      console.error(
+        "⚠️  [MCP Beta] Erro ao aplicar penalização por feedback negativo:",
+        error instanceof Error ? error.message : error
+      );
+    }
+  }
+
+  return documents;
+}
+
 // ---------------------------------------------------------------------------
 // Servidor MCP
 // ---------------------------------------------------------------------------
@@ -302,8 +458,7 @@ const server = new McpServer({
  * Tool: search_ifmg_knowledge
  *
  * Busca semântica nos documentos oficiais do curso de Sistemas de Informação
- * do IFMG Campus Ouro Branco. Vetoriza a query com bge-m3 e
- * consulta o PostgreSQL (pgvector) por trechos similares.
+ * do IFMG Campus Ouro Branco. Mantida intacta para experimentos de baseline.
  */
 // @ts-expect-error — TS2589: z.enum com 10 valores excede o limite de recursão do TypeScript nos generics do SDK MCP. Runtime funciona normalmente.
 server.registerTool(
@@ -394,6 +549,124 @@ server.registerTool(
       const msg =
         error instanceof Error ? error.message : "Erro desconhecido";
       console.error(`❌ [MCP] Erro na busca: ${msg}`);
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Erro interno do banco de dados ao buscar nos documentos: ${msg}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+);
+
+/**
+ * Tool: search_ifmg_knowledge_beta
+ *
+ * Ferramenta aprimorada para o Modo Agente Beta.
+ * Utiliza busca híbrida assimétrica (semantic_query para bge-m3 + keywords para FTS)
+ * e re-ranking rigoroso para ementas, matrizes e códigos de disciplina.
+ */
+// @ts-expect-error — TS2589: z.enum com 10 valores excede o limite de recursão do TypeScript nos generics do SDK MCP. Runtime funciona normalmente.
+server.registerTool(
+  "search_ifmg_knowledge_beta",
+  {
+    description:
+      "Busca semântica e léxica otimizada nos documentos oficiais do IFMG Campus Ouro Branco. " +
+      "Use esta ferramenta para consultar regulamentos, matriz curricular, PPC, ementas de disciplinas, " +
+      "regras de TCC, estágios e normas acadêmicas.\n\n" +
+      "DIRETIVAS DE ENTRADA:\n" +
+      "- 'semantic_query': Envie a pergunta ou descrição formal completa para o modelo neural denso.\n" +
+      "- 'keywords': Envie palavras-chave essenciais e nomes de disciplinas/códigos para o índice léxico.\n" +
+      "- 'intent': Classifique estritamente a intenção da busca.",
+    inputSchema: {
+      semantic_query: z.string().describe(
+        "Pergunta contextualizada ou sentença descritiva completa para busca vetorial densa (bge-m3). Ex: 'Qual é a ementa e conteúdo programático da disciplina Banco de Dados I no curso de Sistemas?'"
+      ),
+      keywords: z.string().describe(
+        "Palavras-chave essenciais, siglas expandidas e códigos de disciplina para busca Full-Text. Ex: 'ementa Banco de Dados I OBBGSIN.034'"
+      ),
+      intent: z.enum([
+        "INGRESSO_MATRICULA",
+        "ESTRUTURA_CURSOS",
+        "DISCIPLINA_EMENTA",
+        "AVALIACAO_FREQUENCIA",
+        "ESTAGIO_TCC",
+        "ATIVIDADES_EXTRAS",
+        "ASSISTENCIA_BOLSAS",
+        "INFRA_CAMPUS",
+        "DIREITOS_DEVERES",
+        "OUTRAS"
+      ]).describe(
+        "Classifique a intenção da busca em uma destas categorias:\n" +
+        "- INGRESSO_MATRICULA: Vestibular, SISU, transferências, trancamento, cancelamento ou renovação.\n" +
+        "- ESTRUTURA_CURSOS: Matriz curricular, listagem de matérias de um período/semestre, PPC, duração.\n" +
+        "- DISCIPLINA_EMENTA: Ementa detalhada, pré-requisitos, correquisitos, conteúdo programático e bibliografia.\n" +
+        "- AVALIACAO_FREQUENCIA: Pontuação, média, provas, faltas (25%), abono e atestados.\n" +
+        "- ESTAGIO_TCC: Normas de estágio e Trabalho de Conclusão de Curso.\n" +
+        "- ATIVIDADES_EXTRAS: Horas complementares (AAC), pesquisa, extensão e monitoria.\n" +
+        "- ASSISTENCIA_BOLSAS: Assistência estudantil e bolsas.\n" +
+        "- INFRA_CAMPUS: Biblioteca, laboratórios e restaurante.\n" +
+        "- DIREITOS_DEVERES: Regime disciplinar e sanções.\n" +
+        "- OUTRAS: Qualquer outro tema institucional."
+      ),
+    },
+  },
+  async ({ semantic_query, keywords, intent }) => {
+    console.error(`🔍 [MCP Beta] Buscando: Semântica="${semantic_query}" | Keywords="${keywords}" | Intenção=[${intent}]`);
+
+    try {
+      const textToEmbed = semantic_query?.trim() || keywords?.trim() || "";
+      const embedding = await generateEmbedding(textToEmbed);
+      console.error(
+        `🔢 [MCP Beta] Embedding gerado (${embedding.length} dimensões)`
+      );
+
+      const documents = await searchDocumentsBeta(
+        embedding,
+        semantic_query,
+        keywords,
+        MAX_RESULTS,
+        intent
+      );
+
+      console.error(
+        `📄 [MCP Beta] ${documents.length} trechos encontrados (acima da nota de corte)`
+      );
+
+      if (documents.length === 0) {
+        console.error(`⚠️ [MCP Beta] Nenhum documento superou o MIN_RRF_SCORE (${MIN_RRF_SCORE})`);
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: "Nenhum trecho relevante encontrado nos documentos oficiais do IFMG para esta consulta. Responda ao usuário que você não encontrou a informação nos regulamentos atuais.",
+            },
+          ],
+        };
+      }
+
+      const result = documents
+        .map(
+          (doc, i) =>
+            `--- Trecho ${i + 1} (fonte: ${doc.source}, score RRF: ${doc.similarity.toFixed(4)}) ---\n${doc.content}`
+        )
+        .join("\n\n");
+
+      console.error(
+        `✅ [MCP Beta] Retornando ${documents.length} trechos otimizados ao agente`
+      );
+
+      return {
+        content: [{ type: "text" as const, text: `[INTENÇÃO DA BUSCA: ${intent}]\n\n${result}` }],
+      };
+    } catch (error) {
+      const msg =
+        error instanceof Error ? error.message : "Erro desconhecido";
+      console.error(`❌ [MCP Beta] Erro na busca: ${msg}`);
 
       return {
         content: [

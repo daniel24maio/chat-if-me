@@ -158,8 +158,39 @@ export async function initializeMCPClient(): Promise<void> {
     );
     tools.forEach((t) => console.log(`   • ${t.name}: ${t.description}`));
 
-    // Converte para o formato Ollama tools[]
-    ollamaTools = tools.map((tool) => ({
+    // Converte para o formato Ollama tools[] — para o Agente Baseline, expõe apenas a ferramenta original
+    ollamaTools = tools
+      .filter((tool) => tool.name === "search_ifmg_knowledge")
+      .map((tool) => ({
+        type: "function" as const,
+        function: {
+          name: tool.name,
+          description: tool.description || "",
+          parameters: tool.inputSchema as Record<string, unknown>,
+        },
+      }));
+  } catch (error) {
+    console.error("❌ [MCP Client] Falha ao conectar:", error);
+    throw error;
+  }
+}
+
+/**
+ * Retorna a instância do MCP Client conectado para compartilhamento de processo.
+ */
+export function getMCPClient(): Client | null {
+  return mcpClient;
+}
+
+/**
+ * Retorna as ferramentas configuradas especificamente para o Agente Beta.
+ */
+export async function getMCPBetaTools(): Promise<OllamaToolDef[]> {
+  if (!mcpClient) return [];
+  const { tools } = await mcpClient.listTools();
+  return tools
+    .filter((tool) => tool.name === "search_ifmg_knowledge_beta")
+    .map((tool) => ({
       type: "function" as const,
       function: {
         name: tool.name,
@@ -167,10 +198,6 @@ export async function initializeMCPClient(): Promise<void> {
         parameters: tool.inputSchema as Record<string, unknown>,
       },
     }));
-  } catch (error) {
-    console.error("❌ [MCP Client] Falha ao conectar:", error);
-    throw error;
-  }
 }
 
 /**

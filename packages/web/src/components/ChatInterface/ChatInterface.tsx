@@ -27,6 +27,11 @@ interface Message {
   mode?: 'rag' | 'agent';
 }
 
+interface ChatInterfaceProps {
+  /** Indica se a interface está operando no modo experimental Assistente Beta */
+  isBeta?: boolean;
+}
+
 /**
  * Interface principal do chat com streaming SSE.
  *
@@ -34,20 +39,24 @@ interface Message {
  * Server-Sent Events (SSE). Cada token da resposta é exibido em tempo real,
  * dando a sensação de que a IA está "digitando".
  */
-const ChatInterface: React.FC = () => {
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ isBeta = false }) => {
   const { theme } = useTheme();
   const [inputValue, setInputValue] = useState('');
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
-      text: 'Olá! 👋 Bem-vindo ao Chat Assistente Virtual IFMG — assistente virtual do campus IFMG Ouro Branco.',
+      text: isBeta
+        ? 'Olá! 👋 Bem-vindo ao Chat Assistente Virtual IFMG (Modo Beta Otimizado). Aqui você testa as melhorias de precisão do agente com re-ranking refinado, Dynamic ICL e busca híbrida avançada.'
+        : 'Olá! 👋 Bem-vindo ao Chat Assistente Virtual IFMG — assistente virtual do campus IFMG Ouro Branco.',
       sender: 'ai',
       timestamp: new Date(),
     },
   ]);
   const [isStreaming, setIsStreaming] = useState(false);
   /** Modo agente (MCP) ou RAG clássico */
-  const [useAgent, setUseAgent] = useState(false);
+  const [useAgent, setUseAgent] = useState(isBeta ? true : false);
+  /** Controla a exibição do popover explicativo sobre os modos */
+  const [showModeInfo, setShowModeInfo] = useState(false);
   /** Identificador da sessão — enviado ao backend para memória conversacional */
   const [sessionId, setSessionId] = useState(() => crypto.randomUUID());
   /** Status do pipeline exibido no frontend durante o carregamento */
@@ -65,12 +74,6 @@ const ChatInterface: React.FC = () => {
 
   /**
    * Processa o stream SSE da API usando fetch + ReadableStream.
-   *
-   * Eventos esperados do backend:
-   *   data: {"type":"sources","sources":[...]}   → fontes dos documentos
-   *   data: {"type":"token","content":"..."}    → token da resposta
-   *   data: {"type":"error","message":"..."}    → erro durante o stream
-   *   data: [DONE]                              → fim do stream
    */
   const processStream = useCallback(async (question: string, aiMessageId: string) => {
     // Cria AbortController para permitir cancelamento
@@ -79,7 +82,7 @@ const ChatInterface: React.FC = () => {
     setStatusMessage('Analisando pergunta...');
 
     try {
-      const endpoint = useAgent ? '/api/agent' : '/api/chat';
+      const endpoint = useAgent ? (isBeta ? '/api/agent-beta' : '/api/agent') : '/api/chat';
       const response = await fetch(`${API_URL}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -228,7 +231,7 @@ const ChatInterface: React.FC = () => {
     } finally {
       abortControllerRef.current = null;
     }
-  }, [useAgent, sessionId]);
+  }, [useAgent, isBeta, sessionId]);
 
   /**
    * Envia a mensagem do usuário e inicia o stream da resposta.
@@ -306,6 +309,10 @@ const ChatInterface: React.FC = () => {
           feedback: feedbackType,
           question,
           response,
+          metadata: {
+            mode: isBeta && useAgent ? 'agent_beta' : useAgent ? 'agent' : 'rag',
+            isBeta,
+          },
         }),
       });
     } catch (error) {
@@ -320,7 +327,9 @@ const ChatInterface: React.FC = () => {
     setMessages([
       {
         id: '1',
-        text: 'Olá! 👋 Bem-vindo ao Chat Assistente Virtual IFMG — assistente virtual do campus IFMG Ouro Branco.',
+        text: isBeta
+          ? 'Olá! 👋 Bem-vindo ao Chat Assistente Virtual IFMG (Modo Beta Otimizado). Aqui você testa as melhorias de precisão do agente com re-ranking refinado, Dynamic ICL e busca híbrida avançada.'
+          : 'Olá! 👋 Bem-vindo ao Chat Assistente Virtual IFMG — assistente virtual do campus IFMG Ouro Branco.',
         sender: 'ai',
         timestamp: new Date(),
       },
@@ -338,21 +347,51 @@ const ChatInterface: React.FC = () => {
         <div className="logo-container">
           <img src={theme === 'dark' ? logoDark : logoLight} alt="Logo IFMG Campus Ouro Branco" className="logo-img" />
           <div className="header-text">
-            <h1>Chat Assistente Virtual IFMG</h1>
+            <div className="header-title-row">
+              <h1>Chat Assistente Virtual IFMG</h1>
+              {isBeta && <span className="beta-header-badge">Assistente Beta 🧪</span>}
+            </div>
             <span className="campus-badge">Campus Ouro Branco</span>
           </div>
         </div>
-        {/* Controles do header: toggle modo + toggle tema */}
+        {/* Controles do header: Seletor de Modo Segmentado + Toggle de Tema */}
         <div className="header-controls">
-          <button
-            className={`mode-toggle ${useAgent ? 'mode-agent' : 'mode-rag'}`}
-            onClick={() => setUseAgent((prev) => !prev)}
-            disabled={isStreaming}
-            title={useAgent ? 'Modo: Agente MCP (Tool Calling)' : 'Modo: RAG Clássico'}
-            aria-label={useAgent ? 'Alternar para modo RAG Clássico' : 'Alternar para modo Agente MCP'}
-          >
-            {useAgent ? '🤖 Agente' : '📚 RAG'}
-          </button>
+          <div className="mode-selector-wrapper">
+            <span className="mode-selector-label" id="mode-selector-label">Modo:</span>
+            <div className="mode-segmented-control" role="radiogroup" aria-labelledby="mode-selector-label">
+              <button
+                type="button"
+                className={`mode-segment-btn ${!useAgent ? 'active mode-rag' : ''}`}
+                onClick={() => setUseAgent(false)}
+                disabled={isStreaming}
+                title="RAG Clássico: Busca direta híbrida e síntese imediata"
+                role="radio"
+                aria-checked={!useAgent}
+              >
+                📚 RAG Clássico
+              </button>
+              <button
+                type="button"
+                className={`mode-segment-btn ${useAgent ? (isBeta ? 'active mode-beta' : 'active mode-agent') : ''}`}
+                onClick={() => setUseAgent(true)}
+                disabled={isStreaming}
+                title={isBeta ? "Agente Beta: Tool calling e re-ranking otimizado" : "Agente MCP: Raciocínio com chamada de ferramentas"}
+                role="radio"
+                aria-checked={useAgent}
+              >
+                {isBeta ? '🚀 Agente Beta' : '🤖 Agente MCP'}
+              </button>
+            </div>
+            <button
+              type="button"
+              className="mode-info-btn"
+              onClick={() => setShowModeInfo((prev) => !prev)}
+              title="Clique para entender as diferenças entre os modos"
+              aria-label="Informações explicativas sobre os modos do assistente"
+            >
+              ℹ️
+            </button>
+          </div>
           <ThemeToggle />
         </div>
       </header>
@@ -402,8 +441,10 @@ const ChatInterface: React.FC = () => {
                   </div>
 
                   <div className="search-mode-indicator">
-                    <span className={`search-mode-badge ${msg.mode === 'agent' ? 'mode-badge-agent' : 'mode-badge-rag'}`}>
-                      {msg.mode === 'agent' ? '🤖 Modo: Agente MCP' : '⚡ Modo: RAG Clássico'}
+                    <span className={`search-mode-badge ${msg.mode === 'agent' ? (isBeta ? 'mode-badge-beta' : 'mode-badge-agent') : 'mode-badge-rag'}`}>
+                      {msg.mode === 'agent' 
+                        ? (isBeta ? '🚀 Modo: Agente Beta (Otimizado)' : '🤖 Modo: Agente MCP')
+                        : '⚡ Modo: RAG Clássico'}
                     </span>
                   </div>
                 </div>
@@ -471,6 +512,53 @@ const ChatInterface: React.FC = () => {
             <button onClick={handleResetSession} className="modal-btn" aria-label="Iniciar nova conversa">
               Nova Conversa
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Popover / Modal Explicativo dos Modos de Resposta */}
+      {showModeInfo && (
+        <div className="mode-info-overlay" onClick={() => setShowModeInfo(false)}>
+          <div className="mode-info-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="mode-info-header">
+              <h3>ℹ️ Modos de Resposta do Assistente</h3>
+              <button
+                type="button"
+                className="mode-info-close"
+                onClick={() => setShowModeInfo(false)}
+                aria-label="Fechar explicações dos modos"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="mode-info-content">
+              <div className="mode-info-card card-rag">
+                <h4>📚 Modo RAG Clássico</h4>
+                <p>
+                  Realiza <strong>busca híbrida direta</strong> (vetorial + Full-Text Search) nos documentos normativos do IFMG e elabora uma síntese textual objetiva com o modelo.
+                </p>
+                <span className="card-tag">Características: Rápido, direto e determinístico.</span>
+              </div>
+
+              <div className={`mode-info-card ${isBeta ? 'card-beta' : 'card-agent'}`}>
+                <h4>{isBeta ? '🚀 Modo Agente Beta (Otimizado)' : '🤖 Modo Agente MCP'}</h4>
+                <p>
+                  {isBeta
+                    ? 'Versão aprimorada com busca híbrida assimétrica, re-ranking fino por código de disciplina/matriz, injeção dinâmica de exemplos com feedback 👍 (ICL) e temperatura zero.'
+                    : 'O modelo atua como um agente autônomo com capacidade de raciocínio prévio e invocação de ferramentas (Tool Calling) via protocolo MCP sob demanda.'}
+                </p>
+                <span className="card-tag">
+                  {isBeta ? 'Otimizações: Máxima precisão em ementas, normas e TCC.' : 'Características: Raciocínio agêntico e consulta sob demanda.'}
+                </span>
+              </div>
+
+              <div className="mode-info-tip">
+                <span className="tip-icon">💡</span>
+                <p>
+                  <strong>Dica para o Experimento:</strong> Envie a mesma pergunta alternando entre os modos para comparar as respostas e nos ajude avaliando com <strong>👍</strong> ou <strong>👎</strong>!
+                </p>
+              </div>
+            </div>
           </div>
         </div>
       )}

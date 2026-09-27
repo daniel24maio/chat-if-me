@@ -19,6 +19,7 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<ChatInterface />} />
+          <Route path="/assistente-beta" element={<ChatInterface isBeta={true} />} />
           <Route path="/embedding" element={<EmbeddingPage />} />
         </Routes>
       </BrowserRouter>

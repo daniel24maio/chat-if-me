@@ -4,6 +4,7 @@ import cors from "cors";
 import { chatRouter } from "./routes/chat.routes.js";
 import { embeddingRouter } from "./routes/embedding.routes.js";
 import { agentRouter } from "./routes/agent.routes.js";
+import { agentBetaRouter } from "./routes/agent_beta.routes.js";
 import { pool, testDBConnection, verifyEmbeddingDimension, verifyFeedbacksTable } from "./config/database.js";
 import { checkOllama } from "./config/ollama.js";
 import { chatLimiter, uploadLimiter } from "./middlewares/rateLimiter.js";
@@ -77,6 +78,9 @@ app.use("/api/chat", chatLimiter, chatRouter);
 /** Rotas do agente MCP (Agentic RAG com Tool Calling) — rate limited */
 app.use("/api/agent", chatLimiter, agentRouter);
 
+/** Rotas do agente MCP Beta (Agentic RAG Otimizado) — rate limited */
+app.use("/api/agent-beta", chatLimiter, agentBetaRouter);
+
 /** Rotas do módulo de ingestão de documentos — rate limited + admin auth */
 app.use("/api/embedding", uploadLimiter, adminAuth, embeddingRouter);
 
@@ -128,6 +132,7 @@ const server = app.listen(PORT, async () => {
   console.log(`\n🚀 Servidor rodando na porta ${PORT}`);
   console.log(`📡 Chat (RAG):         POST /api/chat`);
   console.log(`🤖 Agent (MCP):        POST /api/agent`);
+  console.log(`🧪 Agent Beta (MCP):   POST /api/agent-beta`);
   console.log(`📤 Upload endpoint:    POST /api/embedding/upload`);
   console.log(`📋 Documentos:         GET  /api/embedding/documentos`);
   console.log(`💚 Health check:       GET  /api/health\n`);
