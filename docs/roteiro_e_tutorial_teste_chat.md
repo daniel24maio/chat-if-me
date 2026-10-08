@@ -14,9 +14,9 @@
    - [2.4 Alternando entre os Modos](#24-alternando-entre-os-modos)
    - [2.5 Como Registrar Feedback Individual nas Respostas (👍 / 👎)](#25-como-registrar-feedback-individual-nas-respostas---)
 3. [Sugestão de Perguntas Acadêmicas para Testar](#3-sugestão-de-perguntas-acadêmicas-para-testar)
-4. [Roteiro do Formulário de Avaliação (Questionário de 10 Perguntas)](#4-roteiro-do-formulário-de-avaliação-questionário-de-10-perguntas)
+4. [Roteiro do Formulário de Avaliação (Questionário de 11 Perguntas)](#4-roteiro-do-formulário-de-avaliação-questionário-de-11-perguntas)
    - [Estrutura e Justificativa Metodológica](#estrutura-e-justificativa-metodológica)
-   - [As 10 Questões do Formulário](#as-10-questões-do-formulário)
+   - [As 11 Questões do Formulário](#as-11-questões-do-formulário)
 5. [Orientações para Tabulação e Uso dos Resultados no TCC](#5-orientações-para-tabulação-e-uso-dos-resultados-no-tcc)
 
 ---
@@ -39,7 +39,7 @@ O diferencial do projeto é a coexistência de **duas abordagens técnicas de in
 
 Ao acessar [https://chat.danielgsilva.com.br/](https://chat.danielgsilva.com.br/), a interface do chat é apresentada em tela cheia, com identidade visual oficial do IFMG Campus Ouro Branco:
 
-- **Cabeçalho:** Contém a logo institucional, identificação do campus, o botão de alternância de modo (`📚 RAG` / `🤖 Agente`) e o botão de tema (Modo Claro / Modo Escuro).
+- **Cabeçalho:** Contém o logotipo institucional, identificação do campus, o botão de alternância de modo (`📚 RAG` / `🤖 Agente`) e o botão de tema (Modo Claro / Modo Escuro).
 - **Área Central de Mensagens:** Histórico da conversa, exibindo as perguntas enviadas e as respostas do assistente com formatação rica (Markdown, listas, tabelas e destaques).
 - **Rodapé de Entrada:** Campo de digitação de texto com botão "Enviar". Durante o processamento da resposta, o campo é bloqueado temporariamente para evitar concorrência desnecessária.
 
@@ -118,159 +118,182 @@ Para que o teste explore as diferentes capacidades de recuperação semântica e
 
 ### Bloco B: Regulamento de TCC e Estágio
 - *"Quais são as etapas e prazos para a entrega do projeto de TCC?"*
-- *"Quantas horas mínimas de estágio supervisionado são obrigatórias para conclusão do curso?"*
+- *"Quantas horas mínimas de estágio supervisionado são obrigatórias para a conclusão do curso?"*
 - *"Quem pode ser o orientador do meu trabalho de conclusão de curso?"*
 
 ### Bloco C: Normas Gerais de Ensino e Trâmites Acadêmicos
 - *"Como funciona o processo de trancamento total de matrícula e qual o prazo regulamentar?"*
-- *"Quantas horas de Atividades Complementares de Graduação (ACG) preciso integralizar?"*
+- *"Quantas horas de Atividades Complementares de Graduação (ACG) é necessário integralizar?"*
 - *"Qual é a média mínima para aprovação direta em uma disciplina e como funciona o exame final?"*
 
 ---
 
-## 4. Roteiro do Formulário de Avaliação (Questionário de 10 Perguntas)
+## 4. Roteiro do Formulário de Avaliação (Questionário de 11 Perguntas)
 
 ### Estrutura e Justificativa Metodológica
-O formulário de coleta de dados foi projetado para ser objetivo, rápido de preencher (cerca de 3 a 5 minutos) e aderente aos modelos de aceitação tecnológica (TAM — *Technology Acceptance Model*) e usabilidade, dividindo-se em:
-- **Perfil do Respondente (Q1):** Contextualização acadêmica.
-- **Avaliação do Modo RAG Clássico (Q2 e Q3):** Latência percebida e assertividade objetiva.
-- **Avaliação do Modo Agente MCP (Q4):** Profundidade e nível de detalhamento do agente.
-- **Demandas Informais e Escopo Não Documentado (Q5):** Identificação de dúvidas do cotidiano não formalizadas em documentos oficiais.
-- **Avaliação Factual e Ausência de Alucinações (Q6):** Verificação de fidelidade normativa.
-- **Comparativo Direto de Preferência (Q7):** Análise de *trade-off* prático entre os modelos.
-- **Usabilidade e Impacto Institucional (Q8 e Q9):** Facilidade da interface e utilidade percebida.
-- **Feedback Aberto (Q10):** Coleta de anomalias, falhas ou sugestões de expansão.
+O formulário de coleta de dados foi projetado para ser objetivo, rápido de preencher (cerca de 3 a 4 minutos) e aderente aos modelos de aceitação tecnológica (TAM — *Technology Acceptance Model*) e de usabilidade, dividindo-se em:
+- **Perfil do Respondente (Q1):** Contextualização acadêmica e estratificação por fase do curso.
+- **Avaliação do Modo RAG Clássico (Q2 e Q3):** Latência subjetiva percebida e assertividade objetiva.
+- **Avaliação do Modo Agente MCP (Q4 e Q5):** Transparência das fontes oficiais e profundidade explicativa.
+- **Auditoria de Confiabilidade e Alucinações (Q6):** Identificação da natureza de eventuais erros (recusa adequada vs. divergência leve vs. alucinação factual evidente).
+- **Comparativo Direto de Preferência (Q7):** Análise do *trade-off* prático entre os paradigmas (agilidade vs. rastreabilidade).
+- **Usabilidade e Impacto Institucional (Q8 e Q9):** Facilidade da interface web e redução de gargalos de atendimento presencial (TAM).
+- **Mapeamento de Novas Ferramentas MCP (Q10):** Levantamento quantitativo para a seção de Trabalhos Futuros do TCC.
+- **Auditoria de Consultas e Sugestões Livres (Q11):** Coleta de perguntas não atendidas para alimentação do *Golden Dataset* e aprimoramento contínuo.
 
 ---
 
-### As 10 Questões do Formulário
+### As 11 Questões do Formulário
 
-#### [Questão 1] — Perfil do Usuário
-**Pergunta:** Qual é o seu curso / vínculo no IFMG Campus Ouro Branco?  
-- **Tipo:** Múltipla Escolha / Seleção Única.  
+#### [Questão 1] — Perfil do Respondente
+**Pergunta:** Qual é o seu curso e em qual período ou fase você se encontra no IFMG Campus Ouro Branco?  
+- **Tipo:** Seleção única.  
 - **Opções:**
-  - [ ] Bacharelado em Sistemas de Informação
-  - [ ] Bacharelado em Administração
-  - [ ] Engenharia Metalúrgica
-  - [ ] Licenciatura em Pedagogia
-  - [ ] Cursos Técnicos Integrados / Subsequentes
-  - [ ] Docente ou Servidor Técnico-Administrativo
+  - ( ) Bacharelado em Sistemas de Informação — Fase inicial (1º ao 3º período)
+  - ( ) Bacharelado em Sistemas de Informação — Fase intermediária (4º ao 6º período)
+  - ( ) Bacharelado em Sistemas de Informação — Fase concluinte / TCC / Estágio (7º ao 8º período)
+  - ( ) Outro curso de graduação (Administração, Engenharia Metalúrgica ou Licenciatura em Pedagogia)
+  - ( ) Curso técnico (integrado ou subsequente)
+  - ( ) Docente ou servidor técnico-administrativo
 
 ---
 
-#### [Questão 2] — Desempenho e Rapidez no Modo RAG Clássico (📚)
-**Pergunta:** Em relação à agilidade e rapidez de resposta no Modo RAG Clássico, como você avalia o tempo decorrido até o início e término da resposta?  
+#### [Questão 2] — Desempenho e Tempo de Resposta no Modo RAG Clássico (📚)
+**Pergunta:** Quanto ao tempo de resposta no Modo RAG Clássico (intervalo transcorrido até o início da digitação e o término da resposta), como você avalia a velocidade do sistema?  
 - **Tipo:** Escala Likert de 5 pontos.  
 - **Opções:**
-  - (1) Muito lento / Demora excessiva
-  - (2) Lento
-  - (3) Aceitável / Regular
-  - (4) Rápido
-  - (5) Muito rápido / Quase instantâneo
+  - (1) Muito lento (tempo de espera excessivo, que desestimula o uso)
+  - (2) Lento (resposta perceptivelmente demorada)
+  - (3) Aceitável (tempo compatível com uma consulta a assistentes virtuais locais)
+  - (4) Rápido (início imediato da digitação e fluxo de leitura fluido)
+  - (5) Muito rápido (resposta quase instantânea, proporcionando excelente experiência)
 
 ---
 
-#### [Questão 3] — Qualidade e Precisão no Modo RAG Clássico (📚)
-**Pergunta:** As respostas geradas no Modo RAG Clássico foram objetivas, claras e responderam diretamente à dúvida consultada?  
+#### [Questão 3] — Precisão e Clareza no Modo RAG Clássico (📚)
+**Pergunta:** No Modo RAG Clássico, as respostas foram diretas, objetivas e esclareceram adequadamente a dúvida apresentada?  
 - **Tipo:** Escala Likert de 5 pontos.  
 - **Opções:**
-  - (1) Discordo totalmente (respostas confusas ou irrelevantes)
-  - (2) Discordo parcialmente
-  - (3) Neutro / Em partes
-  - (4) Concordo parcialmente
-  - (5) Concordo totalmente (respostas diretas e precisas)
+  - (1) Discordo totalmente (respostas confusas, evasivas ou sem relação com a dúvida)
+  - (2) Discordo parcialmente (respostas incompletas ou excessivamente vagas)
+  - (3) Neutro (respostas medianas ou apenas parcialmente esclarecedoras)
+  - (4) Concordo parcialmente (respostas claras e suficientes para a dúvida)
+  - (5) Concordo totalmente (respostas precisas, diretas e fundamentadas)
 
 ---
 
-#### [Questão 4] — Profundidade e Completude no Modo Agente MCP (🤖)
-**Pergunta:** No Modo Agente, como você avalia a profundidade, a organização e o nível de detalhamento das respostas geradas?  
+#### [Questão 4] — Transparência das Fontes e Rastreabilidade no Modo Agente MCP (🤖)
+**Pergunta:** No Modo Agente MCP, a exibição explícita dos documentos e regulamentos consultados (`[PPC BSI]`, `[Regulamento Didático]`) aumentou a sua confiança na veracidade da resposta gerada?  
 - **Tipo:** Escala Likert de 5 pontos.  
 - **Opções:**
-  - (1) Muito superficiais ou inadequadas
-  - (2) Pouco detalhadas
-  - (3) Nível regular de detalhes
-  - (4) Detalhadas e bem estruturadas
-  - (5) Muito completas, analíticas e aprofundadas
+  - (1) Não transmitiu confiança (citações confusas, irrelevantes ou ausentes)
+  - (2) Teve pouco impacto (a menção das fontes foi indiferente para a minha percepção)
+  - (3) Neutro (recurso útil, porém dispensável em consultas rotineiras)
+  - (4) Aumentou a confiança (a indicação do documento oficial conferiu credibilidade à resposta)
+  - (5) Transmitiu total confiança (a rastreabilidade documental comprovou que a informação não foi inventada)
 
 ---
 
-#### [Questão 5] — Demandas do Cotidiano Não Formalizadas em Documentos Oficiais
-**Pergunta:** Quais tipos de dúvidas do cotidiano acadêmico você considera que o assistente virtual também deveria responder, mas que normalmente **não constam em documentos oficiais** (PPC, resoluções e regulamentos) da instituição?  
-- **Tipo:** Múltipla Escolha (Caixas de Seleção — selecione quantas desejar) com opção aberta.  
+#### [Questão 5] — Profundidade Analítica e Organização no Modo Agente MCP (🤖)
+**Pergunta:** No Modo Agente MCP, como você avalia o nível de detalhamento, a contextualização e a estrutura lógica das explicações geradas?  
+- **Tipo:** Escala Likert de 5 pontos.  
 - **Opções:**
-  - [ ] **Localização física no campus:** Localização de blocos, salas de aula, laboratórios específicos e setores de atendimento.
-  - [ ] **Transporte e mobilidade:** Horários de ônibus municipais/intermunicipais, pontos de parada e itinerários de transporte para o campus.
-  - [ ] **Alimentação e serviços:** Horários de funcionamento e serviços da cantina / refeitório institucional.
-  - [ ] **Contatos diretos e horários de atendimento:** E-mails institucionais, ramais telefônicos e horários de atendimento presencial de docentes e setores administrativos.
-  - [ ] **Avisos dinâmicos e eventos:** Notícias sobre eventos acadêmicos, semanas de curso, feiras e avisos rápidos de suspensão ou alteração de aulas.
-  - [ ] **Assistência estudantil e bolsas:** Prazos práticos de inscrição para auxílios e bolsas de monitoria/iniciação científica em andamento.
-  - [ ] **Outro (especifique):** __________________________________________________
+  - (1) Inadequadas ou prolixas (textos cansativos e sem foco)
+  - (2) Pouco detalhadas (não agregaram valor em relação ao modo direto)
+  - (3) Regulares (nível padrão de detalhamento)
+  - (4) Boas e bem estruturadas (explicações completas e organizadas em tópicos)
+  - (5) Excelentes e analíticas (respostas aprofundadas, contemplando regras, prazos e exceções normativas)
 
 ---
 
-#### [Questão 6] — Fidelidade Factual e Ausência de Alucinações
-**Pergunta:** Durante os seus testes em ambos os modos, você notou alguma resposta que continha regras inventadas, matérias inexistentes ou informações contrárias aos regulamentos vigentes?  
-- **Tipo:** Escolha Única.  
+#### [Questão 6] — Auditoria de Confiabilidade e Ausência de Alucinações
+**Pergunta:** Durante a utilização de ambos os modos, qual das situações a seguir melhor descreve o comportamento do assistente em relação à veracidade das informações apresentadas?  
+- **Tipo:** Seleção única.  
 - **Opções:**
-  - ( ) Não notei nenhum erro; todas as respostas pareceram corretas e confiáveis.
-  - ( ) Sim, percebi informações incorretas apenas no Modo RAG Clássico.
-  - ( ) Sim, percebi informações incorretas apenas no Modo Agente MCP.
-  - ( ) Sim, percebi respostas incorretas ou inventadas em ambos os modos.
-  - ( ) Não sei avaliar se a informação estava 100% correta.
+  - ( ) **Totalmente confiável:** Não observei informações falsas ou inventadas; todas as respostas foram consistentes com as normas institucionais.
+  - ( ) **Recusa consciente:** O assistente informou expressamente que não possuía a informação nos documentos cadastrados quando consultado sobre temas não cobertos pela base (comportamento correto).
+  - ( ) **Divergência leve ou omissão:** A resposta foi parcialmente correta, mas omitiu algum pré-requisito secundário ou detalhe específico da norma.
+  - ( ) **Alucinação factual evidente:** O sistema inventou nomes de disciplinas inexistentes, regras contrárias aos regulamentos ou dados incorretos.
+  - ( ) **Não sei avaliar:** Não possuo conhecimento prévio suficiente das normas acadêmicas para identificar eventuais imprecisões técnicas.
 
 ---
 
 #### [Questão 7] — Comparação Direta e Preferência de Uso
-**Pergunta:** Comparando as duas experiências — o Modo RAG (mais rápido e conciso) versus o Modo Agente (mais explicativo e com exibição das fontes consultadas) —, qual abordagem você preferiria adotar no seu cotidiano?  
-- **Tipo:** Escolha Única.  
+**Pergunta:** Considerando a agilidade do Modo RAG em comparação com a profundidade e a rastreabilidade documental do Modo Agente MCP, qual abordagem você prefere utilizar no cotidiano do campus?  
+- **Tipo:** Seleção única.  
 - **Opções:**
-  - ( ) Prefiro o Modo RAG Clássico (priorizo respostas rápidas e diretas).
-  - ( ) Prefiro o Modo Agente MCP (priorizo a segurança das fontes e maior detalhamento).
-  - ( ) Gostaria de manter ambos os modos disponíveis para escolher de acordo com a complexidade da dúvida.
-  - ( ) Nenhuma das opções me atendeu satisfatoriamente.
+  - ( ) **Prefiro o Modo RAG Clássico:** Priorizo rapidez imediata e respostas curtas e objetivas para a rotina diária.
+  - ( ) **Prefiro o Modo Agente MCP:** Priorizo fundamentação documental, citações oficiais e explicações aprofundadas, mesmo com tempo adicional de processamento.
+  - ( ) **Prefiro a disponibilidade de ambos (modelo híbrido):** Considero ideal manter a alternância de modos para acionar o RAG em dúvidas pontuais e o Agente em consultas complexas.
+  - ( ) **Indiferente / Nenhuma das abordagens:** Considero que ambos os modos demandam aprimoramentos antes de uma adoção rotineira.
 
 ---
 
-#### [Questão 8] — Usabilidade da Interface Web
-**Pergunta:** Como você avalia a facilidade de navegação e uso da interface web (alternância de modos pelo botão no cabeçalho, botões de feedback 👍/👎, legibilidade e modo escuro/claro)?  
+#### [Questão 8] — Usabilidade da Interface Web (TAM — Facilidade de Uso Percebida)
+**Pergunta:** Como você avalia a experiência de uso da interface web (facilidade de alternância de modos no cabeçalho, botões de avaliação 👍/👎, digitação em tempo real e visualização em computadores e dispositivos móveis)?  
 - **Tipo:** Escala Likert de 5 pontos.  
 - **Opções:**
-  - (1) Muito difícil / Pouco intuitiva
-  - (2) Difícil
-  - (3) Regular
-  - (4) Fácil e agradável
-  - (5) Extremamente simples, moderna e intuitiva
+  - (1) Muito difícil ou confusa (dificuldades recorrentes de navegação e comandos)
+  - (2) Difícil (interface funcional, porém com elementos pouco intuitivos)
+  - (3) Regular (atende às necessidades básicas de interação de um chat)
+  - (4) Boa e intuitiva (interação limpa, agradável e de fácil compreensão)
+  - (5) Excelente (interface moderna, fluida e de navegação simples em qualquer dispositivo)
 
 ---
 
-#### [Questão 9] — Utilidade Institucional e Redução de Gargalos
-**Pergunta:** Na sua visão como discente/servidor, em que medida a disponibilização permanente deste assistente virtual reduz a necessidade de comparecimento presencial na coordenação/secretaria ou a leitura manual de arquivos PDF longos?  
+#### [Questão 9] — Utilidade Institucional e Redução de Gargalos (TAM — Utilidade Percebida)
+**Pergunta:** Na sua percepção, em que medida a disponibilização permanente deste assistente virtual reduz a necessidade de comparecimento presencial à secretaria/coordenação e dispensa a leitura manual de arquivos PDF extensos?  
 - **Tipo:** Escala Likert de 5 pontos.  
 - **Opções:**
-  - (1) Não reduz em nada
-  - (2) Reduz pouco
-  - (3) Redução moderada
-  - (4) Reduz bastante
-  - (5) Reduz expressivamente, proporcionando autonomia imediata para esclarecer regras acadêmicas
+  - (1) Não reduz (permanece a dependência integral de atendimento presencial e consulta manual)
+  - (2) Reduz pouco (mostra-se útil apenas em situações raras ou atípicas)
+  - (3) Reduz moderadamente (auxilia na resolução de dúvidas rotineiras de menor complexidade)
+  - (4) Reduz expressivamente (soluciona a maior parte das dúvidas acadêmicas com rapidez e autonomia)
+  - (5) Reduz substancialmente (proporciona autonomia integral na consulta a regulamentos, ementas e normas institucionais)
 
 ---
 
-#### [Questão 10] — Críticas, Elogios e Sugestões de Expansão
-**Pergunta:** Espaço aberto: registre dúvidas específicas que o assistente não conseguiu responder, inconsistências observadas ou sugestões para o aprimoramento da ferramenta e do TCC.  
-- **Tipo:** Texto longo (parágrafo aberto / resposta discursiva opcional).
+#### [Questão 10] — Mapeamento de Novas Demandas para Ferramentas MCP (Trabalhos Futuros)
+**Pergunta:** Quais serviços e informações do cotidiano acadêmico do IFMG você gostaria que fossem integrados como novas ferramentas do assistente virtual (dados que hoje não constam nos regulamentos e PPCs em PDF)?  
+- **Tipo:** Múltipla escolha (marque todas as opções que considerar relevantes) com campo aberto adicional.  
+- **Opções (Mapeadas para Ferramentas MCP):**
+  - [ ] **Transporte e horários de ônibus:** Consulta em tempo real a itinerários, pontos de parada e horários de linhas municipais e intermunicipais de acesso ao campus. *(Tool MCP: `search_transport_routes`)*
+  - [ ] **Cardápio e serviços da cantina:** Consulta ao cardápio diário e aos horários de funcionamento do refeitório e da cantina institucional. *(Tool MCP: `get_cafeteria_menu`)*
+  - [ ] **Localização de espaços no campus:** Guia de localização física de blocos, salas de aula, laboratórios especializados e setores administrativos. *(Tool MCP: `locate_campus_facility`)*
+  - [ ] **Diretório de contatos e atendimento docente:** Catálogo de e-mails institucionais, ramais telefônicos e horários de atendimento presencial de professores e coordenadores. *(Tool MCP: `get_staff_directory`)*
+  - [ ] **Mural de avisos dinâmicos e notícias:** Alertas em tempo real sobre suspensão ou alteração de aulas, eventos acadêmicos e palestras. *(Tool MCP: `fetch_campus_notices`)*
+  - [ ] **Prazos do calendário acadêmico:** Lembretes e consultas sobre prazos de trancamento de matrícula, aproveitamento de estudos e rematrícula no SIGAA. *(Tool MCP: `query_academic_calendar`)*
+  - [ ] **Assistência estudantil e editais de bolsas:** Informações consolidadas sobre editais abertos de auxílio-permanência, bolsas de monitoria e iniciação científica. *(Tool MCP: `list_student_grants`)*
+  - [ ] **Outro (especifique):** __________________________________________________
+
+---
+
+#### [Questão 11] — Auditoria de Consultas e Sugestões Livres (Golden Dataset)
+**Pergunta:** Espaço aberto para auditoria: cite perguntas específicas às quais o assistente **não soube responder satisfatoriamente** (ou nas quais apresentou informações imprecisas) e registre sugestões para o aprimoramento da ferramenta e da pesquisa.  
+- **Tipo:** Texto descritivo aberto (opcional).  
+- **Campos sugeridos no formulário:**
+  - *Campo 1 (Auditoria de Falhas):* Pergunta(s) enviada(s) em que o assistente apresentou erro ou resposta insatisfatória: `[ Campo de texto ]`
+  - *Campo 2 (Sugestões e Comentários):* Críticas, observações gerais ou sugestões de melhoria: `[ Campo de texto ]`
 
 ---
 
 ## 5. Orientações para Tabulação e Uso dos Resultados no TCC
 
-As respostas obtidas por meio deste instrumento permitirão enriquecer diretamente a **Seção 4 (Experimentos e Resultados)** do artigo do TCC com evidências empíricas de campo:
+As respostas obtidas por meio deste instrumento permitirão enriquecer diretamente a **Seção 4 (Experimentos e Resultados)**, a **Seção 5 (Conclusão e Trabalhos Futuros)** do TCC e os slides da apresentação de defesa:
 
-1. **Gráficos de Escala Likert (Questões 2, 3, 4, 8 e 9):**
-   - Calcular média ($\mu$) e desvio-padrão ($\sigma$) para cada dimensão avaliada.
-   - Gerar gráficos de barras divergentes (100% empilhadas) para ilustrar a percepção de utilidade e usabilidade dos discentes.
-2. **Taxa de Fidelidade Factual (Questão 6):**
-   - Cruzar o percentual de respostas sem alucinação com os registros da tabela `chat_feedbacks` da aplicação para consolidar a confiabilidade do sistema.
-3. **Preferência de Paradigma (Questão 7):**
-   - Fornecer dados quantitativos reais para a discussão do *trade-off* entre RAG Clássico (baixa latência) e RAG Agêntico via MCP (rastreabilidade de contexto), validando as conclusões do trabalho sob modelos de linguagem compactos (4 bilhões de parâmetros).
-4. **Mapeamento de Novas Demandas Não Normativas (Questão 5):**
-   - Quantificar as principais carências de informação não oficial (transporte, localização, contatos, cardápio) e incorporar na seção de Trabalhos Futuros do TCC como justificativa para desenvolvimento de novas ferramentas MCP conectadas a fontes dinâmicas externas (APIs de horários, feeds de notícias ou calendários).
+1. **Estratificação Amostral (Questão 1):**
+   - Mapear a representatividade dos cursos e períodos. Demonstrar na Seção 4.2 que discentes concluintes de BSI (que conhecem o PPC detalhadamente) atuaram como validadores confiáveis da acurácia factual das ementas e regulamentos de TCC e estágio.
+2. **Gráficos de Escala Likert e Modelo TAM (Questões 2, 3, 4, 5, 8 e 9):**
+   - Calcular média ponderada ($\mu$) e desvio-padrão ($\sigma$) para cada dimensão avaliada.
+   - Gerar gráficos de barras divergentes (100% empilhadas) para ilustrar os construtos de Facilidade de Uso Percebida (PEOU — Q8) e Utilidade Percebida (PU — Q9).
+   - Correlacionar a percepção de agilidade (Q2) com as métricas de tempo real de execução cronometradas no servidor (Tabela 2 do artigo).
+3. **Métrica de Rastreabilidade e Transparência MCP (Questão 4):**
+   - Destacar o percentual de respondentes que atribuíram notas 4 e 5 para o aumento da confiança proporcionado pela exibição das fontes documentais. Esse dado quantitativo valida empiricamente a relevância do protocolo MCP diante da banca examinadora.
+4. **Taxa de Fidelidade Factual e Análise de Alucinações (Questão 6):**
+   - Isolar a ocorrência de alucinações severas das recusas corretas e das omissões leves. Cruzar a taxa de confiabilidade com os registros de votos da tabela `chat_feedbacks` da aplicação.
+5. **Preferência de Paradigma (Questão 7):**
+   - Gerar gráfico de pizza/rosca para ilustrar a preferência do usuário final, sustentando a discussão do *trade-off* entre RAG determinístico (menor latência) e RAG agêntico via MCP (rastreabilidade e explicabilidade).
+6. **Gráfico de Pareto para Trabalhos Futuros (Questão 10):**
+   - Ordenar as demandas mais votadas em gráfico de barras horizontais, fornecendo embasamento empírico irrefutável na Seção 5 para o desenvolvimento de novas ferramentas MCP conectadas a serviços em tempo real (transporte, cardápio, calendários e avisos).
+7. **Refinamento do Golden Dataset e Análise de Casos de Borda (Questão 11):**
+   - Incorporar as perguntas com falha relatadas pelos usuários ao conjunto de testes de referência (*Golden Dataset*), permitindo a análise qualitativa de limitações decorrentes do modelo compacto de 4 bilhões de parâmetros na Seção 4.4.
