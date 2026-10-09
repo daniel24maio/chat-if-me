@@ -134,9 +134,9 @@ Para que o teste explore as diferentes capacidades de recuperação semântica e
 O formulário de coleta de dados foi projetado para ser objetivo, rápido de preencher (cerca de 3 a 4 minutos) e aderente aos modelos de aceitação tecnológica (TAM — *Technology Acceptance Model*) e de usabilidade, dividindo-se em:
 - **Perfil do Respondente (Q1):** Contextualização acadêmica e estratificação por fase do curso.
 - **Avaliação do Modo RAG Clássico (Q2 e Q3):** Latência subjetiva percebida e assertividade objetiva.
-- **Avaliação do Modo Agente MCP (Q4 e Q5):** Transparência das fontes oficiais e profundidade explicativa.
+- **Avaliação do Modo Agente MCP (Q4 e Q5):** Latência subjetiva percebida e assertividade objetiva no paradigma agêntico (permitindo comparação direta e pareada com Q2 e Q3).
 - **Auditoria de Confiabilidade e Alucinações (Q6):** Identificação da natureza de eventuais erros (recusa adequada vs. divergência leve vs. alucinação factual evidente).
-- **Comparativo Direto de Preferência (Q7):** Análise do *trade-off* prático entre os paradigmas (agilidade vs. rastreabilidade).
+- **Percepção Comparativa e Coerência (Q7):** Avaliação de qual modo apresentou maior assertividade e coerência com os documentos, ou preferência por ambos disponíveis.
 - **Usabilidade e Impacto Institucional (Q8 e Q9):** Facilidade da interface web e redução de gargalos de atendimento presencial (TAM).
 - **Mapeamento de Novas Ferramentas MCP (Q10):** Levantamento quantitativo para a seção de Trabalhos Futuros do TCC.
 - **Auditoria de Consultas e Sugestões Livres (Q11):** Coleta de perguntas não atendidas para alimentação do *Golden Dataset* e aprimoramento contínuo.
@@ -182,27 +182,27 @@ O formulário de coleta de dados foi projetado para ser objetivo, rápido de pre
 
 ---
 
-#### [Questão 4] — Transparência das Fontes e Rastreabilidade no Modo Agente MCP (🤖)
-**Pergunta:** No Modo Agente MCP, a exibição explícita dos documentos e regulamentos consultados (`[PPC BSI]`, `[Regulamento Didático]`) aumentou a sua confiança na veracidade da resposta gerada?  
+#### [Questão 4] — Desempenho e Tempo de Resposta no Modo Agente MCP (🤖)
+**Pergunta:** Quanto ao tempo de resposta no Modo Agente MCP (intervalo transcorrido até o início da digitação e o término da resposta), como você avalia a velocidade do sistema?  
 - **Tipo:** Escala Likert de 5 pontos.  
 - **Opções:**
-  - (1) Não transmitiu confiança (citações confusas, irrelevantes ou ausentes)
-  - (2) Teve pouco impacto (a menção das fontes foi indiferente para a minha percepção)
-  - (3) Neutro (recurso útil, porém dispensável em consultas rotineiras)
-  - (4) Aumentou a confiança (a indicação do documento oficial conferiu credibilidade à resposta)
-  - (5) Transmitiu total confiança (a rastreabilidade documental comprovou que a informação não foi inventada)
+  - (1) Muito lento (tempo de espera excessivo, que desestimula o uso)
+  - (2) Lento (resposta perceptivelmente demorada)
+  - (3) Aceitável (tempo compatível com uma consulta a assistentes virtuais locais)
+  - (4) Rápido (início imediato da digitação e fluxo de leitura fluido)
+  - (5) Muito rápido (resposta quase instantânea, proporcionando excelente experiência)
 
 ---
 
-#### [Questão 5] — Profundidade Analítica e Organização no Modo Agente MCP (🤖)
-**Pergunta:** No Modo Agente MCP, como você avalia o nível de detalhamento, a contextualização e a estrutura lógica das explicações geradas?  
+#### [Questão 5] — Precisão e Clareza no Modo Agente MCP (🤖)
+**Pergunta:** No Modo Agente MCP, as respostas foram diretas, objetivas e esclareceram adequadamente a dúvida apresentada?  
 - **Tipo:** Escala Likert de 5 pontos.  
 - **Opções:**
-  - (1) Inadequadas ou prolixas (textos cansativos e sem foco)
-  - (2) Pouco detalhadas (não agregaram valor em relação ao modo direto)
-  - (3) Regulares (nível padrão de detalhamento)
-  - (4) Boas e bem estruturadas (explicações completas e organizadas em tópicos)
-  - (5) Excelentes e analíticas (respostas aprofundadas, contemplando regras, prazos e exceções normativas)
+  - (1) Discordo totalmente (respostas confusas, evasivas ou sem relação com a dúvida)
+  - (2) Discordo parcialmente (respostas incompletas ou excessivamente vagas)
+  - (3) Neutro (respostas medianas ou apenas parcialmente esclarecedoras)
+  - (4) Concordo parcialmente (respostas claras e suficientes para a dúvida)
+  - (5) Concordo totalmente (respostas precisas, diretas e fundamentadas)
 
 ---
 
@@ -218,14 +218,15 @@ O formulário de coleta de dados foi projetado para ser objetivo, rápido de pre
 
 ---
 
-#### [Questão 7] — Comparação Direta e Preferência de Uso
-**Pergunta:** Considerando a agilidade do Modo RAG em comparação com a profundidade e a rastreabilidade documental do Modo Agente MCP, qual abordagem você prefere utilizar no cotidiano do campus?  
+#### [Questão 7] — Percepção Comparativa e Coerência das Respostas
+**Pergunta:** Ao comparar a sua experiência com os dois modos, em qual deles você percebeu respostas com maior assertividade e coerência em relação aos documentos e normas do campus, ou você prefere que ambos os modos estejam disponíveis?  
 - **Tipo:** Seleção única.  
 - **Opções:**
-  - ( ) **Prefiro o Modo RAG Clássico:** Priorizo rapidez imediata e respostas curtas e objetivas para a rotina diária.
-  - ( ) **Prefiro o Modo Agente MCP:** Priorizo fundamentação documental, citações oficiais e explicações aprofundadas, mesmo com tempo adicional de processamento.
-  - ( ) **Prefiro a disponibilidade de ambos (modelo híbrido):** Considero ideal manter a alternância de modos para acionar o RAG em dúvidas pontuais e o Agente em consultas complexas.
-  - ( ) **Indiferente / Nenhuma das abordagens:** Considero que ambos os modos demandam aprimoramentos antes de uma adoção rotineira.
+  - ( ) **Modo RAG Clássico:** Percebi respostas mais assertivas e coerentes com os documentos no RAG Clássico.
+  - ( ) **Modo Agente MCP:** Percebi respostas mais assertivas e coerentes com os documentos no Agente MCP.
+  - ( ) **Ambos foram semelhantes:** Percebi nível equivalente de assertividade e coerência com os documentos em ambos os modos.
+  - ( ) **Prefiro ambos disponíveis:** Considero ambos úteis e prefiro que os dois modos continuem disponíveis no assistente.
+  - ( ) **Indiferente / Nenhum dos modos:** Não percebi coerência satisfatória em nenhum dos modos ou não tenho preferência definida.
 
 ---
 
@@ -286,13 +287,13 @@ As respostas obtidas por meio deste instrumento permitirão enriquecer diretamen
 2. **Gráficos de Escala Likert e Modelo TAM (Questões 2, 3, 4, 5, 8 e 9):**
    - Calcular média ponderada ($\mu$) e desvio-padrão ($\sigma$) para cada dimensão avaliada.
    - Gerar gráficos de barras divergentes (100% empilhadas) para ilustrar os construtos de Facilidade de Uso Percebida (PEOU — Q8) e Utilidade Percebida (PU — Q9).
-   - Correlacionar a percepção de agilidade (Q2) com as métricas de tempo real de execução cronometradas no servidor (Tabela 2 do artigo).
-3. **Métrica de Rastreabilidade e Transparência MCP (Questão 4):**
-   - Destacar o percentual de respondentes que atribuíram notas 4 e 5 para o aumento da confiança proporcionado pela exibição das fontes documentais. Esse dado quantitativo valida empiricamente a relevância do protocolo MCP diante da banca examinadora.
+   - Correlacionar a percepção de agilidade (Q2 e Q4) com as métricas de tempo real de execução cronometradas no servidor (Tabela 2 do artigo).
+3. **Comparação Pareada entre Modos (Q2 vs Q4 e Q3 vs Q5):**
+   - Comparar diretamente a velocidade percebida (Q2 vs Q4) e a assertividade/clareza (Q3 vs Q5) entre o Modo RAG Clássico e o Modo Agente MCP. Essa análise pareada permite comprovar empiricamente o *trade-off* entre latência de resposta e precisão explicativa em cada arquitetura.
 4. **Taxa de Fidelidade Factual e Análise de Alucinações (Questão 6):**
    - Isolar a ocorrência de alucinações severas das recusas corretas e das omissões leves. Cruzar a taxa de confiabilidade com os registros de votos da tabela `chat_feedbacks` da aplicação.
-5. **Preferência de Paradigma (Questão 7):**
-   - Gerar gráfico de pizza/rosca para ilustrar a preferência do usuário final, sustentando a discussão do *trade-off* entre RAG determinístico (menor latência) e RAG agêntico via MCP (rastreabilidade e explicabilidade).
+5. **Percepção Comparativa e Preferência (Questão 7):**
+   - Gerar gráfico de pizza/rosca para ilustrar a percepção de coerência e assertividade documental dos usuários e mensurar o percentual que prefere a coexistência dos dois modos.
 6. **Gráfico de Pareto para Trabalhos Futuros (Questão 10):**
    - Ordenar as demandas mais votadas em gráfico de barras horizontais, fornecendo embasamento empírico irrefutável na Seção 5 para o desenvolvimento de novas ferramentas MCP conectadas a serviços em tempo real (transporte, cardápio, calendários e avisos).
 7. **Refinamento do Golden Dataset e Análise de Casos de Borda (Questão 11):**
