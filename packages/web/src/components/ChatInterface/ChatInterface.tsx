@@ -355,7 +355,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ isBeta = false }) => {
             <span className="campus-badge">Campus Ouro Branco</span>
           </div>
         </div>
-        {/* Controles do header: Seletor de Modo Segmentado + Toggle de Tema */}
+        {/* Controles do header: Seletor de Modo Segmentado + Ações (Info, Stats, Tema) */}
         <div className="header-controls">
           <div className="mode-selector-wrapper">
             <span className="mode-selector-label" id="mode-selector-label">Modo:</span>
@@ -383,6 +383,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ isBeta = false }) => {
                 {isBeta ? '🚀 Agente Beta' : '🤖 Agente MCP'}
               </button>
             </div>
+          </div>
+
+          <div className="header-actions">
             <button
               type="button"
               className="mode-info-btn"
@@ -392,16 +395,16 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ isBeta = false }) => {
             >
               ℹ️
             </button>
+
+            {/* Link de Estatísticas exclusivo para o modo Beta */}
+            {isBeta && (
+              <Link to="/estatisticas" className="header-nav-btn" title="Painel de Métricas e Observabilidade">
+                📊 Estatísticas
+              </Link>
+            )}
+
+            <ThemeToggle />
           </div>
-
-          {/* Link de Estatísticas exclusivo para o modo Beta */}
-          {isBeta && (
-            <Link to="/estatisticas" className="header-nav-btn" title="Painel de Métricas e Observabilidade">
-              📊 Estatísticas
-            </Link>
-          )}
-
-          <ThemeToggle />
         </div>
       </header>
 
