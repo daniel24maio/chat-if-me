@@ -14,6 +14,8 @@
  * controla QUANTOS requests processam simultaneamente na GPU.
  */
 
+import { runWithRequestMetrics } from "./request_metrics.service.js";
+
 // ---------------------------------------------------------------------------
 // Configuração
 // ---------------------------------------------------------------------------
@@ -107,9 +109,28 @@ export const ollamaSemaphore = new OllamaSemaphore(MAX_CONCURRENT);
 export async function withConcurrencyControl<T>(
   fn: () => Promise<T>
 ): Promise<T> {
+  const enqueuedAt = Date.now();
+  const { active, waiting } = ollamaSemaphore.getStatus();
+
   await ollamaSemaphore.acquire();
+  const acquiredAt = Date.now();
+
   try {
-    return await fn();
+    // Contexto de métricas da requisição (fila, TTFT, chamadas ao LLM...)
+    return await runWithRequestMetrics(
+      {
+        enqueuedAt,
+        acquiredAt,
+        queueWaitMs: acquiredAt - enqueuedAt,
+        activeOnEnqueue: active,
+        waitingOnEnqueue: waiting,
+        llmCalls: [],
+        toolMs: 0,
+        toolInvocations: 0,
+        fallback: false,
+      },
+      fn
+    );
   } finally {
     ollamaSemaphore.release();
   }

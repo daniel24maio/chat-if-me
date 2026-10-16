@@ -11,6 +11,12 @@
  */
 
 import type { Response } from "express";
+import {
+  recordLlmCall,
+  markFirstToken,
+  markFallback,
+  type OllamaUsagePayload,
+} from "../services/request_metrics.service.js";
 
 /** URL base do Ollama — configurável via .env */
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
@@ -135,6 +141,7 @@ export async function generateOllamaEmbedding(text: string): Promise<number[]> {
 export async function generateOllamaResponse(messages: OllamaChatMessage[]): Promise<string> {
   const url = `${OLLAMA_BASE_URL}/api/chat`;
   const safeMessages = pruneHistory(messages);
+  const callStart = Date.now();
 
   const response = await fetch(url, {
     method: "POST",
@@ -154,7 +161,10 @@ export async function generateOllamaResponse(messages: OllamaChatMessage[]): Pro
     throw new Error(`[Ollama LLM] Erro ${response.status}: ${errorText}`);
   }
 
-  const data = (await response.json()) as { message?: { content: string }; error?: string };
+  const data = (await response.json()) as {
+    message?: { content: string };
+    error?: string;
+  } & OllamaUsagePayload;
 
   if (data.error) {
     throw new Error(`[Ollama LLM] Erro do Ollama: ${data.error}`);
@@ -165,6 +175,8 @@ export async function generateOllamaResponse(messages: OllamaChatMessage[]): Pro
     throw new Error("[Ollama LLM] Resposta inválida — campo 'message.content' ausente ou inválido");
   }
 
+  recordLlmCall("generate", LLM_MODEL, Date.now() - callStart, data);
+
   return data.message.content;
 }
 
@@ -174,6 +186,7 @@ export async function generateOllamaResponse(messages: OllamaChatMessage[]): Pro
 
 export async function rewriteWithLLM(systemPrompt: string, question: string): Promise<string> {
   const url = `${OLLAMA_BASE_URL}/api/chat`;
+  const callStart = Date.now();
 
   const response = await fetch(url, {
     method: "POST",
@@ -201,7 +214,10 @@ export async function rewriteWithLLM(systemPrompt: string, question: string): Pr
     throw new Error(`[Ollama Rewrite] Erro ${response.status}: ${errorText}`);
   }
 
-  const data = (await response.json()) as { message?: { content: string }; error?: string };
+  const data = (await response.json()) as {
+    message?: { content: string };
+    error?: string;
+  } & OllamaUsagePayload;
 
   if (data.error) {
     throw new Error(`[Ollama Rewrite] Erro do Ollama: ${data.error}`);
@@ -211,6 +227,8 @@ export async function rewriteWithLLM(systemPrompt: string, question: string): Pr
     console.error("❌ [Ollama Rewrite] Resposta inválida:", JSON.stringify(data));
     throw new Error("[Ollama Rewrite] Resposta inválida — campo 'message.content' ausente ou inválido");
   }
+
+  recordLlmCall("rewrite", REWRITE_MODEL, Date.now() - callStart, data);
 
   return data.message.content.trim();
 }
@@ -291,6 +309,15 @@ export async function streamOllamaResponse(
   const safeMessages = pruneHistory(messages);
 
   res.write(`data: ${JSON.stringify({ type: "sources", sources })}\n\n`);
+
+  // Métricas da chamada: instante de início, primeiro token e estatísticas finais do Ollama
+  const callStart = Date.now();
+  let firstTokenAtLocal: number | undefined;
+  let finalUsage: OllamaUsagePayload | undefined;
+  const noteFirstToken = () => {
+    if (firstTokenAtLocal === undefined) firstTokenAtLocal = Date.now();
+    markFirstToken();
+  };
 
   const ollamaResponse = await fetch(url, {
     method: "POST",
@@ -386,6 +413,7 @@ export async function streamOllamaResponse(
     const safe = filterThinkToken(token);
     if (safe) {
       generatedTokens = true;
+      noteFirstToken();
       fullText += safe;
       res.write(`data: ${JSON.stringify({ type: "token", content: safe })}\n\n`);
     }
@@ -409,7 +437,7 @@ export async function streamOllamaResponse(
             message?: { content?: string; thinking?: string; reasoning_content?: string };
             error?: string;
             done?: boolean;
-          };
+          } & OllamaUsagePayload;
 
           if (chunk.error) {
             console.error("❌ [Ollama LLM Stream] Erro retornado no chunk:", chunk.error);
@@ -425,6 +453,7 @@ export async function streamOllamaResponse(
           processToken(chunk.message?.content);
 
           if (chunk.done) {
+            finalUsage = chunk;
             console.log("🤖 [Stream] Geração concluída pelo Ollama");
           }
         } catch {
@@ -438,7 +467,9 @@ export async function streamOllamaResponse(
       try {
         const chunk = JSON.parse(buffer.trim()) as {
           message?: { content?: string; thinking?: string; reasoning_content?: string };
-        };
+          done?: boolean;
+        } & OllamaUsagePayload;
+        if (chunk.done) finalUsage = chunk;
         const thoughtToken = chunk.message?.thinking || chunk.message?.reasoning_content;
         if (thoughtToken) fullThought += thoughtToken;
         processToken(chunk.message?.content);
@@ -450,12 +481,21 @@ export async function streamOllamaResponse(
     // Flush do thinkBuffer residual (conteúdo após último bloco think)
     if (thinkBuffer && !inThinkBlock && thinkBuffer.trim()) {
       generatedTokens = true;
+      noteFirstToken();
       fullText += thinkBuffer;
       res.write(`data: ${JSON.stringify({ type: "token", content: thinkBuffer })}\n\n`);
     }
   } finally {
     reader.releaseLock();
   }
+
+  recordLlmCall(
+    "generation",
+    LLM_MODEL,
+    Date.now() - callStart,
+    finalUsage,
+    firstTokenAtLocal !== undefined ? firstTokenAtLocal - callStart : undefined
+  );
 
   // Se nenhum token de content foi gerado, mas houve pensamento (thinking)
   if (!generatedTokens) {
@@ -464,11 +504,14 @@ export async function streamOllamaResponse(
     if (extractedResponse) {
       console.log("💡 [Ollama] Extraindo resposta rascunhada do canal de thinking...");
       generatedTokens = true;
+      noteFirstToken();
       fullText = extractedResponse;
       res.write(`data: ${JSON.stringify({ type: "token", content: extractedResponse })}\n\n`);
     } else {
       console.warn("⚠️ [Ollama] Resposta vazia no streaming. Enviando fallback.");
       const fallbackMsg = "Não encontrei essa informação nos documentos disponíveis. Recomendo consultar a coordenação do curso ou acessar o portal do IFMG.";
+      noteFirstToken();
+      markFallback();
       res.write(
         `data: ${JSON.stringify({ type: "token", content: fallbackMsg })}\n\n`
       );

@@ -899,6 +899,10 @@ async function verifyInteractionsTable() {
           timings JSONB DEFAULT '{}',
           total_duration_ms INTEGER,
           feedback VARCHAR(10),
+          ttft_ms INTEGER,
+          queue_wait_ms INTEGER,
+          prompt_tokens INTEGER,
+          completion_tokens INTEGER,
           created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
         );
         CREATE INDEX idx_interactions_created_at ON chat_interactions (created_at DESC);
@@ -910,7 +914,13 @@ async function verifyInteractionsTable() {
       await pool.query(sql);
       console.log("\u2705 [Database] Tabela 'chat_interactions' e \xEDndices criados com sucesso!");
     } else {
-      console.log("\u2705 [Database] Tabela 'chat_interactions' j\xE1 existe \u2713");
+      await pool.query(`
+        ALTER TABLE chat_interactions ADD COLUMN IF NOT EXISTS ttft_ms INTEGER;
+        ALTER TABLE chat_interactions ADD COLUMN IF NOT EXISTS queue_wait_ms INTEGER;
+        ALTER TABLE chat_interactions ADD COLUMN IF NOT EXISTS prompt_tokens INTEGER;
+        ALTER TABLE chat_interactions ADD COLUMN IF NOT EXISTS completion_tokens INTEGER;
+      `);
+      console.log("\u2705 [Database] Tabela 'chat_interactions' verificada com colunas de m\xE9tricas atualizadas \u2713");
     }
   } catch (error) {
     console.error(
@@ -918,6 +928,54 @@ async function verifyInteractionsTable() {
       error instanceof Error ? error.message : error
     );
   }
+}
+
+// src/services/request_metrics.service.ts
+import { AsyncLocalStorage } from "async_hooks";
+var storage = new AsyncLocalStorage();
+function runWithRequestMetrics(ctx, fn) {
+  return storage.run(ctx, fn);
+}
+function getRequestMetrics() {
+  return storage.getStore();
+}
+function markFirstToken() {
+  const ctx = storage.getStore();
+  if (ctx && ctx.firstTokenAt === void 0) {
+    ctx.firstTokenAt = Date.now();
+  }
+}
+function markFallback() {
+  const ctx = storage.getStore();
+  if (ctx)
+    ctx.fallback = true;
+}
+function recordToolTime(ms) {
+  const ctx = storage.getStore();
+  if (ctx) {
+    ctx.toolMs += ms;
+    ctx.toolInvocations += 1;
+  }
+}
+function recordLlmCall(step, model, wallMs, usage, ttftMs) {
+  const ctx = storage.getStore();
+  if (!ctx)
+    return;
+  const nsToMs = (ns3) => typeof ns3 === "number" ? Math.round(ns3 / 1e6) : void 0;
+  const evalMs = nsToMs(usage?.eval_duration);
+  const completion = usage?.eval_count;
+  ctx.llmCalls.push({
+    step,
+    model,
+    wall_ms: wallMs,
+    ttft_ms: ttftMs,
+    prompt_tokens: usage?.prompt_eval_count,
+    completion_tokens: completion,
+    load_ms: nsToMs(usage?.load_duration),
+    prompt_eval_ms: nsToMs(usage?.prompt_eval_duration),
+    eval_ms: evalMs,
+    tokens_per_s: completion !== void 0 && evalMs && evalMs > 0 ? Math.round(completion / (evalMs / 1e3) * 10) / 10 : void 0
+  });
 }
 
 // src/config/ollama.ts
@@ -981,6 +1039,7 @@ async function generateOllamaEmbedding(text) {
 }
 async function rewriteWithLLM(systemPrompt, question) {
   const url = `${OLLAMA_BASE_URL}/api/chat`;
+  const callStart = Date.now();
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1013,6 +1072,7 @@ async function rewriteWithLLM(systemPrompt, question) {
     console.error("\u274C [Ollama Rewrite] Resposta inv\xE1lida:", JSON.stringify(data));
     throw new Error("[Ollama Rewrite] Resposta inv\xE1lida \u2014 campo 'message.content' ausente ou inv\xE1lido");
   }
+  recordLlmCall("rewrite", REWRITE_MODEL, Date.now() - callStart, data);
   return data.message.content.trim();
 }
 function extractDraftFromThinking(fullThought) {
@@ -1062,6 +1122,14 @@ async function streamOllamaResponse(messages, res, sources) {
   res.write(`data: ${JSON.stringify({ type: "sources", sources })}
 
 `);
+  const callStart = Date.now();
+  let firstTokenAtLocal;
+  let finalUsage;
+  const noteFirstToken = () => {
+    if (firstTokenAtLocal === void 0)
+      firstTokenAtLocal = Date.now();
+    markFirstToken();
+  };
   const ollamaResponse = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1136,6 +1204,7 @@ async function streamOllamaResponse(messages, res, sources) {
     const safe = filterThinkToken(token);
     if (safe) {
       generatedTokens = true;
+      noteFirstToken();
       fullText += safe;
       res.write(`data: ${JSON.stringify({ type: "token", content: safe })}
 
@@ -1165,6 +1234,7 @@ async function streamOllamaResponse(messages, res, sources) {
           }
           processToken(chunk.message?.content);
           if (chunk.done) {
+            finalUsage = chunk;
             console.log("\u{1F916} [Stream] Gera\xE7\xE3o conclu\xEDda pelo Ollama");
           }
         } catch {
@@ -1174,6 +1244,8 @@ async function streamOllamaResponse(messages, res, sources) {
     if (buffer.trim()) {
       try {
         const chunk = JSON.parse(buffer.trim());
+        if (chunk.done)
+          finalUsage = chunk;
         const thoughtToken = chunk.message?.thinking || chunk.message?.reasoning_content;
         if (thoughtToken)
           fullThought += thoughtToken;
@@ -1183,6 +1255,7 @@ async function streamOllamaResponse(messages, res, sources) {
     }
     if (thinkBuffer && !inThinkBlock && thinkBuffer.trim()) {
       generatedTokens = true;
+      noteFirstToken();
       fullText += thinkBuffer;
       res.write(`data: ${JSON.stringify({ type: "token", content: thinkBuffer })}
 
@@ -1191,11 +1264,19 @@ async function streamOllamaResponse(messages, res, sources) {
   } finally {
     reader.releaseLock();
   }
+  recordLlmCall(
+    "generation",
+    LLM_MODEL,
+    Date.now() - callStart,
+    finalUsage,
+    firstTokenAtLocal !== void 0 ? firstTokenAtLocal - callStart : void 0
+  );
   if (!generatedTokens) {
     const extractedResponse = extractDraftFromThinking(fullThought);
     if (extractedResponse) {
       console.log("\u{1F4A1} [Ollama] Extraindo resposta rascunhada do canal de thinking...");
       generatedTokens = true;
+      noteFirstToken();
       fullText = extractedResponse;
       res.write(`data: ${JSON.stringify({ type: "token", content: extractedResponse })}
 
@@ -1203,6 +1284,8 @@ async function streamOllamaResponse(messages, res, sources) {
     } else {
       console.warn("\u26A0\uFE0F [Ollama] Resposta vazia no streaming. Enviando fallback.");
       const fallbackMsg = "N\xE3o encontrei essa informa\xE7\xE3o nos documentos dispon\xEDveis. Recomendo consultar a coordena\xE7\xE3o do curso ou acessar o portal do IFMG.";
+      noteFirstToken();
+      markFallback();
       res.write(
         `data: ${JSON.stringify({ type: "token", content: fallbackMsg })}
 
@@ -1653,11 +1736,32 @@ async function logInteraction(params) {
     totalDurationMs,
     feedback
   } = params;
+  const reqMetrics = getRequestMetrics();
+  const calculatedTtft = reqMetrics?.firstTokenAt ? Math.max(0, reqMetrics.firstTokenAt - reqMetrics.acquiredAt) : void 0;
+  const ttftMs = params.ttftMs ?? calculatedTtft ?? (typeof timings.ttft_ms === "number" ? timings.ttft_ms : null);
+  const queueWaitMs = params.queueWaitMs ?? reqMetrics?.queueWaitMs ?? (typeof timings.queue_wait_ms === "number" ? timings.queue_wait_ms : 0);
+  const promptTokens = params.promptTokens ?? reqMetrics?.llmCalls.reduce((acc, c) => acc + (c.prompt_tokens ?? 0), 0) ?? (typeof timings.prompt_tokens === "number" ? timings.prompt_tokens : null);
+  const completionTokens = params.completionTokens ?? reqMetrics?.llmCalls.reduce((acc, c) => acc + (c.completion_tokens ?? 0), 0) ?? (typeof timings.completion_tokens === "number" ? timings.completion_tokens : null);
+  const decisionMs = reqMetrics?.llmCalls.find((c) => c.step === "tool_decision")?.wall_ms;
+  const generationMs = timings.generation_ms ?? reqMetrics?.llmCalls.find((c) => c.step === "generation")?.wall_ms;
+  const toolMs = reqMetrics?.toolMs && reqMetrics.toolMs > 0 ? reqMetrics.toolMs : timings.tool_ms;
+  const consolidatedTimings = {
+    ...timings,
+    ...decisionMs !== void 0 ? { decision_ms: decisionMs } : {},
+    ...toolMs !== void 0 ? { tool_ms: toolMs } : {},
+    ...generationMs !== void 0 ? { generation_ms: generationMs } : {},
+    ...ttftMs !== null && ttftMs !== void 0 ? { ttft_ms: ttftMs } : {},
+    queue_wait_ms: queueWaitMs,
+    ...promptTokens ? { prompt_tokens: promptTokens } : {},
+    ...completionTokens ? { completion_tokens: completionTokens } : {},
+    ...reqMetrics?.fallback ? { fallback: true } : {},
+    ...reqMetrics?.llmCalls && reqMetrics.llmCalls.length > 0 ? { llm_calls: reqMetrics.llmCalls } : {}
+  };
   try {
     await pool.query(
       `INSERT INTO chat_interactions
-        (session_id, mode, question, contextualized_question, intent, tool_calls, sources, chunk_ids, response, timings, total_duration_ms, feedback)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        (session_id, mode, question, contextualized_question, intent, tool_calls, sources, chunk_ids, response, timings, total_duration_ms, feedback, ttft_ms, queue_wait_ms, prompt_tokens, completion_tokens)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
       [
         sessionId,
         mode,
@@ -1668,13 +1772,17 @@ async function logInteraction(params) {
         JSON.stringify(sources),
         chunkIds,
         response,
-        JSON.stringify(timings),
+        JSON.stringify(consolidatedTimings),
         totalDurationMs || timings.total_ms || 0,
-        feedback || null
+        feedback || null,
+        ttftMs,
+        queueWaitMs,
+        promptTokens,
+        completionTokens
       ]
     );
     console.log(
-      `\u{1F4CA} [Analytics] Intera\xE7\xE3o registrada: [${mode.toUpperCase()}] "${question.substring(0, 40)}..." (${totalDurationMs || timings.total_ms || 0}ms)`
+      `\u{1F4CA} [Analytics] Intera\xE7\xE3o registrada: [${mode.toUpperCase()}] "${question.substring(0, 40)}..." (${totalDurationMs || timings.total_ms || 0}ms${ttftMs ? ` | TTFT: ${ttftMs}ms` : ""})`
     );
   } catch (error) {
     console.error("\u274C [Analytics] Erro ao persistir intera\xE7\xE3o no banco:", error);
@@ -1727,6 +1835,10 @@ async function getAnalyticsOverview(filters) {
        COALESCE(AVG(CASE WHEN mode = 'rag' THEN total_duration_ms END), 0) AS avg_duration_rag,
        COALESCE(AVG(CASE WHEN mode = 'agent' THEN total_duration_ms END), 0) AS avg_duration_agent,
        COALESCE(AVG(CASE WHEN mode = 'agent_beta' THEN total_duration_ms END), 0) AS avg_duration_beta,
+       COALESCE(AVG(ttft_ms), 0) AS avg_ttft_ms,
+       COALESCE(AVG(CASE WHEN mode = 'rag' THEN ttft_ms END), 0) AS avg_ttft_rag,
+       COALESCE(AVG(CASE WHEN mode = 'agent' THEN ttft_ms END), 0) AS avg_ttft_agent,
+       COALESCE(AVG(CASE WHEN mode = 'agent_beta' THEN ttft_ms END), 0) AS avg_ttft_beta,
        COUNT(CASE WHEN feedback = 'up' THEN 1 END) AS feedback_up,
        COUNT(CASE WHEN feedback = 'down' THEN 1 END) AS feedback_down,
        COUNT(CASE WHEN feedback IS NULL THEN 1 END) AS feedback_none
@@ -1773,7 +1885,11 @@ async function getAnalyticsOverview(filters) {
       overallAvgMs: Math.round(Number(row.avg_duration_ms)),
       ragAvgMs: Math.round(Number(row.avg_duration_rag)),
       agentAvgMs: Math.round(Number(row.avg_duration_agent)),
-      betaAvgMs: Math.round(Number(row.avg_duration_beta))
+      betaAvgMs: Math.round(Number(row.avg_duration_beta)),
+      overallAvgTtftMs: Math.round(Number(row.avg_ttft_ms)),
+      ragAvgTtftMs: Math.round(Number(row.avg_ttft_rag)),
+      agentAvgTtftMs: Math.round(Number(row.avg_ttft_agent)),
+      betaAvgTtftMs: Math.round(Number(row.avg_ttft_beta))
     },
     feedback: {
       up,
@@ -1845,6 +1961,10 @@ async function getAnalyticsHistory(filters, page = 1, limit = 15) {
        timings,
        total_duration_ms,
        feedback,
+       ttft_ms,
+       queue_wait_ms,
+       prompt_tokens,
+       completion_tokens,
        created_at
      FROM chat_interactions
      WHERE ${whereClause}
@@ -1876,9 +1996,14 @@ async function exportAnalyticsCSV(filters) {
     "Intencao",
     "Pergunta",
     "Latencia_Total_ms",
+    "TTFT_ms",
+    "Fila_Espera_ms",
+    "Tokens_Prompt",
+    "Tokens_Gerados",
     "Feedback",
     "Fontes",
-    "Resposta"
+    "Resposta",
+    "Timings_JSON"
   ];
   const escapeCSV = (value) => {
     if (value === null || value === void 0)
@@ -1893,9 +2018,14 @@ async function exportAnalyticsCSV(filters) {
     item.intent,
     escapeCSV(item.question),
     item.total_duration_ms,
+    item.ttft_ms ?? (item.timings?.ttft_ms ?? ""),
+    item.queue_wait_ms ?? (item.timings?.queue_wait_ms ?? 0),
+    item.prompt_tokens ?? (item.timings?.prompt_tokens ?? ""),
+    item.completion_tokens ?? (item.timings?.completion_tokens ?? ""),
     item.feedback || "sem_avaliacao",
     escapeCSV((item.sources || []).join("; ")),
-    escapeCSV(item.response)
+    escapeCSV(item.response),
+    escapeCSV(item.timings)
   ]);
   return [header.join(","), ...rows.map((r) => r.join(","))].join("\n");
 }
@@ -2439,9 +2569,25 @@ var OllamaSemaphore = class {
 };
 var ollamaSemaphore = new OllamaSemaphore(MAX_CONCURRENT);
 async function withConcurrencyControl(fn) {
+  const enqueuedAt = Date.now();
+  const { active, waiting } = ollamaSemaphore.getStatus();
   await ollamaSemaphore.acquire();
+  const acquiredAt = Date.now();
   try {
-    return await fn();
+    return await runWithRequestMetrics(
+      {
+        enqueuedAt,
+        acquiredAt,
+        queueWaitMs: acquiredAt - enqueuedAt,
+        activeOnEnqueue: active,
+        waitingOnEnqueue: waiting,
+        llmCalls: [],
+        toolMs: 0,
+        toolInvocations: 0,
+        fallback: false
+      },
+      fn
+    );
   } finally {
     ollamaSemaphore.release();
   }
@@ -15991,8 +16137,8 @@ var AsyncLocalStorageProvider2 = class {
   }
   runWithConfig(config2, callback, avoidCreatingRootRunTree) {
     const callbackManager = CallbackManager._configureSync(config2?.callbacks, void 0, config2?.tags, void 0, config2?.metadata);
-    const storage = this.getInstance();
-    const previousValue = storage.getStore();
+    const storage2 = this.getInstance();
+    const previousValue = storage2.getStore();
     const parentRunId = callbackManager?.getParentRunId();
     const langChainTracer = callbackManager?.handlers?.find((handler) => handler?.name === "langchain_tracer");
     let runTree;
@@ -16013,7 +16159,7 @@ var AsyncLocalStorageProvider2 = class {
         runTree = {};
       runTree[_CONTEXT_VARIABLES_KEY] = previousValue[_CONTEXT_VARIABLES_KEY];
     }
-    return storage.run(runTree, callback);
+    return storage2.run(runTree, callback);
   }
   initializeGlobalInstance(instance) {
     if (getGlobalAsyncLocalStorageInstance() === void 0)
@@ -28149,6 +28295,7 @@ ${"\u2500".repeat(50)}`);
   res.write(`data: ${JSON.stringify({ type: "status", status: "Analisando inten\xE7\xE3o..." })}
 
 `);
+  const step1Start = Date.now();
   const firstResponse = await fetch(`${OLLAMA_BASE_URL2}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -28171,6 +28318,7 @@ ${"\u2500".repeat(50)}`);
     throw new Error(`[Ollama] Erro ${firstResponse.status}: ${errorText}`);
   }
   const firstData = await firstResponse.json();
+  recordLlmCall("tool_decision", LLM_MODEL2, Date.now() - step1Start, firstData);
   const assistantMessage = firstData.message;
   if (!assistantMessage) {
     throw new Error("[Ollama] Resposta sem message");
@@ -28216,10 +28364,11 @@ ${"\u2500".repeat(50)}`);
         `   \u{1F4DE} [Agente] Chamando ferramenta: ${name}(${JSON.stringify(args)})`
       );
       try {
+        const toolStart = Date.now();
         const toolResult = await mcpClient.callTool({
           name,
           arguments: args
-        });
+        }).finally(() => recordToolTime(Date.now() - toolStart));
         const resultText = toolResult.content.filter((c) => c.type === "text").map((c) => c.text).join("\n");
         console.log(
           `   \u2705 [Agente] Resultado: ${resultText.substring(0, 80)}...`
@@ -28257,6 +28406,8 @@ ${"\u2500".repeat(50)}`);
     if (!assistantMessage.content) {
       console.warn("\u26A0\uFE0F [Agente] O modelo n\xE3o retornou tools nem texto no Passo 1. Abortando.");
       const fallbackMsg = "Desculpe, n\xE3o consegui processar a sua pergunta neste momento. Pode tentar reformular?";
+      markFirstToken();
+      markFallback();
       res.write(`data: ${JSON.stringify({ type: "status", status: "Erro de gera\xE7\xE3o..." })}
 
 `);
@@ -28272,6 +28423,14 @@ ${"\u2500".repeat(50)}`);
       if (session) {
         updateSession(session.sessionId, question, "", fallbackMsg);
       }
+      logInteraction({
+        sessionId: session?.sessionId ?? "anonymous",
+        mode: "agent",
+        question,
+        contextualizedQuestion,
+        response: fallbackMsg,
+        totalDurationMs: Date.now() - start
+      }).catch((err) => console.error("Erro ao registrar log Agente (sem sa\xEDda do modelo):", err));
       return;
     }
     res.write(`data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}
@@ -28302,6 +28461,15 @@ ${"\u2500".repeat(50)}`);
     if (session) {
       updateSession(session.sessionId, question, "", assistantMessage.content);
     }
+    markFirstToken();
+    logInteraction({
+      sessionId: session?.sessionId ?? "anonymous",
+      mode: "agent",
+      question,
+      contextualizedQuestion,
+      response: assistantMessage.content,
+      totalDurationMs: Date.now() - start
+    }).catch((err) => console.error("Erro ao registrar log Agente (resposta direta):", err));
     return;
   }
   console.log("\u{1F30A} [Agente] Passo 3: Gerando resposta final com streaming...");
@@ -28312,6 +28480,14 @@ ${"\u2500".repeat(50)}`);
       content: "DIRETIVA FINAL OBRIGAT\xD3RIA: Sua resposta deve ser baseada EXCLUSIVAMENTE nos trechos de documentos retornados pela ferramenta acima. N\xC3O se apresente, N\xC3O liste suas capacidades. Responda diretamente a pergunta do usu\xE1rio usando os dados dos documentos. Responda em Portugu\xEAs do Brasil (pt-BR). Ignore trechos de outras disciplinas n\xE3o relacionadas \xE0 pergunta."
     }
   ];
+  const step3Start = Date.now();
+  let step3FirstTokenAt;
+  let step3Usage;
+  const noteFirstToken = () => {
+    if (step3FirstTokenAt === void 0)
+      step3FirstTokenAt = Date.now();
+    markFirstToken();
+  };
   const streamResponse = await fetch(`${OLLAMA_BASE_URL2}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -28370,6 +28546,7 @@ ${"\u2500".repeat(50)}`);
             if (textToken.trim() === "<think>" || textToken.trim() === "</think>")
               continue;
             generatedTokens = true;
+            noteFirstToken();
             fullText += textToken;
             res.write(
               `data: ${JSON.stringify({ type: "token", content: textToken })}
@@ -28378,6 +28555,7 @@ ${"\u2500".repeat(50)}`);
             );
           }
           if (chunk.done) {
+            step3Usage = chunk;
             console.log("\u{1F916} [Agente] Gera\xE7\xE3o conclu\xEDda pelo Ollama");
           }
         } catch {
@@ -28387,6 +28565,8 @@ ${"\u2500".repeat(50)}`);
     if (buffer.trim()) {
       try {
         const chunk = JSON.parse(buffer.trim());
+        if (chunk.done)
+          step3Usage = chunk;
         const thoughtToken = chunk.message?.thinking || chunk.message?.reasoning_content;
         if (thoughtToken) {
           fullThought += thoughtToken;
@@ -28397,6 +28577,7 @@ ${"\u2500".repeat(50)}`);
         const textToken = chunk.message?.content;
         if (textToken && textToken.trim() !== "<think>" && textToken.trim() !== "</think>") {
           generatedTokens = true;
+          noteFirstToken();
           fullText += textToken;
           res.write(
             `data: ${JSON.stringify({ type: "token", content: textToken })}
@@ -28410,11 +28591,19 @@ ${"\u2500".repeat(50)}`);
   } finally {
     reader.releaseLock();
   }
+  recordLlmCall(
+    "generation",
+    LLM_MODEL2,
+    Date.now() - step3Start,
+    step3Usage,
+    step3FirstTokenAt !== void 0 ? step3FirstTokenAt - step3Start : void 0
+  );
   if (!generatedTokens) {
     const extractedResponse = extractDraftFromThinking(fullThought);
     if (extractedResponse) {
       console.log("\u{1F4A1} [Agente] Extraindo resposta rascunhada do canal de thinking...");
       generatedTokens = true;
+      noteFirstToken();
       fullText = extractedResponse;
       res.write(`data: ${JSON.stringify({ type: "token", content: extractedResponse })}
 
@@ -28422,6 +28611,8 @@ ${"\u2500".repeat(50)}`);
     } else {
       console.warn("\u26A0\uFE0F [Agente] Resposta vazia no streaming. Enviando fallback.");
       const fallbackMsg = "N\xE3o encontrei essa informa\xE7\xE3o nos documentos dispon\xEDveis. Recomendo consultar a coordena\xE7\xE3o do curso ou acessar o portal do IFMG.";
+      noteFirstToken();
+      markFallback();
       res.write(
         `data: ${JSON.stringify({ type: "token", content: fallbackMsg })}
 
@@ -28640,6 +28831,7 @@ ${"\u2500".repeat(50)}`);
   res.write(`data: ${JSON.stringify({ type: "status", status: "Analisando inten\xE7\xE3o e ferramentas..." })}
 
 `);
+  const step1Start = Date.now();
   const firstResponse = await fetch(`${OLLAMA_BASE_URL3}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -28662,6 +28854,7 @@ ${"\u2500".repeat(50)}`);
     throw new Error(`[Ollama] Erro ${firstResponse.status}: ${errorText}`);
   }
   const firstData = await firstResponse.json();
+  recordLlmCall("tool_decision", LLM_MODEL3, Date.now() - step1Start, firstData);
   const assistantMessage = firstData.message;
   if (!assistantMessage) {
     throw new Error("[Ollama] Resposta sem message");
@@ -28704,10 +28897,11 @@ ${"\u2500".repeat(50)}`);
       }
       console.log(`   \u{1F4DE} [Agente Beta] Chamando ferramenta: ${name}(${JSON.stringify(args)})`);
       try {
+        const toolStart = Date.now();
         let toolResult = await mcpClient2.callTool({
           name,
           arguments: args
-        });
+        }).finally(() => recordToolTime(Date.now() - toolStart));
         let resultText = toolResult.content.filter((c) => c.type === "text").map((c) => c.text).join("\n");
         if (resultText.includes("Nenhum trecho relevante encontrado") && args.keywords) {
           console.log(`\u{1F504} [Agente Beta] Busca corretiva ativada: ampliando termos de busca...`);
@@ -28768,6 +28962,7 @@ ${"\u2500".repeat(50)}`);
     res.write(`data: [DONE]
 
 `);
+    markFirstToken();
     if (session) {
       updateSession(session.sessionId, question, "", directContent);
     }
@@ -28810,6 +29005,14 @@ Sua resposta deve basear-se ESTRITAMENTE nos trechos de documentos retornados pe
 - N\xC3O se apresente ou inclua pensamentos internos. V\xE1 direto ao ponto.`
     }
   ];
+  const step3Start = Date.now();
+  let step3FirstTokenAt;
+  let step3Usage;
+  const noteFirstToken = () => {
+    if (step3FirstTokenAt === void 0)
+      step3FirstTokenAt = Date.now();
+    markFirstToken();
+  };
   const streamResponse = await fetch(`${OLLAMA_BASE_URL3}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -28867,6 +29070,7 @@ Sua resposta deve basear-se ESTRITAMENTE nos trechos de documentos retornados pe
             if (textToken.trim() === "<think>" || textToken.trim() === "</think>")
               continue;
             generatedTokens = true;
+            noteFirstToken();
             fullText += textToken;
             res.write(
               `data: ${JSON.stringify({ type: "token", content: textToken })}
@@ -28875,6 +29079,7 @@ Sua resposta deve basear-se ESTRITAMENTE nos trechos de documentos retornados pe
             );
           }
           if (chunk.done) {
+            step3Usage = chunk;
             console.log("\u{1F916} [Agente Beta] Gera\xE7\xE3o conclu\xEDda pelo Ollama");
           }
         } catch {
@@ -28884,6 +29089,8 @@ Sua resposta deve basear-se ESTRITAMENTE nos trechos de documentos retornados pe
     if (buffer.trim()) {
       try {
         const chunk = JSON.parse(buffer.trim());
+        if (chunk.done)
+          step3Usage = chunk;
         const thoughtToken = chunk.message?.thinking || chunk.message?.reasoning_content;
         if (thoughtToken) {
           fullThought += thoughtToken;
@@ -28894,6 +29101,7 @@ Sua resposta deve basear-se ESTRITAMENTE nos trechos de documentos retornados pe
         const textToken = chunk.message?.content;
         if (textToken && textToken.trim() !== "<think>" && textToken.trim() !== "</think>") {
           generatedTokens = true;
+          noteFirstToken();
           fullText += textToken;
           res.write(
             `data: ${JSON.stringify({ type: "token", content: textToken })}
@@ -28907,11 +29115,19 @@ Sua resposta deve basear-se ESTRITAMENTE nos trechos de documentos retornados pe
   } finally {
     reader.releaseLock();
   }
+  recordLlmCall(
+    "generation",
+    LLM_MODEL3,
+    Date.now() - step3Start,
+    step3Usage,
+    step3FirstTokenAt !== void 0 ? step3FirstTokenAt - step3Start : void 0
+  );
   if (!generatedTokens) {
     const extractedResponse = extractDraftFromThinking(fullThought);
     if (extractedResponse) {
       console.log("\u{1F4A1} [Agente Beta] Extraindo resposta rascunhada do canal de thinking...");
       generatedTokens = true;
+      noteFirstToken();
       fullText = extractedResponse;
       res.write(`data: ${JSON.stringify({ type: "token", content: extractedResponse })}
 
@@ -28919,6 +29135,8 @@ Sua resposta deve basear-se ESTRITAMENTE nos trechos de documentos retornados pe
     } else {
       console.warn("\u26A0\uFE0F [Agente Beta] Resposta vazia no streaming. Enviando fallback.");
       const fallbackMsg = "N\xE3o encontrei essa informa\xE7\xE3o nos documentos dispon\xEDveis. Recomendo consultar a coordena\xE7\xE3o do curso ou acessar o portal do IFMG.";
+      noteFirstToken();
+      markFallback();
       res.write(
         `data: ${JSON.stringify({ type: "token", content: fallbackMsg })}
 

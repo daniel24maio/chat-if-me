@@ -1,4 +1,5 @@
 import { pool } from "../config/database.js";
+import { getRequestMetrics } from "./request_metrics.service.js";
 
 /**
  * Interface para os parâmetros de registro de uma interação no banco.
@@ -18,9 +19,20 @@ export interface LogInteractionParams {
     embedding_ms?: number;
     retrieval_ms?: number;
     generation_ms?: number;
+    decision_ms?: number;
+    tool_ms?: number;
+    ttft_ms?: number;
+    queue_wait_ms?: number;
+    prompt_tokens?: number;
+    completion_tokens?: number;
     total_ms?: number;
+    [key: string]: unknown;
   };
   totalDurationMs?: number;
+  ttftMs?: number;
+  queueWaitMs?: number;
+  promptTokens?: number;
+  completionTokens?: number;
   feedback?: "up" | "down";
 }
 
@@ -56,11 +68,49 @@ export async function logInteraction(params: LogInteractionParams): Promise<void
     feedback,
   } = params;
 
+  const reqMetrics = getRequestMetrics();
+
+  // TTFT calculado: momento do primeiro token menos o início da execução (ou repassado nos params)
+  const calculatedTtft = reqMetrics?.firstTokenAt
+    ? Math.max(0, reqMetrics.firstTokenAt - reqMetrics.acquiredAt)
+    : undefined;
+  const ttftMs = params.ttftMs ?? calculatedTtft ?? (typeof timings.ttft_ms === "number" ? timings.ttft_ms : null);
+
+  const queueWaitMs = params.queueWaitMs ?? reqMetrics?.queueWaitMs ?? (typeof timings.queue_wait_ms === "number" ? timings.queue_wait_ms : 0);
+
+  const promptTokens =
+    params.promptTokens ??
+    reqMetrics?.llmCalls.reduce((acc, c) => acc + (c.prompt_tokens ?? 0), 0) ??
+    (typeof timings.prompt_tokens === "number" ? timings.prompt_tokens : null);
+
+  const completionTokens =
+    params.completionTokens ??
+    reqMetrics?.llmCalls.reduce((acc, c) => acc + (c.completion_tokens ?? 0), 0) ??
+    (typeof timings.completion_tokens === "number" ? timings.completion_tokens : null);
+
+  // Consolidação detalhada do objeto timings (JSONB)
+  const decisionMs = reqMetrics?.llmCalls.find((c) => c.step === "tool_decision")?.wall_ms;
+  const generationMs = timings.generation_ms ?? reqMetrics?.llmCalls.find((c) => c.step === "generation")?.wall_ms;
+  const toolMs = reqMetrics?.toolMs && reqMetrics.toolMs > 0 ? reqMetrics.toolMs : timings.tool_ms;
+
+  const consolidatedTimings = {
+    ...timings,
+    ...(decisionMs !== undefined ? { decision_ms: decisionMs } : {}),
+    ...(toolMs !== undefined ? { tool_ms: toolMs } : {}),
+    ...(generationMs !== undefined ? { generation_ms: generationMs } : {}),
+    ...(ttftMs !== null && ttftMs !== undefined ? { ttft_ms: ttftMs } : {}),
+    queue_wait_ms: queueWaitMs,
+    ...(promptTokens ? { prompt_tokens: promptTokens } : {}),
+    ...(completionTokens ? { completion_tokens: completionTokens } : {}),
+    ...(reqMetrics?.fallback ? { fallback: true } : {}),
+    ...(reqMetrics?.llmCalls && reqMetrics.llmCalls.length > 0 ? { llm_calls: reqMetrics.llmCalls } : {}),
+  };
+
   try {
     await pool.query(
       `INSERT INTO chat_interactions
-        (session_id, mode, question, contextualized_question, intent, tool_calls, sources, chunk_ids, response, timings, total_duration_ms, feedback)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        (session_id, mode, question, contextualized_question, intent, tool_calls, sources, chunk_ids, response, timings, total_duration_ms, feedback, ttft_ms, queue_wait_ms, prompt_tokens, completion_tokens)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
       [
         sessionId,
         mode,
@@ -71,15 +121,19 @@ export async function logInteraction(params: LogInteractionParams): Promise<void
         JSON.stringify(sources),
         chunkIds,
         response,
-        JSON.stringify(timings),
+        JSON.stringify(consolidatedTimings),
         totalDurationMs || timings.total_ms || 0,
         feedback || null,
+        ttftMs,
+        queueWaitMs,
+        promptTokens,
+        completionTokens,
       ]
     );
 
     console.log(
       `📊 [Analytics] Interação registrada: [${mode.toUpperCase()}] "${question.substring(0, 40)}..." ` +
-      `(${totalDurationMs || timings.total_ms || 0}ms)`
+      `(${totalDurationMs || timings.total_ms || 0}ms${ttftMs ? ` | TTFT: ${ttftMs}ms` : ""})`
     );
   } catch (error) {
     console.error("❌ [Analytics] Erro ao persistir interação no banco:", error);
@@ -150,6 +204,10 @@ export async function getAnalyticsOverview(filters: AnalyticsFilters) {
        COALESCE(AVG(CASE WHEN mode = 'rag' THEN total_duration_ms END), 0) AS avg_duration_rag,
        COALESCE(AVG(CASE WHEN mode = 'agent' THEN total_duration_ms END), 0) AS avg_duration_agent,
        COALESCE(AVG(CASE WHEN mode = 'agent_beta' THEN total_duration_ms END), 0) AS avg_duration_beta,
+       COALESCE(AVG(ttft_ms), 0) AS avg_ttft_ms,
+       COALESCE(AVG(CASE WHEN mode = 'rag' THEN ttft_ms END), 0) AS avg_ttft_rag,
+       COALESCE(AVG(CASE WHEN mode = 'agent' THEN ttft_ms END), 0) AS avg_ttft_agent,
+       COALESCE(AVG(CASE WHEN mode = 'agent_beta' THEN ttft_ms END), 0) AS avg_ttft_beta,
        COUNT(CASE WHEN feedback = 'up' THEN 1 END) AS feedback_up,
        COUNT(CASE WHEN feedback = 'down' THEN 1 END) AS feedback_down,
        COUNT(CASE WHEN feedback IS NULL THEN 1 END) AS feedback_none
@@ -203,6 +261,10 @@ export async function getAnalyticsOverview(filters: AnalyticsFilters) {
       ragAvgMs: Math.round(Number(row.avg_duration_rag)),
       agentAvgMs: Math.round(Number(row.avg_duration_agent)),
       betaAvgMs: Math.round(Number(row.avg_duration_beta)),
+      overallAvgTtftMs: Math.round(Number(row.avg_ttft_ms)),
+      ragAvgTtftMs: Math.round(Number(row.avg_ttft_rag)),
+      agentAvgTtftMs: Math.round(Number(row.avg_ttft_agent)),
+      betaAvgTtftMs: Math.round(Number(row.avg_ttft_beta)),
     },
     feedback: {
       up,
@@ -293,6 +355,10 @@ export async function getAnalyticsHistory(
        timings,
        total_duration_ms,
        feedback,
+       ttft_ms,
+       queue_wait_ms,
+       prompt_tokens,
+       completion_tokens,
        created_at
      FROM chat_interactions
      WHERE ${whereClause}
@@ -334,9 +400,14 @@ export async function exportAnalyticsCSV(filters: AnalyticsFilters): Promise<str
     "Intencao",
     "Pergunta",
     "Latencia_Total_ms",
+    "TTFT_ms",
+    "Fila_Espera_ms",
+    "Tokens_Prompt",
+    "Tokens_Gerados",
     "Feedback",
     "Fontes",
     "Resposta",
+    "Timings_JSON",
   ];
 
   const escapeCSV = (value: unknown): string => {
@@ -345,16 +416,21 @@ export async function exportAnalyticsCSV(filters: AnalyticsFilters): Promise<str
     return `"${str.replace(/"/g, '""')}"`;
   };
 
-  const rows = interactions.map((item) => [
+  const rows = interactions.map((item: any) => [
     item.id,
     new Date(item.created_at).toLocaleString("pt-BR"),
     item.mode,
     item.intent,
     escapeCSV(item.question),
     item.total_duration_ms,
+    item.ttft_ms ?? (item.timings?.ttft_ms ?? ""),
+    item.queue_wait_ms ?? (item.timings?.queue_wait_ms ?? 0),
+    item.prompt_tokens ?? (item.timings?.prompt_tokens ?? ""),
+    item.completion_tokens ?? (item.timings?.completion_tokens ?? ""),
     item.feedback || "sem_avaliacao",
     escapeCSV((item.sources || []).join("; ")),
     escapeCSV(item.response),
+    escapeCSV(item.timings),
   ]);
 
   return [header.join(","), ...rows.map((r) => r.join(","))].join("\n");

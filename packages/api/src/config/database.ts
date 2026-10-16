@@ -240,6 +240,10 @@ export async function verifyInteractionsTable(): Promise<void> {
           timings JSONB DEFAULT '{}',
           total_duration_ms INTEGER,
           feedback VARCHAR(10),
+          ttft_ms INTEGER,
+          queue_wait_ms INTEGER,
+          prompt_tokens INTEGER,
+          completion_tokens INTEGER,
           created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
         );
         CREATE INDEX idx_interactions_created_at ON chat_interactions (created_at DESC);
@@ -251,7 +255,14 @@ export async function verifyInteractionsTable(): Promise<void> {
       await pool.query(sql);
       console.log("✅ [Database] Tabela 'chat_interactions' e índices criados com sucesso!");
     } else {
-      console.log("✅ [Database] Tabela 'chat_interactions' já existe ✓");
+      // Garante colunas de métricas avançadas (migração segura e idempotente)
+      await pool.query(`
+        ALTER TABLE chat_interactions ADD COLUMN IF NOT EXISTS ttft_ms INTEGER;
+        ALTER TABLE chat_interactions ADD COLUMN IF NOT EXISTS queue_wait_ms INTEGER;
+        ALTER TABLE chat_interactions ADD COLUMN IF NOT EXISTS prompt_tokens INTEGER;
+        ALTER TABLE chat_interactions ADD COLUMN IF NOT EXISTS completion_tokens INTEGER;
+      `);
+      console.log("✅ [Database] Tabela 'chat_interactions' verificada com colunas de métricas atualizadas ✓");
     }
   } catch (error) {
     console.error(

@@ -17,6 +17,13 @@ import {
 } from "./fast_path.util.js";
 import { streamOllamaResponse, extractDraftFromThinking, type OllamaChatMessage } from "../config/ollama.js";
 import { logInteraction } from "./analytics.service.js";
+import {
+  recordLlmCall,
+  recordToolTime,
+  markFirstToken,
+  markFallback,
+  type OllamaUsagePayload,
+} from "./request_metrics.service.js";
 
 /**
  * Serviço do Agente MCP — Agentic RAG.
@@ -96,7 +103,7 @@ interface OllamaToolDef {
 }
 
 /** Resposta de chat do Ollama */
-interface OllamaChatResponse {
+interface OllamaChatResponse extends OllamaUsagePayload {
   message?: {
     role: string;
     content: string;
@@ -312,6 +319,7 @@ export async function processAgentQuestion(
 
   res.write(`data: ${JSON.stringify({ type: "status", status: "Analisando intenção..." })}\n\n`);
 
+  const step1Start = Date.now();
   const firstResponse = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -336,6 +344,7 @@ export async function processAgentQuestion(
   }
 
   const firstData = (await firstResponse.json()) as OllamaChatResponse;
+  recordLlmCall("tool_decision", LLM_MODEL, Date.now() - step1Start, firstData);
   const assistantMessage = firstData.message;
 
   if (!assistantMessage) {
@@ -393,10 +402,11 @@ export async function processAgentQuestion(
       );
 
       try {
+        const toolStart = Date.now();
         const toolResult = await mcpClient.callTool({
           name,
           arguments: args,
-        });
+        }).finally(() => recordToolTime(Date.now() - toolStart));
 
         // Extrai o texto do resultado MCP
         const resultText = (
@@ -450,6 +460,8 @@ export async function processAgentQuestion(
     if (!assistantMessage.content) {
       console.warn("⚠️ [Agente] O modelo não retornou tools nem texto no Passo 1. Abortando.");
       const fallbackMsg = "Desculpe, não consegui processar a sua pergunta neste momento. Pode tentar reformular?";
+      markFirstToken();
+      markFallback();
       res.write(`data: ${JSON.stringify({ type: "status", status: "Erro de geração..." })}\n\n`);
       res.write(`data: ${JSON.stringify({ type: "sources", sources: [] })}\n\n`);
       res.write(`data: ${JSON.stringify({ type: "token", content: fallbackMsg })}\n\n`);
@@ -457,6 +469,15 @@ export async function processAgentQuestion(
       if (session) {
         updateSession(session.sessionId, question, "", fallbackMsg);
       }
+
+      logInteraction({
+        sessionId: session?.sessionId ?? "anonymous",
+        mode: "agent",
+        question,
+        contextualizedQuestion,
+        response: fallbackMsg,
+        totalDurationMs: Date.now() - start,
+      }).catch((err) => console.error("Erro ao registrar log Agente (sem saída do modelo):", err));
       return;
     }
 
@@ -488,6 +509,16 @@ export async function processAgentQuestion(
       updateSession(session.sessionId, question, "", assistantMessage.content);
     }
 
+    markFirstToken();
+    logInteraction({
+      sessionId: session?.sessionId ?? "anonymous",
+      mode: "agent",
+      question,
+      contextualizedQuestion,
+      response: assistantMessage.content,
+      totalDurationMs: Date.now() - start,
+    }).catch((err) => console.error("Erro ao registrar log Agente (resposta direta):", err));
+
     return;
   }
 
@@ -502,6 +533,14 @@ export async function processAgentQuestion(
       content: "DIRETIVA FINAL OBRIGATÓRIA: Sua resposta deve ser baseada EXCLUSIVAMENTE nos trechos de documentos retornados pela ferramenta acima. NÃO se apresente, NÃO liste suas capacidades. Responda diretamente a pergunta do usuário usando os dados dos documentos. Responda em Português do Brasil (pt-BR). Ignore trechos de outras disciplinas não relacionadas à pergunta.",
     }
   ];
+
+  const step3Start = Date.now();
+  let step3FirstTokenAt: number | undefined;
+  let step3Usage: OllamaUsagePayload | undefined;
+  const noteFirstToken = () => {
+    if (step3FirstTokenAt === undefined) step3FirstTokenAt = Date.now();
+    markFirstToken();
+  };
 
   const streamResponse = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
     method: "POST",
@@ -557,7 +596,7 @@ export async function processAgentQuestion(
           const chunk = JSON.parse(trimmed) as {
             message?: { content?: string; thinking?: string; reasoning_content?: string };
             done?: boolean;
-          };
+          } & OllamaUsagePayload;
 
           // 1. Canal de raciocínio / thinking
           const thoughtToken = chunk.message?.thinking || chunk.message?.reasoning_content;
@@ -571,6 +610,7 @@ export async function processAgentQuestion(
           if (textToken) {
             if (textToken.trim() === "<think>" || textToken.trim() === "</think>") continue;
             generatedTokens = true;
+            noteFirstToken();
             fullText += textToken;
             res.write(
               `data: ${JSON.stringify({ type: "token", content: textToken })}\n\n`
@@ -578,6 +618,7 @@ export async function processAgentQuestion(
           }
 
           if (chunk.done) {
+            step3Usage = chunk;
             console.log("🤖 [Agente] Geração concluída pelo Ollama");
           }
         } catch {
@@ -591,7 +632,9 @@ export async function processAgentQuestion(
       try {
         const chunk = JSON.parse(buffer.trim()) as {
           message?: { content?: string; thinking?: string; reasoning_content?: string };
-        };
+          done?: boolean;
+        } & OllamaUsagePayload;
+        if (chunk.done) step3Usage = chunk;
         const thoughtToken = chunk.message?.thinking || chunk.message?.reasoning_content;
         if (thoughtToken) {
           fullThought += thoughtToken;
@@ -601,6 +644,7 @@ export async function processAgentQuestion(
         const textToken = chunk.message?.content;
         if (textToken && textToken.trim() !== "<think>" && textToken.trim() !== "</think>") {
           generatedTokens = true;
+          noteFirstToken();
           fullText += textToken;
           res.write(
             `data: ${JSON.stringify({ type: "token", content: textToken })}\n\n`
@@ -614,6 +658,14 @@ export async function processAgentQuestion(
     reader.releaseLock();
   }
 
+  recordLlmCall(
+    "generation",
+    LLM_MODEL,
+    Date.now() - step3Start,
+    step3Usage,
+    step3FirstTokenAt !== undefined ? step3FirstTokenAt - step3Start : undefined
+  );
+
   // Se nenhum token de conteúdo foi gerado, mas houve pensamento
   if (!generatedTokens) {
     const extractedResponse = extractDraftFromThinking(fullThought);
@@ -621,11 +673,14 @@ export async function processAgentQuestion(
     if (extractedResponse) {
       console.log("💡 [Agente] Extraindo resposta rascunhada do canal de thinking...");
       generatedTokens = true;
+      noteFirstToken();
       fullText = extractedResponse;
       res.write(`data: ${JSON.stringify({ type: "token", content: extractedResponse })}\n\n`);
     } else {
       console.warn("⚠️ [Agente] Resposta vazia no streaming. Enviando fallback.");
       const fallbackMsg = "Não encontrei essa informação nos documentos disponíveis. Recomendo consultar a coordenação do curso ou acessar o portal do IFMG.";
+      noteFirstToken();
+      markFallback();
       res.write(
         `data: ${JSON.stringify({ type: "token", content: fallbackMsg })}\n\n`
       );
