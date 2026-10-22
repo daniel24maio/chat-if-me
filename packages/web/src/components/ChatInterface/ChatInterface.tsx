@@ -6,6 +6,7 @@ import ThemeToggle from '../ThemeToggle/ThemeToggle';
 import MarkdownRenderer from '../MarkdownRenderer/MarkdownRenderer';
 import { useTheme } from '../../contexts/ThemeContext';
 import { Link } from 'react-router-dom';
+import ProfileModal, { type ParticipantProfile } from '../ProfileModal/ProfileModal';
 
 /**
  * URL base da API backend.
@@ -60,6 +61,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ isBeta = false }) => {
   const [showModeInfo, setShowModeInfo] = useState(false);
   /** Identificador da sessão — enviado ao backend para memória conversacional */
   const [sessionId, setSessionId] = useState(() => crypto.randomUUID());
+  /** Identificador anônimo do participante e seu perfil demográfico acadêmico */
+  const [participantId, setParticipantId] = useState<string | null>(null);
+  const [participantProfile, setParticipantProfile] = useState<ParticipantProfile | null>(null);
+  const isProfileSelected = Boolean(participantId && participantProfile);
   /** Status do pipeline exibido no frontend durante o carregamento */
   const [statusMessage, setStatusMessage] = useState('Analisando pergunta...');
   /** Indica se a sessão atual expirou devido a inatividade */
@@ -87,7 +92,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ isBeta = false }) => {
       const response = await fetch(`${API_URL}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, sessionId }),
+        body: JSON.stringify({ question, sessionId, participantId }),
         signal: controller.signal,
       });
 
@@ -232,14 +237,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ isBeta = false }) => {
     } finally {
       abortControllerRef.current = null;
     }
-  }, [useAgent, isBeta, sessionId]);
+  }, [useAgent, isBeta, sessionId, participantId]);
 
   /**
    * Envia a mensagem do usuário e inicia o stream da resposta.
    */
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputValue.trim() || isStreaming || isExpired) return;
+    if (!inputValue.trim() || isStreaming || isExpired || !isProfileSelected) return;
 
     const currentInput = inputValue.trim();
 
@@ -336,6 +341,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ isBeta = false }) => {
       },
     ]);
     setSessionId(crypto.randomUUID());
+    setParticipantId(null);
+    setParticipantProfile(null);
     setIsExpired(false);
     setInputValue('');
     setStatusMessage('Analisando pergunta...');
@@ -499,15 +506,23 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ isBeta = false }) => {
             type="text"
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
-            placeholder={isExpired ? 'Sessão encerrada' : isStreaming ? 'Aguarde a resposta...' : 'Digite sua dúvida...'}
+            placeholder={
+              !isProfileSelected
+                ? 'Selecione seu perfil acadêmico para iniciar...'
+                : isExpired
+                ? 'Sessão encerrada'
+                : isStreaming
+                ? 'Aguarde a resposta...'
+                : 'Digite sua dúvida...'
+            }
             className="input-field"
-            disabled={isStreaming || isExpired}
+            disabled={isStreaming || isExpired || !isProfileSelected}
             aria-label="Campo de texto para digitar sua dúvida"
           />
           <button
             type="submit"
             className="submit-btn"
-            disabled={isStreaming || !inputValue.trim() || isExpired}
+            disabled={isStreaming || !inputValue.trim() || isExpired || !isProfileSelected}
             aria-label={isStreaming ? 'Aguardando resposta' : 'Enviar mensagem'}
           >
             {isStreaming ? '⏳' : 'Enviar'}
@@ -582,6 +597,16 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ isBeta = false }) => {
           </div>
         </div>
       )}
+
+      {/* Modal Bloqueante de Perfil Acadêmico do Participante */}
+      <ProfileModal
+        isOpen={!isProfileSelected}
+        apiUrl={API_URL}
+        onConfirm={(id, profile) => {
+          setParticipantId(id);
+          setParticipantProfile(profile);
+        }}
+      />
     </div>
   );
 };

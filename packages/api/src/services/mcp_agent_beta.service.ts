@@ -118,12 +118,14 @@ function inferIntentionFromKeywords(text: string): string {
 export async function processAgentBetaQuestionStream(
   question: string,
   res: Response,
-  sessionId?: string
+  sessionId?: string,
+  participantId?: string
 ): Promise<void> {
   const start = Date.now();
   console.log(`\n${"─".repeat(50)}`);
   console.log(`🧪 [Agente Beta] Nova pergunta: "${question}"`);
   if (sessionId) console.log(`🧠 [Agente Beta] Sessão: ${sessionId.substring(0, 8)}...`);
+  if (participantId) console.log(`👤 [Agente Beta] Participante: ${participantId.substring(0, 8)}...`);
 
   // 1. Verificação de sessão expirada
   if (sessionId && isSessionExpired(sessionId)) {
@@ -134,7 +136,8 @@ export async function processAgentBetaQuestionStream(
   }
 
   // 2. Recuperar ou criar sessão
-  const session = sessionId ? getOrCreateSession(sessionId) : null;
+  const session = sessionId ? getOrCreateSession(sessionId, participantId) : null;
+  const effectiveParticipantId = participantId ?? session?.participantId;
   const contextualizedQuestion = session
     ? resolveReferences(question, session)
     : question;
@@ -154,6 +157,7 @@ export async function processAgentBetaQuestionStream(
     const totalMs = Date.now() - start;
     logInteraction({
       sessionId: session?.sessionId ?? "anonymous",
+      participantId: effectiveParticipantId,
       mode: "agent_beta",
       question,
       contextualizedQuestion,
@@ -557,6 +561,7 @@ Sua resposta deve basear-se ESTRITAMENTE nos trechos de documentos retornados pe
 
   logInteraction({
     sessionId: session?.sessionId ?? "anonymous",
+    participantId: effectiveParticipantId,
     mode: "agent_beta",
     question,
     contextualizedQuestion,

@@ -47,11 +47,17 @@ interface OverviewMetrics {
   };
   intentsDistribution: Array<{ intent: string; count: number }>;
   topSources: Array<{ source: string; count: number }>;
+  profilesDistribution?: Array<{ profileType: string; count: number }>;
+  coursesDistribution?: Array<{ course: string; count: number }>;
 }
 
 interface InteractionItem {
   id: number;
   session_id: string;
+  participant_id?: string;
+  profile_type?: string;
+  course?: string;
+  course_phase?: string;
   mode: 'rag' | 'agent' | 'agent_beta';
   question: string;
   contextualized_question?: string;
@@ -81,6 +87,8 @@ export default function StatisticsPage() {
   const [modeFilter, setModeFilter] = useState<string>('all');
   const [intentFilter, setIntentFilter] = useState<string>('all');
   const [feedbackFilter, setFeedbackFilter] = useState<string>('all');
+  const [profileTypeFilter, setProfileTypeFilter] = useState<string>('all');
+  const [courseFilter, setCourseFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // Dados
@@ -137,6 +145,8 @@ export default function StatisticsPage() {
       if (modeFilter !== 'all') queryParams.set('mode', modeFilter);
       if (intentFilter !== 'all') queryParams.set('intent', intentFilter);
       if (feedbackFilter !== 'all') queryParams.set('feedback', feedbackFilter);
+      if (profileTypeFilter !== 'all') queryParams.set('profileType', profileTypeFilter);
+      if (courseFilter !== 'all') queryParams.set('course', courseFilter);
       if (searchQuery.trim()) queryParams.set('search', searchQuery.trim());
 
       // 1. Carregar Overview
@@ -162,7 +172,7 @@ export default function StatisticsPage() {
     } finally {
       setLoading(false);
     }
-  }, [startDate, endDate, modeFilter, intentFilter, feedbackFilter, searchQuery, page, limit]);
+  }, [startDate, endDate, modeFilter, intentFilter, feedbackFilter, profileTypeFilter, courseFilter, searchQuery, page, limit]);
 
   useEffect(() => {
     fetchData();
@@ -176,6 +186,8 @@ export default function StatisticsPage() {
     if (modeFilter !== 'all') queryParams.set('mode', modeFilter);
     if (intentFilter !== 'all') queryParams.set('intent', intentFilter);
     if (feedbackFilter !== 'all') queryParams.set('feedback', feedbackFilter);
+    if (profileTypeFilter !== 'all') queryParams.set('profileType', profileTypeFilter);
+    if (courseFilter !== 'all') queryParams.set('course', courseFilter);
     if (searchQuery.trim()) queryParams.set('search', searchQuery.trim());
 
     window.open(`${API_URL}/api/stats/export?${queryParams.toString()}`, '_blank');
@@ -205,6 +217,45 @@ export default function StatisticsPage() {
       default:
         return { label: mode, cls: '' };
     }
+  }
+
+  function formatParticipantProfile(profileType?: string, course?: string, phase?: string) {
+    if (!profileType || profileType === 'nao_informado') {
+      return { text: 'Não informado', cls: 'profile-badge-unknown' };
+    }
+    if (profileType === 'docente') {
+      return { text: '👨‍🏫 Docente', cls: 'profile-badge-docente' };
+    }
+    if (profileType === 'tae') {
+      return { text: '🏢 Técnico-Adm.', cls: 'profile-badge-tae' };
+    }
+    if (profileType === 'aluno_tecnico') {
+      const phaseLabel = phase === 'concluinte' ? 'Conc.' : 'Inic.';
+      return {
+        text: `🛠️ Técnico (${phaseLabel})`,
+        cls: 'profile-badge-tecnico',
+      };
+    }
+    if (profileType === 'aluno_graduacao') {
+      const courseMap: Record<string, string> = {
+        bsi: 'BSI',
+        adm: 'ADM',
+        eng_metalurgica: 'Metalurgia',
+        pedagogia: 'Pedagogia',
+      };
+      const courseName = (course && courseMap[course]) || course || 'Graduação';
+      const phaseMap: Record<string, string> = {
+        inicial: 'Inic.',
+        intermediaria: 'Interm.',
+        concluinte: 'Conc.',
+      };
+      const phaseLabel = (phase && phaseMap[phase]) || phase || '';
+      return {
+        text: `🎓 ${courseName}${phaseLabel ? ` (${phaseLabel})` : ''}`,
+        cls: 'profile-badge-graduacao',
+      };
+    }
+    return { text: profileType, cls: 'profile-badge-unknown' };
   }
 
   return (
@@ -340,6 +391,43 @@ export default function StatisticsPage() {
             <option value="down">👎 Negativos</option>
             <option value="none">Sem Avaliação</option>
           </select>
+
+          {/* Perfil do Participante */}
+          <select
+            className="stats-select"
+            value={profileTypeFilter}
+            onChange={(e) => {
+              setProfileTypeFilter(e.target.value);
+              if (e.target.value !== 'aluno_graduacao') {
+                setCourseFilter('all');
+              }
+              setPage(1);
+            }}
+          >
+            <option value="all">Todos os Perfis</option>
+            <option value="aluno_graduacao">🎓 Graduação</option>
+            <option value="aluno_tecnico">🛠️ Técnico</option>
+            <option value="docente">👨‍🏫 Docente</option>
+            <option value="tae">🏢 Técnico-Administrativo</option>
+          </select>
+
+          {/* Curso (se graduacao ou filtro direto) */}
+          {profileTypeFilter === 'aluno_graduacao' && (
+            <select
+              className="stats-select"
+              value={courseFilter}
+              onChange={(e) => {
+                setCourseFilter(e.target.value);
+                setPage(1);
+              }}
+            >
+              <option value="all">Todos os Cursos</option>
+              <option value="bsi">Sistemas de Informação</option>
+              <option value="adm">Administração</option>
+              <option value="eng_metalurgica">Engenharia Metalúrgica</option>
+              <option value="pedagogia">Pedagogia</option>
+            </select>
+          )}
         </div>
 
         <div className="stats-filter-row">
@@ -587,6 +675,38 @@ export default function StatisticsPage() {
             )}
           </div>
         </div>
+
+        {/* Distribuição por Perfil do Participante */}
+        <div className="stats-analytics-card">
+          <h3>
+            <Layers size={18} /> Perfis dos Participantes
+          </h3>
+          <div className="stats-source-list">
+            {overview?.profilesDistribution && overview.profilesDistribution.length > 0 ? (
+              overview.profilesDistribution.map((item) => {
+                const profileLabels: Record<string, string> = {
+                  aluno_graduacao: '🎓 Aluno(a) de Graduação',
+                  aluno_tecnico: '🛠️ Aluno(a) de Curso Técnico',
+                  docente: '👨‍🏫 Docente',
+                  tae: '🏢 Técnico-Administrativo',
+                  nao_informado: '❓ Não Informado',
+                };
+                return (
+                  <div key={item.profileType} className="stats-source-item">
+                    <span className="stats-source-name">
+                      {profileLabels[item.profileType] || item.profileType}
+                    </span>
+                    <span>
+                      <strong>{item.count}</strong> interações
+                    </span>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="stats-empty-state">Nenhum perfil registrado no período.</div>
+            )}
+          </div>
+        </div>
       </section>
 
       {/* Histórico de Interações */}
@@ -617,6 +737,7 @@ export default function StatisticsPage() {
               <tr>
                 <th>Data/Hora</th>
                 <th>Modo</th>
+                <th>Perfil</th>
                 <th>Pergunta</th>
                 <th>Intenção</th>
                 <th>Latência</th>
@@ -629,11 +750,17 @@ export default function StatisticsPage() {
               {interactions.length > 0 ? (
                 interactions.map((item) => {
                   const modeInfo = getModeLabel(item.mode);
+                  const profileInfo = formatParticipantProfile(item.profile_type, item.course, item.course_phase);
                   return (
                     <tr key={item.id}>
                       <td>{new Date(item.created_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</td>
                       <td>
                         <span className={`badge-mode ${modeInfo.cls}`}>{modeInfo.label}</span>
+                      </td>
+                      <td>
+                        <span className={`badge-profile ${profileInfo.cls}`} title={`Perfil: ${item.profile_type || 'N/A'}`}>
+                          {profileInfo.text}
+                        </span>
                       </td>
                       <td className="stats-col-question" title={item.question}>
                         {item.question}
@@ -747,6 +874,16 @@ export default function StatisticsPage() {
                 <div className="stats-timing-card">
                   <span>Intenção</span>
                   <strong>{selectedInteraction.intent || 'N/A'}</strong>
+                </div>
+                <div className="stats-timing-card">
+                  <span>Perfil Acadêmico</span>
+                  <strong>
+                    {formatParticipantProfile(
+                      selectedInteraction.profile_type,
+                      selectedInteraction.course,
+                      selectedInteraction.course_phase
+                    ).text}
+                  </strong>
                 </div>
                 <div className="stats-timing-card">
                   <span>Avaliação</span>

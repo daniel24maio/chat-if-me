@@ -240,7 +240,8 @@ export async function closeMCPClient(): Promise<void> {
 export async function processAgentQuestion(
   question: string,
   res: Response,
-  sessionId?: string
+  sessionId?: string,
+  participantId?: string
 ): Promise<void> {
   if (!mcpClient) {
     throw new Error("[Agente] MCP Client não inicializado");
@@ -251,6 +252,7 @@ export async function processAgentQuestion(
   console.log(`🤖 [Agente] Nova pergunta: "${question}"`);
   console.log(`📅 [Agente] Data/Hora: ${dataHora}`);
   if (sessionId) console.log(`🧠 [Agente] Sessão: ${sessionId.substring(0, 8)}...`);
+  if (participantId) console.log(`👤 [Agente] Participante: ${participantId.substring(0, 8)}...`);
   console.log(`${"─".repeat(50)}`);
 
   // ── Verificação de sessão expirada ──
@@ -262,7 +264,8 @@ export async function processAgentQuestion(
   }
 
   // ── Recuperar ou criar sessão ──
-  const session = sessionId ? getOrCreateSession(sessionId) : null;
+  const session = sessionId ? getOrCreateSession(sessionId, participantId) : null;
+  const effectiveParticipantId = participantId ?? session?.participantId;
 
   // ── Resolver referências anafóricas usando a memória ──
   const contextualizedQuestion = session
@@ -287,6 +290,7 @@ export async function processAgentQuestion(
     const totalMs = Date.now() - start;
     logInteraction({
       sessionId: session?.sessionId ?? "anonymous",
+      participantId: effectiveParticipantId,
       mode: "agent",
       question,
       contextualizedQuestion,
@@ -512,6 +516,7 @@ export async function processAgentQuestion(
     markFirstToken();
     logInteraction({
       sessionId: session?.sessionId ?? "anonymous",
+      participantId: effectiveParticipantId,
       mode: "agent",
       question,
       contextualizedQuestion,
@@ -700,6 +705,7 @@ export async function processAgentQuestion(
 
   logInteraction({
     sessionId: session?.sessionId ?? "anonymous",
+    participantId: effectiveParticipantId,
     mode: "agent",
     question,
     contextualizedQuestion,

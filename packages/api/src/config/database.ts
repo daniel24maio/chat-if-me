@@ -211,6 +211,44 @@ export async function verifyFeedbacksTable(): Promise<void> {
 }
 
 /**
+ * Garante que a tabela chat_participants (Perfis Anônimos de Participantes) exista no banco.
+ */
+export async function verifyParticipantsTable(): Promise<void> {
+  try {
+    const tableExists = await pool.query(`
+      SELECT EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_name = 'chat_participants'
+      ) AS exists
+    `);
+
+    if (!tableExists.rows[0]?.exists) {
+      console.log("🔄 [Database] Tabela 'chat_participants' não encontrada. Criando...");
+      const sql = `
+        CREATE TABLE chat_participants (
+          participant_id UUID PRIMARY KEY,
+          profile_type VARCHAR(30) NOT NULL CHECK (profile_type IN ('aluno_graduacao', 'aluno_tecnico', 'docente', 'tae')),
+          course VARCHAR(50),
+          course_phase VARCHAR(30),
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
+        CREATE INDEX idx_participants_profile_type ON chat_participants (profile_type);
+        CREATE INDEX idx_participants_course ON chat_participants (course);
+      `;
+      await pool.query(sql);
+      console.log("✅ [Database] Tabela 'chat_participants' e índices criados com sucesso!");
+    } else {
+      console.log("✅ [Database] Tabela 'chat_participants' já existe ✓");
+    }
+  } catch (error) {
+    console.error(
+      "❌ [Database] Falha na verificação da tabela chat_participants:",
+      error instanceof Error ? error.message : error
+    );
+  }
+}
+
+/**
  * Garante que a tabela chat_interactions (Histórico e Métricas de Execução) exista no banco.
  * Se não existir, executa o script de criação e seus índices.
  */
@@ -229,6 +267,7 @@ export async function verifyInteractionsTable(): Promise<void> {
         CREATE TABLE chat_interactions (
           id SERIAL PRIMARY KEY,
           session_id VARCHAR(64) NOT NULL,
+          participant_id UUID REFERENCES chat_participants(participant_id) ON DELETE SET NULL,
           mode VARCHAR(30) NOT NULL,
           question TEXT NOT NULL,
           contextualized_question TEXT,
@@ -249,20 +288,23 @@ export async function verifyInteractionsTable(): Promise<void> {
         CREATE INDEX idx_interactions_created_at ON chat_interactions (created_at DESC);
         CREATE INDEX idx_interactions_mode ON chat_interactions (mode);
         CREATE INDEX idx_interactions_session ON chat_interactions (session_id);
+        CREATE INDEX idx_interactions_participant ON chat_interactions (participant_id);
         CREATE INDEX idx_interactions_intent ON chat_interactions (intent);
         CREATE INDEX idx_interactions_feedback ON chat_interactions (feedback);
       `;
       await pool.query(sql);
       console.log("✅ [Database] Tabela 'chat_interactions' e índices criados com sucesso!");
     } else {
-      // Garante colunas de métricas avançadas (migração segura e idempotente)
+      // Garante colunas de métricas avançadas e participant_id (migração segura e idempotente)
       await pool.query(`
+        ALTER TABLE chat_interactions ADD COLUMN IF NOT EXISTS participant_id UUID REFERENCES chat_participants(participant_id) ON DELETE SET NULL;
         ALTER TABLE chat_interactions ADD COLUMN IF NOT EXISTS ttft_ms INTEGER;
         ALTER TABLE chat_interactions ADD COLUMN IF NOT EXISTS queue_wait_ms INTEGER;
         ALTER TABLE chat_interactions ADD COLUMN IF NOT EXISTS prompt_tokens INTEGER;
         ALTER TABLE chat_interactions ADD COLUMN IF NOT EXISTS completion_tokens INTEGER;
+        CREATE INDEX IF NOT EXISTS idx_interactions_participant ON chat_interactions (participant_id);
       `);
-      console.log("✅ [Database] Tabela 'chat_interactions' verificada com colunas de métricas atualizadas ✓");
+      console.log("✅ [Database] Tabela 'chat_interactions' verificada com colunas atualizadas ✓");
     }
   } catch (error) {
     console.error(
@@ -271,5 +313,6 @@ export async function verifyInteractionsTable(): Promise<void> {
     );
   }
 }
+
 
 

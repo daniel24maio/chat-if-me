@@ -60,6 +60,7 @@ interface EntityMemory {
 /** Contexto completo de uma sessão */
 export interface SessionContext {
   sessionId: string;
+  participantId?: string;
   messages: SessionMessage[];
   entities: EntityMemory;
   lastIntent: string;
@@ -150,11 +151,14 @@ export function isSessionExpired(sessionId: string): boolean {
  * Se o limite de MAX_SESSIONS for atingido, remove a sessão mais antiga
  * (política LRU — Least Recently Used).
  */
-export function getOrCreateSession(sessionId: string): SessionContext {
+export function getOrCreateSession(sessionId: string, participantId?: string): SessionContext {
   const existing = sessions.get(sessionId);
 
   if (existing) {
     existing.lastAccessedAt = Date.now();
+    if (participantId) {
+      existing.participantId = participantId;
+    }
     return existing;
   }
 
@@ -181,6 +185,7 @@ export function getOrCreateSession(sessionId: string): SessionContext {
   // Cria nova sessão
   const newSession: SessionContext = {
     sessionId,
+    participantId,
     messages: [],
     entities: {
       subjects: [],
@@ -355,6 +360,15 @@ export function getSessionChunkIds(sessionId?: string): number[] {
     .filter((doc) => doc.id != null)
     .map((doc) => doc.id);
 }
+
+/**
+ * Retorna o participantId associado à sessão em memória.
+ */
+export function getSessionParticipantId(sessionId?: string): string | undefined {
+  if (!sessionId) return undefined;
+  return sessions.get(sessionId)?.participantId;
+}
+
 
 /**
  * Remove todas as sessões (cleanup para SIGINT/SIGTERM).

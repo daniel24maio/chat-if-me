@@ -6,6 +6,7 @@ import { getRequestMetrics } from "./request_metrics.service.js";
  */
 export interface LogInteractionParams {
   sessionId: string;
+  participantId?: string;
   mode: "rag" | "agent" | "agent_beta";
   question: string;
   contextualizedQuestion?: string;
@@ -46,6 +47,8 @@ export interface AnalyticsFilters {
   intent?: string;
   feedback?: string;
   search?: string;
+  profileType?: string;
+  course?: string;
 }
 
 /**
@@ -55,6 +58,7 @@ export interface AnalyticsFilters {
 export async function logInteraction(params: LogInteractionParams): Promise<void> {
   const {
     sessionId,
+    participantId,
     mode,
     question,
     contextualizedQuestion,
@@ -109,10 +113,11 @@ export async function logInteraction(params: LogInteractionParams): Promise<void
   try {
     await pool.query(
       `INSERT INTO chat_interactions
-        (session_id, mode, question, contextualized_question, intent, tool_calls, sources, chunk_ids, response, timings, total_duration_ms, feedback, ttft_ms, queue_wait_ms, prompt_tokens, completion_tokens)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+        (session_id, participant_id, mode, question, contextualized_question, intent, tool_calls, sources, chunk_ids, response, timings, total_duration_ms, feedback, ttft_ms, queue_wait_ms, prompt_tokens, completion_tokens)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
       [
         sessionId,
+        participantId || null,
         mode,
         question,
         contextualizedQuestion || null,
@@ -133,7 +138,7 @@ export async function logInteraction(params: LogInteractionParams): Promise<void
 
     console.log(
       `📊 [Analytics] Interação registrada: [${mode.toUpperCase()}] "${question.substring(0, 40)}..." ` +
-      `(${totalDurationMs || timings.total_ms || 0}ms${ttftMs ? ` | TTFT: ${ttftMs}ms` : ""})`
+      `(${totalDurationMs || timings.total_ms || 0}ms${ttftMs ? ` | TTFT: ${ttftMs}ms` : ""}${participantId ? ` | Participante: ${participantId.substring(0, 8)}...` : ""})`
     );
   } catch (error) {
     console.error("❌ [Analytics] Erro ao persistir interação no banco:", error);
@@ -177,18 +182,28 @@ export async function getAnalyticsOverview(filters: AnalyticsFilters) {
   let paramIdx = 1;
 
   if (filters.startDate) {
-    conditions.push(`created_at >= $${paramIdx++}::timestamp`);
+    conditions.push(`ci.created_at >= $${paramIdx++}::timestamp`);
     params.push(filters.startDate);
   }
 
   if (filters.endDate) {
-    conditions.push(`created_at <= ($${paramIdx++}::timestamp + interval '1 day')`);
+    conditions.push(`ci.created_at <= ($${paramIdx++}::timestamp + interval '1 day')`);
     params.push(filters.endDate);
   }
 
   if (filters.mode && filters.mode !== "all") {
-    conditions.push(`mode = $${paramIdx++}`);
+    conditions.push(`ci.mode = $${paramIdx++}`);
     params.push(filters.mode);
+  }
+
+  if (filters.profileType && filters.profileType !== "all") {
+    conditions.push(`p.profile_type = $${paramIdx++}`);
+    params.push(filters.profileType);
+  }
+
+  if (filters.course && filters.course !== "all") {
+    conditions.push(`p.course = $${paramIdx++}`);
+    params.push(filters.course);
   }
 
   const whereClause = conditions.join(" AND ");
@@ -197,21 +212,22 @@ export async function getAnalyticsOverview(filters: AnalyticsFilters) {
   const globalQuery = await pool.query(
     `SELECT
        COUNT(*) AS total_interactions,
-       COUNT(CASE WHEN mode = 'rag' THEN 1 END) AS count_rag,
-       COUNT(CASE WHEN mode = 'agent' THEN 1 END) AS count_agent,
-       COUNT(CASE WHEN mode = 'agent_beta' THEN 1 END) AS count_agent_beta,
-       COALESCE(AVG(total_duration_ms), 0) AS avg_duration_ms,
-       COALESCE(AVG(CASE WHEN mode = 'rag' THEN total_duration_ms END), 0) AS avg_duration_rag,
-       COALESCE(AVG(CASE WHEN mode = 'agent' THEN total_duration_ms END), 0) AS avg_duration_agent,
-       COALESCE(AVG(CASE WHEN mode = 'agent_beta' THEN total_duration_ms END), 0) AS avg_duration_beta,
-       COALESCE(AVG(ttft_ms), 0) AS avg_ttft_ms,
-       COALESCE(AVG(CASE WHEN mode = 'rag' THEN ttft_ms END), 0) AS avg_ttft_rag,
-       COALESCE(AVG(CASE WHEN mode = 'agent' THEN ttft_ms END), 0) AS avg_ttft_agent,
-       COALESCE(AVG(CASE WHEN mode = 'agent_beta' THEN ttft_ms END), 0) AS avg_ttft_beta,
-       COUNT(CASE WHEN feedback = 'up' THEN 1 END) AS feedback_up,
-       COUNT(CASE WHEN feedback = 'down' THEN 1 END) AS feedback_down,
-       COUNT(CASE WHEN feedback IS NULL THEN 1 END) AS feedback_none
-     FROM chat_interactions
+       COUNT(CASE WHEN ci.mode = 'rag' THEN 1 END) AS count_rag,
+       COUNT(CASE WHEN ci.mode = 'agent' THEN 1 END) AS count_agent,
+       COUNT(CASE WHEN ci.mode = 'agent_beta' THEN 1 END) AS count_agent_beta,
+       COALESCE(AVG(ci.total_duration_ms), 0) AS avg_duration_ms,
+       COALESCE(AVG(CASE WHEN ci.mode = 'rag' THEN ci.total_duration_ms END), 0) AS avg_duration_rag,
+       COALESCE(AVG(CASE WHEN ci.mode = 'agent' THEN ci.total_duration_ms END), 0) AS avg_duration_agent,
+       COALESCE(AVG(CASE WHEN ci.mode = 'agent_beta' THEN ci.total_duration_ms END), 0) AS avg_duration_beta,
+       COALESCE(AVG(ci.ttft_ms), 0) AS avg_ttft_ms,
+       COALESCE(AVG(CASE WHEN ci.mode = 'rag' THEN ci.ttft_ms END), 0) AS avg_ttft_rag,
+       COALESCE(AVG(CASE WHEN ci.mode = 'agent' THEN ci.ttft_ms END), 0) AS avg_ttft_agent,
+       COALESCE(AVG(CASE WHEN ci.mode = 'agent_beta' THEN ci.ttft_ms END), 0) AS avg_ttft_beta,
+       COUNT(CASE WHEN ci.feedback = 'up' THEN 1 END) AS feedback_up,
+       COUNT(CASE WHEN ci.feedback = 'down' THEN 1 END) AS feedback_down,
+       COUNT(CASE WHEN ci.feedback IS NULL THEN 1 END) AS feedback_none
+     FROM chat_interactions ci
+     LEFT JOIN chat_participants p ON ci.participant_id = p.participant_id
      WHERE ${whereClause}`,
     params
   );
@@ -225,10 +241,11 @@ export async function getAnalyticsOverview(filters: AnalyticsFilters) {
 
   // 2. Distribuição por Intenção
   const intentsQuery = await pool.query(
-    `SELECT intent, COUNT(*) as count
-     FROM chat_interactions
-     WHERE ${whereClause} AND intent IS NOT NULL
-     GROUP BY intent
+    `SELECT ci.intent, COUNT(*) as count
+     FROM chat_interactions ci
+     LEFT JOIN chat_participants p ON ci.participant_id = p.participant_id
+     WHERE ${whereClause} AND ci.intent IS NOT NULL
+     GROUP BY ci.intent
      ORDER BY count DESC
      LIMIT 10`,
     params
@@ -238,14 +255,37 @@ export async function getAnalyticsOverview(filters: AnalyticsFilters) {
   const sourcesQuery = await pool.query(
     `SELECT source, COUNT(*) as count
      FROM (
-       SELECT jsonb_array_elements_text(sources) AS source
-       FROM chat_interactions
+       SELECT jsonb_array_elements_text(ci.sources) AS source
+       FROM chat_interactions ci
+       LEFT JOIN chat_participants p ON ci.participant_id = p.participant_id
        WHERE ${whereClause}
      ) sub
      WHERE source <> 'documento desconhecido'
      GROUP BY source
      ORDER BY count DESC
      LIMIT 8`,
+    params
+  );
+
+  // 4. Distribuição por Perfil do Participante
+  const profilesQuery = await pool.query(
+    `SELECT COALESCE(p.profile_type, 'nao_informado') as profile_type, COUNT(*) as count
+     FROM chat_interactions ci
+     LEFT JOIN chat_participants p ON ci.participant_id = p.participant_id
+     WHERE ${whereClause}
+     GROUP BY p.profile_type
+     ORDER BY count DESC`,
+    params
+  );
+
+  // 5. Distribuição por Curso
+  const coursesQuery = await pool.query(
+    `SELECT COALESCE(p.course, 'nao_aplicavel') as course, COUNT(*) as count
+     FROM chat_interactions ci
+     LEFT JOIN chat_participants p ON ci.participant_id = p.participant_id
+     WHERE ${whereClause} AND p.course IS NOT NULL
+     GROUP BY p.course
+     ORDER BY count DESC`,
     params
   );
 
@@ -280,6 +320,14 @@ export async function getAnalyticsOverview(filters: AnalyticsFilters) {
       source: r.source,
       count: Number(r.count),
     })),
+    profilesDistribution: profilesQuery.rows.map((r) => ({
+      profileType: r.profile_type,
+      count: Number(r.count),
+    })),
+    coursesDistribution: coursesQuery.rows.map((r) => ({
+      course: r.course,
+      count: Number(r.count),
+    })),
   };
 }
 
@@ -296,36 +344,46 @@ export async function getAnalyticsHistory(
   let paramIdx = 1;
 
   if (filters.startDate) {
-    conditions.push(`created_at >= $${paramIdx++}::timestamp`);
+    conditions.push(`ci.created_at >= $${paramIdx++}::timestamp`);
     params.push(filters.startDate);
   }
 
   if (filters.endDate) {
-    conditions.push(`created_at <= ($${paramIdx++}::timestamp + interval '1 day')`);
+    conditions.push(`ci.created_at <= ($${paramIdx++}::timestamp + interval '1 day')`);
     params.push(filters.endDate);
   }
 
   if (filters.mode && filters.mode !== "all") {
-    conditions.push(`mode = $${paramIdx++}`);
+    conditions.push(`ci.mode = $${paramIdx++}`);
     params.push(filters.mode);
   }
 
   if (filters.intent && filters.intent !== "all") {
-    conditions.push(`intent = $${paramIdx++}`);
+    conditions.push(`ci.intent = $${paramIdx++}`);
     params.push(filters.intent);
   }
 
   if (filters.feedback && filters.feedback !== "all") {
     if (filters.feedback === "none") {
-      conditions.push(`feedback IS NULL`);
+      conditions.push(`ci.feedback IS NULL`);
     } else {
-      conditions.push(`feedback = $${paramIdx++}`);
+      conditions.push(`ci.feedback = $${paramIdx++}`);
       params.push(filters.feedback);
     }
   }
 
+  if (filters.profileType && filters.profileType !== "all") {
+    conditions.push(`p.profile_type = $${paramIdx++}`);
+    params.push(filters.profileType);
+  }
+
+  if (filters.course && filters.course !== "all") {
+    conditions.push(`p.course = $${paramIdx++}`);
+    params.push(filters.course);
+  }
+
   if (filters.search && filters.search.trim()) {
-    conditions.push(`(question ILIKE $${paramIdx} OR response ILIKE $${paramIdx})`);
+    conditions.push(`(ci.question ILIKE $${paramIdx} OR ci.response ILIKE $${paramIdx})`);
     params.push(`%${filters.search.trim()}%`);
     paramIdx++;
   }
@@ -334,7 +392,10 @@ export async function getAnalyticsHistory(
 
   // Total de registros
   const countResult = await pool.query(
-    `SELECT COUNT(*) AS total FROM chat_interactions WHERE ${whereClause}`,
+    `SELECT COUNT(*) AS total
+     FROM chat_interactions ci
+     LEFT JOIN chat_participants p ON ci.participant_id = p.participant_id
+     WHERE ${whereClause}`,
     params
   );
   const total = Number(countResult.rows[0]?.total) || 0;
@@ -344,25 +405,30 @@ export async function getAnalyticsHistory(
   const listParams = [...params, limit, offset];
   const listResult = await pool.query(
     `SELECT
-       id,
-       session_id,
-       mode,
-       question,
-       intent,
-       sources,
-       tool_calls,
-       response,
-       timings,
-       total_duration_ms,
-       feedback,
-       ttft_ms,
-       queue_wait_ms,
-       prompt_tokens,
-       completion_tokens,
-       created_at
-     FROM chat_interactions
+       ci.id,
+       ci.session_id,
+       ci.participant_id,
+       p.profile_type,
+       p.course,
+       p.course_phase,
+       ci.mode,
+       ci.question,
+       ci.intent,
+       ci.sources,
+       ci.tool_calls,
+       ci.response,
+       ci.timings,
+       ci.total_duration_ms,
+       ci.feedback,
+       ci.ttft_ms,
+       ci.queue_wait_ms,
+       ci.prompt_tokens,
+       ci.completion_tokens,
+       ci.created_at
+     FROM chat_interactions ci
+     LEFT JOIN chat_participants p ON ci.participant_id = p.participant_id
      WHERE ${whereClause}
-     ORDER BY created_at DESC
+     ORDER BY ci.created_at DESC
      LIMIT $${paramIdx++} OFFSET $${paramIdx++}`,
     listParams
   );
@@ -381,7 +447,14 @@ export async function getAnalyticsHistory(
  */
 export async function getInteractionById(id: number) {
   const result = await pool.query(
-    `SELECT * FROM chat_interactions WHERE id = $1`,
+    `SELECT
+       ci.*,
+       p.profile_type,
+       p.course,
+       p.course_phase
+     FROM chat_interactions ci
+     LEFT JOIN chat_participants p ON ci.participant_id = p.participant_id
+     WHERE ci.id = $1`,
     [id]
   );
   return result.rows[0] || null;
@@ -396,6 +469,9 @@ export async function exportAnalyticsCSV(filters: AnalyticsFilters): Promise<str
   const header = [
     "ID",
     "Data/Hora",
+    "Perfil_Participante",
+    "Curso",
+    "Fase_Curso",
     "Modo",
     "Intencao",
     "Pergunta",
@@ -419,6 +495,9 @@ export async function exportAnalyticsCSV(filters: AnalyticsFilters): Promise<str
   const rows = interactions.map((item: any) => [
     item.id,
     new Date(item.created_at).toLocaleString("pt-BR"),
+    item.profile_type || "nao_informado",
+    item.course || "nao_aplicavel",
+    item.course_phase || "nao_aplicavel",
     item.mode,
     item.intent,
     escapeCSV(item.question),

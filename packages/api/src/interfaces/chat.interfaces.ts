@@ -9,6 +9,8 @@ export interface ChatRequestBody {
   question: string;
   /** Identificador da sessão (UUID gerado pelo frontend) para memória conversacional */
   sessionId?: string;
+  /** Identificador anônimo do participante (UUID gerado pelo frontend) para pesquisa */
+  participantId?: string;
 }
 
 /** Resposta devolvida pela API ao frontend */

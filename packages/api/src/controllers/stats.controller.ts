@@ -17,6 +17,8 @@ export async function getOverview(req: Request, res: Response): Promise<void> {
       startDate: req.query.startDate as string,
       endDate: req.query.endDate as string,
       mode: req.query.mode as string,
+      profileType: req.query.profileType as string,
+      course: req.query.course as string,
     };
 
     const overview = await getAnalyticsOverview(filters);
@@ -36,6 +38,8 @@ export async function getHistory(req: Request, res: Response): Promise<void> {
       intent: req.query.intent as string,
       feedback: req.query.feedback as string,
       search: req.query.search as string,
+      profileType: req.query.profileType as string,
+      course: req.query.course as string,
     };
 
     const page = Math.max(1, Number(req.query.page) || 1);
@@ -79,6 +83,8 @@ export async function exportCSV(req: Request, res: Response): Promise<void> {
       intent: req.query.intent as string,
       feedback: req.query.feedback as string,
       search: req.query.search as string,
+      profileType: req.query.profileType as string,
+      course: req.query.course as string,
     };
 
     const csvData = await exportAnalyticsCSV(filters);

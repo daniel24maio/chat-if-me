@@ -874,6 +874,39 @@ async function verifyFeedbacksTable() {
     );
   }
 }
+async function verifyParticipantsTable() {
+  try {
+    const tableExists = await pool.query(`
+      SELECT EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_name = 'chat_participants'
+      ) AS exists
+    `);
+    if (!tableExists.rows[0]?.exists) {
+      console.log("\u{1F504} [Database] Tabela 'chat_participants' n\xE3o encontrada. Criando...");
+      const sql = `
+        CREATE TABLE chat_participants (
+          participant_id UUID PRIMARY KEY,
+          profile_type VARCHAR(30) NOT NULL CHECK (profile_type IN ('aluno_graduacao', 'aluno_tecnico', 'docente', 'tae')),
+          course VARCHAR(50),
+          course_phase VARCHAR(30),
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
+        CREATE INDEX idx_participants_profile_type ON chat_participants (profile_type);
+        CREATE INDEX idx_participants_course ON chat_participants (course);
+      `;
+      await pool.query(sql);
+      console.log("\u2705 [Database] Tabela 'chat_participants' e \xEDndices criados com sucesso!");
+    } else {
+      console.log("\u2705 [Database] Tabela 'chat_participants' j\xE1 existe \u2713");
+    }
+  } catch (error) {
+    console.error(
+      "\u274C [Database] Falha na verifica\xE7\xE3o da tabela chat_participants:",
+      error instanceof Error ? error.message : error
+    );
+  }
+}
 async function verifyInteractionsTable() {
   try {
     const tableExists = await pool.query(`
@@ -888,6 +921,7 @@ async function verifyInteractionsTable() {
         CREATE TABLE chat_interactions (
           id SERIAL PRIMARY KEY,
           session_id VARCHAR(64) NOT NULL,
+          participant_id UUID REFERENCES chat_participants(participant_id) ON DELETE SET NULL,
           mode VARCHAR(30) NOT NULL,
           question TEXT NOT NULL,
           contextualized_question TEXT,
@@ -908,6 +942,7 @@ async function verifyInteractionsTable() {
         CREATE INDEX idx_interactions_created_at ON chat_interactions (created_at DESC);
         CREATE INDEX idx_interactions_mode ON chat_interactions (mode);
         CREATE INDEX idx_interactions_session ON chat_interactions (session_id);
+        CREATE INDEX idx_interactions_participant ON chat_interactions (participant_id);
         CREATE INDEX idx_interactions_intent ON chat_interactions (intent);
         CREATE INDEX idx_interactions_feedback ON chat_interactions (feedback);
       `;
@@ -915,12 +950,14 @@ async function verifyInteractionsTable() {
       console.log("\u2705 [Database] Tabela 'chat_interactions' e \xEDndices criados com sucesso!");
     } else {
       await pool.query(`
+        ALTER TABLE chat_interactions ADD COLUMN IF NOT EXISTS participant_id UUID REFERENCES chat_participants(participant_id) ON DELETE SET NULL;
         ALTER TABLE chat_interactions ADD COLUMN IF NOT EXISTS ttft_ms INTEGER;
         ALTER TABLE chat_interactions ADD COLUMN IF NOT EXISTS queue_wait_ms INTEGER;
         ALTER TABLE chat_interactions ADD COLUMN IF NOT EXISTS prompt_tokens INTEGER;
         ALTER TABLE chat_interactions ADD COLUMN IF NOT EXISTS completion_tokens INTEGER;
+        CREATE INDEX IF NOT EXISTS idx_interactions_participant ON chat_interactions (participant_id);
       `);
-      console.log("\u2705 [Database] Tabela 'chat_interactions' verificada com colunas de m\xE9tricas atualizadas \u2713");
+      console.log("\u2705 [Database] Tabela 'chat_interactions' verificada com colunas atualizadas \u2713");
     }
   } catch (error) {
     console.error(
@@ -1337,10 +1374,13 @@ function isSessionExpired(sessionId) {
   }
   return expiredSessions.has(sessionId);
 }
-function getOrCreateSession(sessionId) {
+function getOrCreateSession(sessionId, participantId) {
   const existing = sessions.get(sessionId);
   if (existing) {
     existing.lastAccessedAt = Date.now();
+    if (participantId) {
+      existing.participantId = participantId;
+    }
     return existing;
   }
   if (sessions.size >= MAX_SESSIONS) {
@@ -1361,6 +1401,7 @@ function getOrCreateSession(sessionId) {
   }
   const newSession = {
     sessionId,
+    participantId,
     messages: [],
     entities: {
       subjects: [],
@@ -1724,6 +1765,7 @@ async function countNegativesByChunk(chunkIds) {
 async function logInteraction(params) {
   const {
     sessionId,
+    participantId,
     mode,
     question,
     contextualizedQuestion,
@@ -1760,10 +1802,11 @@ async function logInteraction(params) {
   try {
     await pool.query(
       `INSERT INTO chat_interactions
-        (session_id, mode, question, contextualized_question, intent, tool_calls, sources, chunk_ids, response, timings, total_duration_ms, feedback, ttft_ms, queue_wait_ms, prompt_tokens, completion_tokens)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+        (session_id, participant_id, mode, question, contextualized_question, intent, tool_calls, sources, chunk_ids, response, timings, total_duration_ms, feedback, ttft_ms, queue_wait_ms, prompt_tokens, completion_tokens)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
       [
         sessionId,
+        participantId || null,
         mode,
         question,
         contextualizedQuestion || null,
@@ -1782,7 +1825,7 @@ async function logInteraction(params) {
       ]
     );
     console.log(
-      `\u{1F4CA} [Analytics] Intera\xE7\xE3o registrada: [${mode.toUpperCase()}] "${question.substring(0, 40)}..." (${totalDurationMs || timings.total_ms || 0}ms${ttftMs ? ` | TTFT: ${ttftMs}ms` : ""})`
+      `\u{1F4CA} [Analytics] Intera\xE7\xE3o registrada: [${mode.toUpperCase()}] "${question.substring(0, 40)}..." (${totalDurationMs || timings.total_ms || 0}ms${ttftMs ? ` | TTFT: ${ttftMs}ms` : ""}${participantId ? ` | Participante: ${participantId.substring(0, 8)}...` : ""})`
     );
   } catch (error) {
     console.error("\u274C [Analytics] Erro ao persistir intera\xE7\xE3o no banco:", error);
@@ -1813,36 +1856,45 @@ async function getAnalyticsOverview(filters) {
   const params = [];
   let paramIdx = 1;
   if (filters.startDate) {
-    conditions.push(`created_at >= $${paramIdx++}::timestamp`);
+    conditions.push(`ci.created_at >= $${paramIdx++}::timestamp`);
     params.push(filters.startDate);
   }
   if (filters.endDate) {
-    conditions.push(`created_at <= ($${paramIdx++}::timestamp + interval '1 day')`);
+    conditions.push(`ci.created_at <= ($${paramIdx++}::timestamp + interval '1 day')`);
     params.push(filters.endDate);
   }
   if (filters.mode && filters.mode !== "all") {
-    conditions.push(`mode = $${paramIdx++}`);
+    conditions.push(`ci.mode = $${paramIdx++}`);
     params.push(filters.mode);
+  }
+  if (filters.profileType && filters.profileType !== "all") {
+    conditions.push(`p.profile_type = $${paramIdx++}`);
+    params.push(filters.profileType);
+  }
+  if (filters.course && filters.course !== "all") {
+    conditions.push(`p.course = $${paramIdx++}`);
+    params.push(filters.course);
   }
   const whereClause = conditions.join(" AND ");
   const globalQuery = await pool.query(
     `SELECT
        COUNT(*) AS total_interactions,
-       COUNT(CASE WHEN mode = 'rag' THEN 1 END) AS count_rag,
-       COUNT(CASE WHEN mode = 'agent' THEN 1 END) AS count_agent,
-       COUNT(CASE WHEN mode = 'agent_beta' THEN 1 END) AS count_agent_beta,
-       COALESCE(AVG(total_duration_ms), 0) AS avg_duration_ms,
-       COALESCE(AVG(CASE WHEN mode = 'rag' THEN total_duration_ms END), 0) AS avg_duration_rag,
-       COALESCE(AVG(CASE WHEN mode = 'agent' THEN total_duration_ms END), 0) AS avg_duration_agent,
-       COALESCE(AVG(CASE WHEN mode = 'agent_beta' THEN total_duration_ms END), 0) AS avg_duration_beta,
-       COALESCE(AVG(ttft_ms), 0) AS avg_ttft_ms,
-       COALESCE(AVG(CASE WHEN mode = 'rag' THEN ttft_ms END), 0) AS avg_ttft_rag,
-       COALESCE(AVG(CASE WHEN mode = 'agent' THEN ttft_ms END), 0) AS avg_ttft_agent,
-       COALESCE(AVG(CASE WHEN mode = 'agent_beta' THEN ttft_ms END), 0) AS avg_ttft_beta,
-       COUNT(CASE WHEN feedback = 'up' THEN 1 END) AS feedback_up,
-       COUNT(CASE WHEN feedback = 'down' THEN 1 END) AS feedback_down,
-       COUNT(CASE WHEN feedback IS NULL THEN 1 END) AS feedback_none
-     FROM chat_interactions
+       COUNT(CASE WHEN ci.mode = 'rag' THEN 1 END) AS count_rag,
+       COUNT(CASE WHEN ci.mode = 'agent' THEN 1 END) AS count_agent,
+       COUNT(CASE WHEN ci.mode = 'agent_beta' THEN 1 END) AS count_agent_beta,
+       COALESCE(AVG(ci.total_duration_ms), 0) AS avg_duration_ms,
+       COALESCE(AVG(CASE WHEN ci.mode = 'rag' THEN ci.total_duration_ms END), 0) AS avg_duration_rag,
+       COALESCE(AVG(CASE WHEN ci.mode = 'agent' THEN ci.total_duration_ms END), 0) AS avg_duration_agent,
+       COALESCE(AVG(CASE WHEN ci.mode = 'agent_beta' THEN ci.total_duration_ms END), 0) AS avg_duration_beta,
+       COALESCE(AVG(ci.ttft_ms), 0) AS avg_ttft_ms,
+       COALESCE(AVG(CASE WHEN ci.mode = 'rag' THEN ci.ttft_ms END), 0) AS avg_ttft_rag,
+       COALESCE(AVG(CASE WHEN ci.mode = 'agent' THEN ci.ttft_ms END), 0) AS avg_ttft_agent,
+       COALESCE(AVG(CASE WHEN ci.mode = 'agent_beta' THEN ci.ttft_ms END), 0) AS avg_ttft_beta,
+       COUNT(CASE WHEN ci.feedback = 'up' THEN 1 END) AS feedback_up,
+       COUNT(CASE WHEN ci.feedback = 'down' THEN 1 END) AS feedback_down,
+       COUNT(CASE WHEN ci.feedback IS NULL THEN 1 END) AS feedback_none
+     FROM chat_interactions ci
+     LEFT JOIN chat_participants p ON ci.participant_id = p.participant_id
      WHERE ${whereClause}`,
     params
   );
@@ -1853,10 +1905,11 @@ async function getAnalyticsOverview(filters) {
   const totalRated = up + down;
   const satisfactionRate = totalRated > 0 ? up / totalRated * 100 : 0;
   const intentsQuery = await pool.query(
-    `SELECT intent, COUNT(*) as count
-     FROM chat_interactions
-     WHERE ${whereClause} AND intent IS NOT NULL
-     GROUP BY intent
+    `SELECT ci.intent, COUNT(*) as count
+     FROM chat_interactions ci
+     LEFT JOIN chat_participants p ON ci.participant_id = p.participant_id
+     WHERE ${whereClause} AND ci.intent IS NOT NULL
+     GROUP BY ci.intent
      ORDER BY count DESC
      LIMIT 10`,
     params
@@ -1864,14 +1917,33 @@ async function getAnalyticsOverview(filters) {
   const sourcesQuery = await pool.query(
     `SELECT source, COUNT(*) as count
      FROM (
-       SELECT jsonb_array_elements_text(sources) AS source
-       FROM chat_interactions
+       SELECT jsonb_array_elements_text(ci.sources) AS source
+       FROM chat_interactions ci
+       LEFT JOIN chat_participants p ON ci.participant_id = p.participant_id
        WHERE ${whereClause}
      ) sub
      WHERE source <> 'documento desconhecido'
      GROUP BY source
      ORDER BY count DESC
      LIMIT 8`,
+    params
+  );
+  const profilesQuery = await pool.query(
+    `SELECT COALESCE(p.profile_type, 'nao_informado') as profile_type, COUNT(*) as count
+     FROM chat_interactions ci
+     LEFT JOIN chat_participants p ON ci.participant_id = p.participant_id
+     WHERE ${whereClause}
+     GROUP BY p.profile_type
+     ORDER BY count DESC`,
+    params
+  );
+  const coursesQuery = await pool.query(
+    `SELECT COALESCE(p.course, 'nao_aplicavel') as course, COUNT(*) as count
+     FROM chat_interactions ci
+     LEFT JOIN chat_participants p ON ci.participant_id = p.participant_id
+     WHERE ${whereClause} AND p.course IS NOT NULL
+     GROUP BY p.course
+     ORDER BY count DESC`,
     params
   );
   return {
@@ -1904,6 +1976,14 @@ async function getAnalyticsOverview(filters) {
     topSources: sourcesQuery.rows.map((r) => ({
       source: r.source,
       count: Number(r.count)
+    })),
+    profilesDistribution: profilesQuery.rows.map((r) => ({
+      profileType: r.profile_type,
+      count: Number(r.count)
+    })),
+    coursesDistribution: coursesQuery.rows.map((r) => ({
+      course: r.course,
+      count: Number(r.count)
     }))
   };
 }
@@ -1912,37 +1992,48 @@ async function getAnalyticsHistory(filters, page = 1, limit = 15) {
   const params = [];
   let paramIdx = 1;
   if (filters.startDate) {
-    conditions.push(`created_at >= $${paramIdx++}::timestamp`);
+    conditions.push(`ci.created_at >= $${paramIdx++}::timestamp`);
     params.push(filters.startDate);
   }
   if (filters.endDate) {
-    conditions.push(`created_at <= ($${paramIdx++}::timestamp + interval '1 day')`);
+    conditions.push(`ci.created_at <= ($${paramIdx++}::timestamp + interval '1 day')`);
     params.push(filters.endDate);
   }
   if (filters.mode && filters.mode !== "all") {
-    conditions.push(`mode = $${paramIdx++}`);
+    conditions.push(`ci.mode = $${paramIdx++}`);
     params.push(filters.mode);
   }
   if (filters.intent && filters.intent !== "all") {
-    conditions.push(`intent = $${paramIdx++}`);
+    conditions.push(`ci.intent = $${paramIdx++}`);
     params.push(filters.intent);
   }
   if (filters.feedback && filters.feedback !== "all") {
     if (filters.feedback === "none") {
-      conditions.push(`feedback IS NULL`);
+      conditions.push(`ci.feedback IS NULL`);
     } else {
-      conditions.push(`feedback = $${paramIdx++}`);
+      conditions.push(`ci.feedback = $${paramIdx++}`);
       params.push(filters.feedback);
     }
   }
+  if (filters.profileType && filters.profileType !== "all") {
+    conditions.push(`p.profile_type = $${paramIdx++}`);
+    params.push(filters.profileType);
+  }
+  if (filters.course && filters.course !== "all") {
+    conditions.push(`p.course = $${paramIdx++}`);
+    params.push(filters.course);
+  }
   if (filters.search && filters.search.trim()) {
-    conditions.push(`(question ILIKE $${paramIdx} OR response ILIKE $${paramIdx})`);
+    conditions.push(`(ci.question ILIKE $${paramIdx} OR ci.response ILIKE $${paramIdx})`);
     params.push(`%${filters.search.trim()}%`);
     paramIdx++;
   }
   const whereClause = conditions.join(" AND ");
   const countResult = await pool.query(
-    `SELECT COUNT(*) AS total FROM chat_interactions WHERE ${whereClause}`,
+    `SELECT COUNT(*) AS total
+     FROM chat_interactions ci
+     LEFT JOIN chat_participants p ON ci.participant_id = p.participant_id
+     WHERE ${whereClause}`,
     params
   );
   const total = Number(countResult.rows[0]?.total) || 0;
@@ -1950,25 +2041,30 @@ async function getAnalyticsHistory(filters, page = 1, limit = 15) {
   const listParams = [...params, limit, offset];
   const listResult = await pool.query(
     `SELECT
-       id,
-       session_id,
-       mode,
-       question,
-       intent,
-       sources,
-       tool_calls,
-       response,
-       timings,
-       total_duration_ms,
-       feedback,
-       ttft_ms,
-       queue_wait_ms,
-       prompt_tokens,
-       completion_tokens,
-       created_at
-     FROM chat_interactions
+       ci.id,
+       ci.session_id,
+       ci.participant_id,
+       p.profile_type,
+       p.course,
+       p.course_phase,
+       ci.mode,
+       ci.question,
+       ci.intent,
+       ci.sources,
+       ci.tool_calls,
+       ci.response,
+       ci.timings,
+       ci.total_duration_ms,
+       ci.feedback,
+       ci.ttft_ms,
+       ci.queue_wait_ms,
+       ci.prompt_tokens,
+       ci.completion_tokens,
+       ci.created_at
+     FROM chat_interactions ci
+     LEFT JOIN chat_participants p ON ci.participant_id = p.participant_id
      WHERE ${whereClause}
-     ORDER BY created_at DESC
+     ORDER BY ci.created_at DESC
      LIMIT $${paramIdx++} OFFSET $${paramIdx++}`,
     listParams
   );
@@ -1982,7 +2078,14 @@ async function getAnalyticsHistory(filters, page = 1, limit = 15) {
 }
 async function getInteractionById(id) {
   const result = await pool.query(
-    `SELECT * FROM chat_interactions WHERE id = $1`,
+    `SELECT
+       ci.*,
+       p.profile_type,
+       p.course,
+       p.course_phase
+     FROM chat_interactions ci
+     LEFT JOIN chat_participants p ON ci.participant_id = p.participant_id
+     WHERE ci.id = $1`,
     [id]
   );
   return result.rows[0] || null;
@@ -1992,6 +2095,9 @@ async function exportAnalyticsCSV(filters) {
   const header = [
     "ID",
     "Data/Hora",
+    "Perfil_Participante",
+    "Curso",
+    "Fase_Curso",
     "Modo",
     "Intencao",
     "Pergunta",
@@ -2014,6 +2120,9 @@ async function exportAnalyticsCSV(filters) {
   const rows = interactions.map((item) => [
     item.id,
     new Date(item.created_at).toLocaleString("pt-BR"),
+    item.profile_type || "nao_informado",
+    item.course || "nao_aplicavel",
+    item.course_phase || "nao_aplicavel",
     item.mode,
     item.intent,
     escapeCSV(item.question),
@@ -2364,7 +2473,7 @@ REGRAS DE RESPOSTA:
     { role: "user", content: question }
   ];
 }
-async function processQuestionStream(question, res, sessionId) {
+async function processQuestionStream(question, res, sessionId, participantId) {
   const dataHora = (/* @__PURE__ */ new Date()).toLocaleString("pt-BR");
   console.log(`
 ${"\u2500".repeat(50)}`);
@@ -2372,6 +2481,8 @@ ${"\u2500".repeat(50)}`);
   console.log(`\u{1F4E8} [RAG] Nova pergunta (stream): "${question}"`);
   if (sessionId)
     console.log(`\u{1F9E0} [RAG] Sess\xE3o: ${sessionId.substring(0, 8)}...`);
+  if (participantId)
+    console.log(`\u{1F464} [RAG] Participante: ${participantId.substring(0, 8)}...`);
   console.log(`${"\u2500".repeat(50)}`);
   if (sessionId && isSessionExpired(sessionId)) {
     console.log(`\u23F0 [RAG] Sess\xE3o expirada: ${sessionId.substring(0, 8)}...`);
@@ -2383,7 +2494,8 @@ ${"\u2500".repeat(50)}`);
 `);
     return;
   }
-  const session = sessionId ? getOrCreateSession(sessionId) : null;
+  const session = sessionId ? getOrCreateSession(sessionId, participantId) : null;
+  const effectiveParticipantId = participantId ?? session?.participantId;
   const contextualizedQuestion = session ? resolveReferences(question, session) : question;
   res.write(`data: ${JSON.stringify({ type: "status", status: "Analisando pergunta..." })}
 
@@ -2406,6 +2518,7 @@ ${"\u2500".repeat(50)}`);
     }
     logInteraction({
       sessionId: session?.sessionId ?? "anonymous",
+      participantId: effectiveParticipantId,
       mode: "rag",
       question,
       contextualizedQuestion,
@@ -2438,6 +2551,7 @@ ${"\u2500".repeat(50)}`);
     }
     logInteraction({
       sessionId: session?.sessionId ?? "anonymous",
+      participantId: effectiveParticipantId,
       mode: "rag",
       question,
       contextualizedQuestion,
@@ -2498,6 +2612,7 @@ ${"\u2500".repeat(50)}`);
   }
   logInteraction({
     sessionId: session?.sessionId ?? "anonymous",
+    participantId: effectiveParticipantId,
     mode: "rag",
     question,
     contextualizedQuestion,
@@ -2596,7 +2711,7 @@ async function withConcurrencyControl(fn) {
 // src/controllers/chat.controller.ts
 async function sendQuestion(req, res) {
   try {
-    const { question, sessionId } = req.body;
+    const { question, sessionId, participantId } = req.body;
     if (!question || typeof question !== "string") {
       res.status(400).json({
         error: "O campo 'question' \xE9 obrigat\xF3rio e deve ser uma string."
@@ -2627,7 +2742,7 @@ async function sendQuestion(req, res) {
       console.log("\u{1F50C} [SSE] Cliente desconectou durante o stream");
     });
     await withConcurrencyControl(async () => {
-      await processQuestionStream(questionTrimmed, res, sessionId);
+      await processQuestionStream(questionTrimmed, res, sessionId, participantId);
     });
     res.end();
   } catch (error) {
@@ -28231,7 +28346,7 @@ async function closeMCPClient() {
     console.log("\u{1F50C} [MCP Client] Desconectado");
   }
 }
-async function processAgentQuestion(question, res, sessionId) {
+async function processAgentQuestion(question, res, sessionId, participantId) {
   if (!mcpClient) {
     throw new Error("[Agente] MCP Client n\xE3o inicializado");
   }
@@ -28242,6 +28357,8 @@ ${"\u2500".repeat(50)}`);
   console.log(`\u{1F4C5} [Agente] Data/Hora: ${dataHora}`);
   if (sessionId)
     console.log(`\u{1F9E0} [Agente] Sess\xE3o: ${sessionId.substring(0, 8)}...`);
+  if (participantId)
+    console.log(`\u{1F464} [Agente] Participante: ${participantId.substring(0, 8)}...`);
   console.log(`${"\u2500".repeat(50)}`);
   if (sessionId && isSessionExpired(sessionId)) {
     console.log(`\u23F0 [Agente] Sess\xE3o expirada: ${sessionId.substring(0, 8)}...`);
@@ -28253,7 +28370,8 @@ ${"\u2500".repeat(50)}`);
 `);
     return;
   }
-  const session = sessionId ? getOrCreateSession(sessionId) : null;
+  const session = sessionId ? getOrCreateSession(sessionId, participantId) : null;
+  const effectiveParticipantId = participantId ?? session?.participantId;
   const contextualizedQuestion = session ? resolveReferences(question, session) : question;
   const start = Date.now();
   res.write(`data: ${JSON.stringify({ type: "status", status: "Analisando pergunta..." })}
@@ -28271,6 +28389,7 @@ ${"\u2500".repeat(50)}`);
     const totalMs2 = Date.now() - start;
     logInteraction({
       sessionId: session?.sessionId ?? "anonymous",
+      participantId: effectiveParticipantId,
       mode: "agent",
       question,
       contextualizedQuestion,
@@ -28464,6 +28583,7 @@ ${"\u2500".repeat(50)}`);
     markFirstToken();
     logInteraction({
       sessionId: session?.sessionId ?? "anonymous",
+      participantId: effectiveParticipantId,
       mode: "agent",
       question,
       contextualizedQuestion,
@@ -28630,6 +28750,7 @@ ${"\u2500".repeat(50)}`);
   }
   logInteraction({
     sessionId: session?.sessionId ?? "anonymous",
+    participantId: effectiveParticipantId,
     mode: "agent",
     question,
     contextualizedQuestion,
@@ -28646,7 +28767,7 @@ ${"\u2500".repeat(50)}`);
 // src/controllers/agent.controller.ts
 async function sendAgentQuestion(req, res) {
   try {
-    const { question, sessionId } = req.body;
+    const { question, sessionId, participantId } = req.body;
     if (!question || typeof question !== "string") {
       res.status(400).json({
         error: "O campo 'question' \xE9 obrigat\xF3rio e deve ser uma string."
@@ -28676,7 +28797,7 @@ async function sendAgentQuestion(req, res) {
       console.log("\u{1F50C} [SSE Agent] Cliente desconectou");
     });
     await withConcurrencyControl(async () => {
-      await processAgentQuestion(questionTrimmed, res, sessionId);
+      await processAgentQuestion(questionTrimmed, res, sessionId, participantId);
     });
     res.end();
   } catch (error) {
@@ -28767,13 +28888,15 @@ function inferIntentionFromKeywords2(text) {
     return "ATIVIDADES_EXTRAS";
   return "OUTRAS";
 }
-async function processAgentBetaQuestionStream(question, res, sessionId) {
+async function processAgentBetaQuestionStream(question, res, sessionId, participantId) {
   const start = Date.now();
   console.log(`
 ${"\u2500".repeat(50)}`);
   console.log(`\u{1F9EA} [Agente Beta] Nova pergunta: "${question}"`);
   if (sessionId)
     console.log(`\u{1F9E0} [Agente Beta] Sess\xE3o: ${sessionId.substring(0, 8)}...`);
+  if (participantId)
+    console.log(`\u{1F464} [Agente Beta] Participante: ${participantId.substring(0, 8)}...`);
   if (sessionId && isSessionExpired(sessionId)) {
     console.log(`\u23F0 [Agente Beta] Sess\xE3o expirada: ${sessionId.substring(0, 8)}...`);
     res.write(`data: ${JSON.stringify({ type: "session_expired" })}
@@ -28784,7 +28907,8 @@ ${"\u2500".repeat(50)}`);
 `);
     return;
   }
-  const session = sessionId ? getOrCreateSession(sessionId) : null;
+  const session = sessionId ? getOrCreateSession(sessionId, participantId) : null;
+  const effectiveParticipantId = participantId ?? session?.participantId;
   const contextualizedQuestion = session ? resolveReferences(question, session) : question;
   res.write(`data: ${JSON.stringify({ type: "status", status: "Analisando pergunta (Modo Beta)..." })}
 
@@ -28804,6 +28928,7 @@ ${"\u2500".repeat(50)}`);
     const totalMs2 = Date.now() - start;
     logInteraction({
       sessionId: session?.sessionId ?? "anonymous",
+      participantId: effectiveParticipantId,
       mode: "agent_beta",
       question,
       contextualizedQuestion,
@@ -29154,6 +29279,7 @@ Sua resposta deve basear-se ESTRITAMENTE nos trechos de documentos retornados pe
   const duration2 = (totalMs / 1e3).toFixed(1);
   logInteraction({
     sessionId: session?.sessionId ?? "anonymous",
+    participantId: effectiveParticipantId,
     mode: "agent_beta",
     question,
     contextualizedQuestion,
@@ -29170,7 +29296,7 @@ Sua resposta deve basear-se ESTRITAMENTE nos trechos de documentos retornados pe
 // src/controllers/agent_beta.controller.ts
 async function sendAgentBetaQuestion(req, res) {
   try {
-    const { question, sessionId } = req.body;
+    const { question, sessionId, participantId } = req.body;
     if (!question || typeof question !== "string") {
       res.status(400).json({
         error: "O campo 'question' \xE9 obrigat\xF3rio e deve ser uma string."
@@ -29200,7 +29326,7 @@ async function sendAgentBetaQuestion(req, res) {
       console.log("\u{1F50C} [SSE Agent Beta] Cliente desconectou");
     });
     await withConcurrencyControl(async () => {
-      await processAgentBetaQuestionStream(questionTrimmed, res, sessionId);
+      await processAgentBetaQuestionStream(questionTrimmed, res, sessionId, participantId);
     });
     res.end();
   } catch (error) {
@@ -29234,7 +29360,9 @@ async function getOverview(req, res) {
     const filters = {
       startDate: req.query.startDate,
       endDate: req.query.endDate,
-      mode: req.query.mode
+      mode: req.query.mode,
+      profileType: req.query.profileType,
+      course: req.query.course
     };
     const overview = await getAnalyticsOverview(filters);
     res.status(200).json(overview);
@@ -29251,7 +29379,9 @@ async function getHistory(req, res) {
       mode: req.query.mode,
       intent: req.query.intent,
       feedback: req.query.feedback,
-      search: req.query.search
+      search: req.query.search,
+      profileType: req.query.profileType,
+      course: req.query.course
     };
     const page = Math.max(1, Number(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 15));
@@ -29288,7 +29418,9 @@ async function exportCSV(req, res) {
       mode: req.query.mode,
       intent: req.query.intent,
       feedback: req.query.feedback,
-      search: req.query.search
+      search: req.query.search,
+      profileType: req.query.profileType,
+      course: req.query.course
     };
     const csvData = await exportAnalyticsCSV(filters);
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
@@ -29309,6 +29441,111 @@ statsRouter.get("/overview", getOverview);
 statsRouter.get("/history", getHistory);
 statsRouter.get("/history/:id", getDetails);
 statsRouter.get("/export", exportCSV);
+
+// src/routes/participant.routes.ts
+import { Router as Router6 } from "express";
+
+// src/constants/profiles.ts
+var PROFILE_TYPES = {
+  ALUNO_GRADUACAO: "aluno_graduacao",
+  ALUNO_TECNICO: "aluno_tecnico",
+  DOCENTE: "docente",
+  TAE: "tae"
+};
+var COURSES = {
+  BSI: "bsi",
+  ADMINISTRACAO: "adm",
+  ENGENHARIA_METALURGICA: "eng_metalurgica",
+  PEDAGOGIA: "pedagogia",
+  TECNICO_GERAL: "tecnico_geral"
+};
+var COURSE_PHASES = {
+  INICIAL: "inicial",
+  INTERMEDIARIA: "intermediaria",
+  CONCLUINTE: "concluinte"
+};
+function validateParticipantProfile(data) {
+  const { participantId, profileType, course, coursePhase } = data;
+  const uuidRegex2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (!participantId || !uuidRegex2.test(participantId)) {
+    return { valid: false, error: "participantId deve ser um UUID v4 v\xE1lido." };
+  }
+  const validProfileTypes = Object.values(PROFILE_TYPES);
+  if (!profileType || !validProfileTypes.includes(profileType)) {
+    return { valid: false, error: `profileType inv\xE1lido. Deve ser um de: ${validProfileTypes.join(", ")}` };
+  }
+  if (profileType === PROFILE_TYPES.ALUNO_GRADUACAO) {
+    const validGradCourses = [COURSES.BSI, COURSES.ADMINISTRACAO, COURSES.ENGENHARIA_METALURGICA, COURSES.PEDAGOGIA];
+    if (!course || !validGradCourses.includes(course)) {
+      return { valid: false, error: `Curso inv\xE1lido para aluno de gradua\xE7\xE3o. Deve ser um de: ${validGradCourses.join(", ")}` };
+    }
+    const validPhases = [COURSE_PHASES.INICIAL, COURSE_PHASES.INTERMEDIARIA, COURSE_PHASES.CONCLUINTE];
+    if (!coursePhase || !validPhases.includes(coursePhase)) {
+      return { valid: false, error: `Fase do curso inv\xE1lida. Deve ser uma de: ${validPhases.join(", ")}` };
+    }
+  }
+  if (profileType === PROFILE_TYPES.ALUNO_TECNICO) {
+    if (course && course !== COURSES.TECNICO_GERAL) {
+      return { valid: false, error: "Curso para aluno t\xE9cnico deve ser 'tecnico_geral'." };
+    }
+    const validPhases = [COURSE_PHASES.INICIAL, COURSE_PHASES.CONCLUINTE];
+    if (coursePhase && !validPhases.includes(coursePhase)) {
+      return { valid: false, error: `Fase para curso t\xE9cnico deve ser 'inicial' ou 'concluinte'.` };
+    }
+  }
+  if (profileType === PROFILE_TYPES.DOCENTE || profileType === PROFILE_TYPES.TAE) {
+  }
+  return { valid: true };
+}
+
+// src/services/participant.service.ts
+async function saveParticipant(data) {
+  const { participantId, profileType, course = null, coursePhase = null } = data;
+  await pool.query(
+    `INSERT INTO chat_participants (participant_id, profile_type, course, course_phase)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (participant_id) DO UPDATE
+     SET profile_type = EXCLUDED.profile_type,
+         course = EXCLUDED.course,
+         course_phase = EXCLUDED.course_phase`,
+    [participantId, profileType, course, coursePhase]
+  );
+  console.log(`\u{1F464} [Participante] Registro an\xF4nimo salvo: ${participantId.substring(0, 8)}... (${profileType}${course ? ` - ${course}` : ""}${coursePhase ? ` [${coursePhase}]` : ""})`);
+}
+
+// src/controllers/participant.controller.ts
+async function registerParticipant(req, res) {
+  try {
+    const { participantId, profileType, course, coursePhase } = req.body;
+    const validation = validateParticipantProfile({
+      participantId,
+      profileType,
+      course,
+      coursePhase
+    });
+    if (!validation.valid) {
+      res.status(400).json({ error: validation.error });
+      return;
+    }
+    await saveParticipant({
+      participantId,
+      profileType,
+      course: course || null,
+      coursePhase: coursePhase || null
+    });
+    res.status(200).json({
+      success: true,
+      message: "Perfil do participante registrado com sucesso."
+    });
+  } catch (error) {
+    console.error("[ParticipantController] Erro ao registrar participante:", error);
+    res.status(500).json({ error: "Erro interno ao registrar perfil do participante." });
+  }
+}
+
+// src/routes/participant.routes.ts
+var participantRouter = Router6();
+participantRouter.post("/", registerParticipant);
 
 // src/middlewares/rateLimiter.ts
 import rateLimit from "express-rate-limit";
@@ -29375,6 +29612,7 @@ app.use("/api/agent", chatLimiter, agentRouter);
 app.use("/api/agent-beta", chatLimiter, agentBetaRouter);
 app.use("/api/embedding", uploadLimiter, adminAuth, embeddingRouter);
 app.use("/api/stats", statsRouter);
+app.use("/api/participants", chatLimiter, participantRouter);
 app.get("/api/health", async (_req, res) => {
   let dbOk = false;
   try {
@@ -29414,6 +29652,7 @@ var server = app.listen(PORT, async () => {
   console.log(`\u{1F4E1} Chat (RAG):         POST /api/chat`);
   console.log(`\u{1F916} Agent (MCP):        POST /api/agent`);
   console.log(`\u{1F9EA} Agent Beta (MCP):   POST /api/agent-beta`);
+  console.log(`\u{1F464} Participantes:      POST /api/participants`);
   console.log(`\u{1F4E4} Upload endpoint:    POST /api/embedding/upload`);
   console.log(`\u{1F4CB} Documentos:         GET  /api/embedding/documentos`);
   console.log(`\u{1F4C8} Estat\xEDsticas:       GET  /api/stats/overview`);
@@ -29422,6 +29661,7 @@ var server = app.listen(PORT, async () => {
   await testDBConnection();
   await verifyEmbeddingDimension();
   await verifyFeedbacksTable();
+  await verifyParticipantsTable();
   await verifyInteractionsTable();
   await checkOllama();
   try {

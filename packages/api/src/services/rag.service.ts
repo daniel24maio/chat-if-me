@@ -526,13 +526,15 @@ REGRAS DE RESPOSTA:
 export async function processQuestionStream(
   question: string,
   res: Response,
-  sessionId?: string
+  sessionId?: string,
+  participantId?: string
 ): Promise<void> {
   const dataHora = new Date().toLocaleString("pt-BR");
   console.log(`\n${"─".repeat(50)}`);
   console.log(`📅 [RAG] Data/Hora: ${dataHora}`);
   console.log(`📨 [RAG] Nova pergunta (stream): "${question}"`);
   if (sessionId) console.log(`🧠 [RAG] Sessão: ${sessionId.substring(0, 8)}...`);
+  if (participantId) console.log(`👤 [RAG] Participante: ${participantId.substring(0, 8)}...`);
   console.log(`${"─".repeat(50)}`);
 
   // ── Verificação de sessão expirada ──
@@ -544,7 +546,8 @@ export async function processQuestionStream(
   }
 
   // ── Recuperar ou criar sessão ──
-  const session = sessionId ? getOrCreateSession(sessionId) : null;
+  const session = sessionId ? getOrCreateSession(sessionId, participantId) : null;
+  const effectiveParticipantId = participantId ?? session?.participantId;
 
   // ── Resolver referências anafóricas usando a memória ──
   const contextualizedQuestion = session
@@ -573,6 +576,7 @@ export async function processQuestionStream(
 
     logInteraction({
       sessionId: session?.sessionId ?? "anonymous",
+      participantId: effectiveParticipantId,
       mode: "rag",
       question,
       contextualizedQuestion,
@@ -609,6 +613,7 @@ export async function processQuestionStream(
 
     logInteraction({
       sessionId: session?.sessionId ?? "anonymous",
+      participantId: effectiveParticipantId,
       mode: "rag",
       question,
       contextualizedQuestion,
@@ -692,6 +697,7 @@ export async function processQuestionStream(
 
   logInteraction({
     sessionId: session?.sessionId ?? "anonymous",
+    participantId: effectiveParticipantId,
     mode: "rag",
     question,
     contextualizedQuestion,

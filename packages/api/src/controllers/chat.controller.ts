@@ -38,7 +38,7 @@ export async function sendQuestion(
   res: Response
 ): Promise<void> {
   try {
-    const { question, sessionId } = req.body;
+    const { question, sessionId, participantId } = req.body;
 
     // Validação: campo obrigatório
     if (!question || typeof question !== "string") {
@@ -84,7 +84,7 @@ export async function sendQuestion(
     // Delega o processamento ao serviço RAG com streaming
     // Controlado pelo semáforo de concorrência para evitar OOM na GPU
     await withConcurrencyControl(async () => {
-      await processQuestionStream(questionTrimmed, res, sessionId);
+      await processQuestionStream(questionTrimmed, res, sessionId, participantId);
     });
 
     // Encerra a conexão SSE após o stream completo

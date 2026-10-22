@@ -76,9 +76,54 @@ CREATE INDEX IF NOT EXISTS idx_feedbacks_question_embedding
   USING hnsw (question_embedding vector_cosine_ops)
   WITH (m = 16, ef_construction = 100);
 
-CREATE INDEX IF NOT EXISTS idx_feedbacks_positive
-  ON chat_feedbacks (feedback_type)
-  WHERE feedback_type = 'positive';
-
 CREATE INDEX IF NOT EXISTS idx_feedbacks_chunk_ids
   ON chat_feedbacks USING GIN (chunk_ids);
+
+-- ---------------------------------------------------------------------------
+-- Tabela de Participantes Anônimos da Pesquisa (LGPD Compliant)
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS chat_participants (
+  participant_id UUID PRIMARY KEY,
+  profile_type VARCHAR(30) NOT NULL CHECK (profile_type IN ('aluno_graduacao', 'aluno_tecnico', 'docente', 'tae')),
+  course VARCHAR(50),
+  course_phase VARCHAR(30),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_participants_profile_type ON chat_participants (profile_type);
+CREATE INDEX IF NOT EXISTS idx_participants_course ON chat_participants (course);
+
+-- ---------------------------------------------------------------------------
+-- Tabela de Interações e Métricas de Execução
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS chat_interactions (
+  id SERIAL PRIMARY KEY,
+  session_id VARCHAR(64) NOT NULL,
+  participant_id UUID REFERENCES chat_participants(participant_id) ON DELETE SET NULL,
+  mode VARCHAR(30) NOT NULL,
+  question TEXT NOT NULL,
+  contextualized_question TEXT,
+  intent VARCHAR(50),
+  tool_calls JSONB DEFAULT '[]',
+  sources JSONB DEFAULT '[]',
+  chunk_ids INTEGER[] DEFAULT '{}',
+  response TEXT NOT NULL,
+  timings JSONB DEFAULT '{}',
+  total_duration_ms INTEGER,
+  feedback VARCHAR(10),
+  ttft_ms INTEGER,
+  queue_wait_ms INTEGER,
+  prompt_tokens INTEGER,
+  completion_tokens INTEGER,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_interactions_created_at ON chat_interactions (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_interactions_mode ON chat_interactions (mode);
+CREATE INDEX IF NOT EXISTS idx_interactions_session ON chat_interactions (session_id);
+CREATE INDEX IF NOT EXISTS idx_interactions_participant ON chat_interactions (participant_id);
+CREATE INDEX IF NOT EXISTS idx_interactions_intent ON chat_interactions (intent);
+CREATE INDEX IF NOT EXISTS idx_interactions_feedback ON chat_interactions (feedback);
+
