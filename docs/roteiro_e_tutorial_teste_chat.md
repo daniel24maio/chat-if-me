@@ -8,11 +8,13 @@
 ## Sumário
 1. [Apresentação e Objetivo do Teste](#1-apresentação-e-objetivo-do-teste)
 2. [Tutorial Passo a Passo de Uso do Chat](#2-tutorial-passo-a-passo-de-uso-do-chat)
+   - [2.0 Identificação Anônima do Perfil (Etapas Iniciais)](#20-identificação-anônima-do-perfil-etapas-iniciais)
    - [2.1 Visão Geral da Interface](#21-visão-geral-da-interface)
    - [2.2 Modo RAG Clássico (📚)](#22-modo-rag-clássico-)
    - [2.3 Modo Agente MCP (🤖)](#23-modo-agente-mcp-)
    - [2.4 Alternando entre os Modos](#24-alternando-entre-os-modos)
    - [2.5 Como Registrar Feedback Individual nas Respostas (👍 / 👎)](#25-como-registrar-feedback-individual-nas-respostas---)
+   - [2.6 Convite ao Formulário de Avaliação](#26-convite-ao-formulário-de-avaliação)
 3. [Sugestão de Perguntas Acadêmicas para Testar](#3-sugestão-de-perguntas-acadêmicas-para-testar)
 4. [Roteiro do Formulário de Avaliação (Questionário de 11 Perguntas)](#4-roteiro-do-formulário-de-avaliação-questionário-de-11-perguntas)
    - [Estrutura e Justificativa Metodológica](#estrutura-e-justificativa-metodológica)
@@ -34,6 +36,22 @@ O diferencial do projeto é a coexistência de **duas abordagens técnicas de in
 ---
 
 ## 2. Tutorial Passo a Passo de Uso do Chat
+
+### 2.0 Identificação Anônima do Perfil (Etapas Iniciais)
+
+Antes de liberar o chat, o sistema apresenta uma janela com perguntas sobre o perfil acadêmico, exibidas **uma por tela**. Nenhum dado pessoal (nome, matrícula, e-mail) é coletado; o perfil é associado a um código anônimo.
+
+- Uma barra de progresso no topo indica a etapa atual (ex.: `Etapa 2 de 3 · Curso`).
+- Ao escolher uma opção, a janela avança sozinha para a próxima pergunta. O botão **← Voltar** permite corrigir uma resposta anterior.
+- Na última etapa, o botão **Liberar Acesso ao Chat →** conclui a identificação.
+
+| Vínculo | Etapas apresentadas |
+|---|---|
+| Aluno(a) de Graduação | Vínculo → Curso → Etapa do curso |
+| Aluno(a) de Curso Técnico | Vínculo → Etapa do curso |
+| Docente / Técnico-Administrativo | Vínculo → Confirmação do perfil |
+
+---
 
 ### 2.1 Visão Geral da Interface
 
@@ -104,6 +122,18 @@ Abaixo de cada resposta fornecida pelo assistente, há dois botões de avaliaç�
 - **👎 (Não útil / Incorreta):** Indica que a resposta continha imprecisão, não respondeu à pergunta ou omitiu regras essenciais.
 
 Ao clicar em um dos botões, seu voto é registrado instantaneamente no banco de dados do projeto, auxiliando no cálculo da taxa de aprovação para a pesquisa do TCC.
+
+---
+
+### 2.6 Convite ao Formulário de Avaliação
+
+Após a **4ª pergunta respondida** (somando os dois modos), o chat exibe uma janela de agradecimento com o link do formulário de avaliação ([https://forms.gle/P1VYPyDh2XcmnTX68](https://forms.gle/P1VYPyDh2XcmnTX68)).
+
+- **📝 Responder formulário ↗:** abre o formulário em uma nova aba. Depois de enviar, basta retornar à aba do chat para continuar perguntando.
+- **Continuar no chat:** fecha a janela sem abrir o formulário.
+- Após a exibição do convite, o botão **📝 Formulário** fica disponível no cabeçalho para acesso posterior.
+
+> **Observação:** Respostas interrompidas ou com erro não entram na contagem. O convite é exibido uma vez por participante; ao iniciar uma nova sessão, a contagem recomeça.
 
 ---
 

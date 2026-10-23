@@ -7,12 +7,23 @@ import MarkdownRenderer from '../MarkdownRenderer/MarkdownRenderer';
 import { useTheme } from '../../contexts/ThemeContext';
 import { Link } from 'react-router-dom';
 import ProfileModal, { type ParticipantProfile } from '../ProfileModal/ProfileModal';
+import FeedbackFormModal from '../FeedbackFormModal/FeedbackFormModal';
 
 /**
  * URL base da API backend.
  * Em produção, configurar via variável de ambiente do Vite (VITE_API_URL).
  */
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3333';
+
+/** Formulário Google de feedback do experimento (configurável via VITE_FEEDBACK_FORM_URL) */
+const FEEDBACK_FORM_URL =
+  import.meta.env.VITE_FEEDBACK_FORM_URL || 'https://forms.gle/P1VYPyDh2XcmnTX68';
+
+/** Quantidade de perguntas respondidas com sucesso antes de exibir o convite ao formulário */
+const FEEDBACK_PROMPT_AFTER_EXCHANGES = 4;
+
+/** Atraso para exibir o modal, dando tempo de ler o fim da última resposta */
+const FEEDBACK_PROMPT_DELAY_MS = 1500;
 
 interface Message {
   id: string;
@@ -69,6 +80,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ isBeta = false }) => {
   const [statusMessage, setStatusMessage] = useState('Analisando pergunta...');
   /** Indica se a sessão atual expirou devido a inatividade */
   const [isExpired, setIsExpired] = useState(false);
+  /** Perguntas respondidas com sucesso (somando RAG e Agente) no participante/sessão atual */
+  const [completedExchanges, setCompletedExchanges] = useState(0);
+  /** Indica se o convite ao formulário já foi exibido para o participante/sessão atual */
+  const [feedbackPromptShown, setFeedbackPromptShown] = useState(false);
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   /** Ref para abortar o stream se o usuário enviar outra pergunta */
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -77,6 +93,25 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ isBeta = false }) => {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Exibe o convite ao formulário após N respostas concluídas (uma vez por participante/sessão)
+  useEffect(() => {
+    if (
+      feedbackPromptShown ||
+      isStreaming ||
+      isExpired ||
+      completedExchanges < FEEDBACK_PROMPT_AFTER_EXCHANGES
+    ) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setShowFeedbackModal(true);
+      setFeedbackPromptShown(true);
+    }, FEEDBACK_PROMPT_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [completedExchanges, feedbackPromptShown, isStreaming, isExpired]);
+
+  const handleCloseFeedbackModal = useCallback(() => setShowFeedbackModal(false), []);
 
   /**
    * Processa o stream SSE da API usando fetch + ReadableStream.
@@ -145,6 +180,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ isBeta = false }) => {
               )
             );
             setIsStreaming(false);
+            // Conta apenas respostas concluídas com sucesso
+            setCompletedExchanges((prev) => prev + 1);
             return;
           }
 
@@ -344,6 +381,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ isBeta = false }) => {
     setParticipantId(null);
     setParticipantProfile(null);
     setIsExpired(false);
+    setCompletedExchanges(0);
+    setFeedbackPromptShown(false);
+    setShowFeedbackModal(false);
     setInputValue('');
     setStatusMessage('Analisando pergunta...');
   };
@@ -408,6 +448,20 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ isBeta = false }) => {
               <Link to="/estatisticas" className="header-nav-btn" title="Painel de Métricas e Observabilidade">
                 📊 Estatísticas
               </Link>
+            )}
+
+            {/* Atalho para o formulário, disponível após o convite ter sido exibido */}
+            {feedbackPromptShown && (
+              <a
+                id="header-feedback-form-link"
+                href={FEEDBACK_FORM_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="header-nav-btn"
+                title="Responder o formulário de feedback do teste (abre em nova aba)"
+              >
+                📝 Formulário
+              </a>
             )}
 
             <ThemeToggle />
@@ -606,6 +660,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ isBeta = false }) => {
           setParticipantId(id);
           setParticipantProfile(profile);
         }}
+      />
+
+      {/* Convite não bloqueante ao formulário de feedback do experimento */}
+      <FeedbackFormModal
+        isOpen={showFeedbackModal}
+        formUrl={FEEDBACK_FORM_URL}
+        onClose={handleCloseFeedbackModal}
       />
     </div>
   );
