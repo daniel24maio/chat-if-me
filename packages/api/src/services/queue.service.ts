@@ -21,7 +21,7 @@ import { runWithRequestMetrics } from "./request_metrics.service.js";
 // ---------------------------------------------------------------------------
 
 /** Número máximo de requests processados simultaneamente pelo Ollama */
-const MAX_CONCURRENT = Number(process.env.OLLAMA_MAX_CONCURRENT) || 2;
+const MAX_CONCURRENT = Number(process.env.OLLAMA_MAX_CONCURRENT) || 6;
 
 /** Timeout máximo de espera na fila (ms) — padrão: 120 segundos */
 const QUEUE_TIMEOUT_MS = Number(process.env.QUEUE_TIMEOUT_MS) || 120_000;
