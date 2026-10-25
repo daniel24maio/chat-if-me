@@ -107,6 +107,7 @@ export async function logInteraction(params: LogInteractionParams): Promise<void
     ...(promptTokens ? { prompt_tokens: promptTokens } : {}),
     ...(completionTokens ? { completion_tokens: completionTokens } : {}),
     ...(reqMetrics?.fallback ? { fallback: true } : {}),
+    ...(reqMetrics?.clientDisconnected ? { client_disconnected: true } : {}),
     ...(reqMetrics?.llmCalls && reqMetrics.llmCalls.length > 0 ? { llm_calls: reqMetrics.llmCalls } : {}),
   };
 
@@ -514,3 +515,31 @@ export async function exportAnalyticsCSV(filters: AnalyticsFilters): Promise<str
 
   return [header.join(","), ...rows.map((r) => r.join(","))].join("\n");
 }
+
+/**
+ * Retorna a última interação registrada para uma determinada sessão.
+ * Utilizado para recuperação resiliente após desconexões de rede no cliente.
+ */
+export async function getLastInteractionBySession(sessionId: string) {
+  const result = await pool.query(
+    `SELECT
+       id,
+       session_id,
+       participant_id,
+       mode,
+       question,
+       response,
+       sources,
+       chunk_ids,
+       timings,
+       total_duration_ms,
+       created_at
+     FROM chat_interactions
+     WHERE session_id = $1
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [sessionId]
+  );
+  return result.rows[0] || null;
+}
+

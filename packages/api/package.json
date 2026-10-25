@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsup --watch --onSuccess \"node dist/server.js\"",
-    "build": "tsup"
+    "build": "tsup",
+    "loadtest": "node scripts/loadtest.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

@@ -15,8 +15,9 @@ import {
   streamStaticGreeting,
   STATIC_GREETING_RESPONSE,
 } from "./fast_path.util.js";
-import { streamOllamaResponse, extractDraftFromThinking, type OllamaChatMessage } from "../config/ollama.js";
+import { streamOllamaResponse, extractDraftFromThinking, safeWrite, type OllamaChatMessage } from "../config/ollama.js";
 import { logInteraction } from "./analytics.service.js";
+import { formatVramStatus } from "./gpu_monitor.service.js";
 import {
   recordLlmCall,
   recordToolTime,
@@ -253,13 +254,14 @@ export async function processAgentQuestion(
   console.log(`📅 [Agente] Data/Hora: ${dataHora}`);
   if (sessionId) console.log(`🧠 [Agente] Sessão: ${sessionId.substring(0, 8)}...`);
   if (participantId) console.log(`👤 [Agente] Participante: ${participantId.substring(0, 8)}...`);
+  console.log(formatVramStatus());
   console.log(`${"─".repeat(50)}`);
 
   // ── Verificação de sessão expirada ──
   if (sessionId && isSessionExpired(sessionId)) {
     console.log(`⏰ [Agente] Sessão expirada: ${sessionId.substring(0, 8)}...`);
-    res.write(`data: ${JSON.stringify({ type: "session_expired" })}\n\n`);
-    res.write(`data: [DONE]\n\n`);
+    safeWrite(res, `data: ${JSON.stringify({ type: "session_expired" })}\n\n`);
+    safeWrite(res, `data: [DONE]\n\n`);
     return;
   }
 
@@ -716,5 +718,6 @@ export async function processAgentQuestion(
     totalDurationMs: totalMs,
   }).catch((err) => console.error("Erro ao registrar log Agente:", err));
 
+  console.log(formatVramStatus());
   console.log(`⏱️  [Agente] Pipeline streaming concluído em ${duration}s\n`);
 }

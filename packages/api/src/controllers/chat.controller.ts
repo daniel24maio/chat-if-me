@@ -4,7 +4,9 @@ import { processQuestionStream } from "../services/rag.service.js";
 import { withConcurrencyControl } from "../services/queue.service.js";
 import { saveFeedback } from "../services/feedback.service.js";
 import { getSessionChunkIds } from "../services/memory.service.js";
-import { updateInteractionFeedback } from "../services/analytics.service.js";
+import { updateInteractionFeedback, getLastInteractionBySession } from "../services/analytics.service.js";
+import { safeWrite } from "../config/ollama.js";
+import { markClientDisconnected } from "../services/request_metrics.service.js";
 
 /**
  * Controller do módulo de chat com Server-Sent Events (SSE).
@@ -37,6 +39,8 @@ export async function sendQuestion(
   req: Request<object, unknown, ChatRequestBody>,
   res: Response
 ): Promise<void> {
+  let heartbeatTimer: NodeJS.Timeout | null = null;
+
   try {
     const { question, sessionId, participantId } = req.body;
 
@@ -76,9 +80,18 @@ export async function sendQuestion(
       "X-Accel-Buffering": "no", // Desabilita buffering em proxies nginx
     });
 
-    // Detecta desconexão do cliente (ex: fechar aba) para abortar o pipeline
-    req.on("close", () => {
-      console.log("🔌 [SSE] Cliente desconectou durante o stream");
+    // Heartbeat periódico (a cada 10s) para manter conexões móveis e proxies ativas durante esperas
+    heartbeatTimer = setInterval(() => {
+      safeWrite(res, ": ping\n\n");
+    }, 10000);
+
+    // Detecta desconexão do cliente usando res.on("close") e verificando se writableEnded é falso
+    res.on("close", () => {
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      if (!res.writableEnded) {
+        console.log("🔌 [SSE] Cliente desconectou durante o stream");
+        markClientDisconnected();
+      }
     });
 
     // Delega o processamento ao serviço RAG com streaming
@@ -87,28 +100,81 @@ export async function sendQuestion(
       await processQuestionStream(questionTrimmed, res, sessionId, participantId);
     });
 
-    // Encerra a conexão SSE após o stream completo
-    res.end();
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+
+    // Encerra a conexão SSE após o stream completo se ainda estiver aberta
+    if (!res.writableEnded) {
+      res.end();
+    }
   } catch (error) {
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
     console.error("[ChatController] Erro ao processar pergunta:", error);
 
-    // Se os headers já foram enviados (stream iniciado), envia erro via SSE
+    // Se os headers já foram enviados (stream iniciado), envia erro via SSE se o socket ainda aceitar escrita
     if (res.headersSent) {
       const errorMessage =
         error instanceof Error && error.message.includes("Ollama")
           ? "O servidor de IA ficou inacessível durante a geração. Tente novamente."
           : "Ocorreu um erro durante a geração da resposta.";
 
-      res.write(
+      safeWrite(
+        res,
         `data: ${JSON.stringify({ type: "error", message: errorMessage })}\n\n`
       );
-      res.end();
+      if (!res.writableEnded) {
+        res.end();
+      }
     } else {
       // Se os headers ainda não foram enviados, retorna JSON normal
       res.status(500).json({
         error: "Ocorreu um erro interno ao processar sua pergunta. Tente novamente mais tarde.",
       });
     }
+  }
+}
+
+/**
+ * Recupera a última interação gerada para a sessão fornecida.
+ * Permite que o front-end recupere uma resposta completada após oscilação de rede sem reprocessamento.
+ *
+ * Endpoint: GET /api/chat/last?sessionId=...
+ */
+export async function getLastSessionInteraction(
+  req: Request,
+  res: Response
+): Promise<void> {
+  try {
+    const sessionId = req.query.sessionId;
+    if (!sessionId || typeof sessionId !== "string") {
+      res.status(400).json({ error: "O parâmetro 'sessionId' é obrigatório." });
+      return;
+    }
+
+    const last = await getLastInteractionBySession(sessionId);
+    if (!last) {
+      res.status(404).json({ error: "Nenhuma interação registrada para esta sessão." });
+      return;
+    }
+
+    // Valida se a interação é recente (menos de 5 minutos)
+    const ageMs = Date.now() - new Date(last.created_at).getTime();
+    if (ageMs > 5 * 60 * 1000) {
+      res.status(410).json({ error: "A última interação expirou (> 5 minutos)." });
+      return;
+    }
+
+    res.json({
+      id: last.id,
+      sessionId: last.session_id,
+      mode: last.mode,
+      question: last.question,
+      response: last.response,
+      sources: last.sources,
+      createdAt: last.created_at,
+    });
+  } catch (error) {
+    console.error("[ChatController] Erro ao recuperar última interação:", error);
+    res.status(500).json({ error: "Erro interno ao buscar última interação." });
   }
 }
 

@@ -2,6 +2,8 @@ import type { Request, Response } from "express";
 import type { ChatRequestBody } from "../interfaces/chat.interfaces.js";
 import { processAgentBetaQuestionStream } from "../services/mcp_agent_beta.service.js";
 import { withConcurrencyControl } from "../services/queue.service.js";
+import { safeWrite } from "../config/ollama.js";
+import { markClientDisconnected } from "../services/request_metrics.service.js";
 
 /**
  * Controller do Agente MCP Beta (Otimizado).
@@ -15,6 +17,8 @@ export async function sendAgentBetaQuestion(
   req: Request<object, unknown, ChatRequestBody>,
   res: Response
 ): Promise<void> {
+  let heartbeatTimer: NodeJS.Timeout | null = null;
+
   try {
     const { question, sessionId, participantId } = req.body;
 
@@ -51,8 +55,16 @@ export async function sendAgentBetaQuestion(
       "X-Accel-Buffering": "no",
     });
 
-    req.on("close", () => {
-      console.log("🔌 [SSE Agent Beta] Cliente desconectou");
+    heartbeatTimer = setInterval(() => {
+      safeWrite(res, ": ping\n\n");
+    }, 10000);
+
+    res.on("close", () => {
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      if (!res.writableEnded) {
+        console.log("🔌 [SSE Agent Beta] Cliente desconectou durante o stream");
+        markClientDisconnected();
+      }
     });
 
     // Executa com controle de concorrência no semáforo Ollama
@@ -60,8 +72,13 @@ export async function sendAgentBetaQuestion(
       await processAgentBetaQuestionStream(questionTrimmed, res, sessionId, participantId);
     });
 
-    res.end();
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+
+    if (!res.writableEnded) {
+      res.end();
+    }
   } catch (error) {
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
     console.error("[AgentBetaController] Erro:", error);
 
     if (res.headersSent) {
@@ -70,10 +87,13 @@ export async function sendAgentBetaQuestion(
           ? "O servidor de IA ficou inacessível. Tente novamente."
           : "Ocorreu um erro durante o processamento no Agente Beta.";
 
-      res.write(
+      safeWrite(
+        res,
         `data: ${JSON.stringify({ type: "error", message: errorMessage })}\n\n`
       );
-      res.end();
+      if (!res.writableEnded) {
+        res.end();
+      }
     } else {
       res.status(500).json({
         error: "Erro interno ao processar sua pergunta no modo Beta.",

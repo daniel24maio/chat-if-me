@@ -2,6 +2,8 @@ import type { Request, Response } from "express";
 import type { ChatRequestBody } from "../interfaces/chat.interfaces.js";
 import { processAgentQuestion } from "../services/mcp_agent.service.js";
 import { withConcurrencyControl } from "../services/queue.service.js";
+import { safeWrite } from "../config/ollama.js";
+import { markClientDisconnected } from "../services/request_metrics.service.js";
 
 /**
  * Controller do Agente MCP (Agentic RAG).
@@ -58,9 +60,17 @@ export async function sendAgentQuestion(
       "X-Accel-Buffering": "no",
     });
 
-    // Detecta desconexão do cliente
-    req.on("close", () => {
-      console.log("🔌 [SSE Agent] Cliente desconectou");
+    const heartbeatTimer = setInterval(() => {
+      safeWrite(res, ": ping\n\n");
+    }, 10000);
+
+    // Detecta desconexão do cliente usando res.on("close")
+    res.on("close", () => {
+      clearInterval(heartbeatTimer);
+      if (!res.writableEnded) {
+        console.log("🔌 [SSE Agent] Cliente desconectou durante o stream");
+        markClientDisconnected();
+      }
     });
 
     // Delega ao agente MCP com controle de concorrência
@@ -68,7 +78,10 @@ export async function sendAgentQuestion(
       await processAgentQuestion(questionTrimmed, res, sessionId, participantId);
     });
 
-    res.end();
+    clearInterval(heartbeatTimer);
+    if (!res.writableEnded) {
+      res.end();
+    }
   } catch (error) {
     console.error("[AgentController] Erro:", error);
 
@@ -78,10 +91,13 @@ export async function sendAgentQuestion(
           ? "O servidor de IA ficou inacessível. Tente novamente."
           : "Ocorreu um erro durante a geração da resposta.";
 
-      res.write(
+      safeWrite(
+        res,
         `data: ${JSON.stringify({ type: "error", message: errorMessage })}\n\n`
       );
-      res.end();
+      if (!res.writableEnded) {
+        res.end();
+      }
     } else {
       res.status(500).json({
         error: "Erro interno ao processar sua pergunta.",

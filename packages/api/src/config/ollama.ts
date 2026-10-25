@@ -49,6 +49,21 @@ const NUM_GPU = Number(process.env.OLLAMA_NUM_GPU) || 24;
  */
 const FETCH_TIMEOUT_MS = 600000; // 10 minutos
 
+/**
+ * Escreve dados em uma Response SSE HTTP de forma segura, evitando erros
+ * caso o cliente já tenha desconectado (socket destruído ou response finalizada).
+ */
+export function safeWrite(res: Response, data: string): boolean {
+  if (res.writableEnded || res.destroyed) {
+    return false;
+  }
+  try {
+    return res.write(data);
+  } catch {
+    return false;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Utilitários de Contexto
 // ---------------------------------------------------------------------------
@@ -199,11 +214,12 @@ export async function rewriteWithLLM(systemPrompt: string, question: string): Pr
         { role: "user", content: question },
       ],
       stream: false,
+      think: false,
       keep_alive: "24h",
       options: {
         temperature: 0,
         num_ctx: NUM_CTX,
-        num_predict: 100,
+        num_predict: 150,
         num_gpu: NUM_GPU,
       },
     }),
@@ -223,14 +239,19 @@ export async function rewriteWithLLM(systemPrompt: string, question: string): Pr
     throw new Error(`[Ollama Rewrite] Erro do Ollama: ${data.error}`);
   }
 
-  if (!data.message || typeof data.message.content !== "string") {
-    console.error("❌ [Ollama Rewrite] Resposta inválida:", JSON.stringify(data));
-    throw new Error("[Ollama Rewrite] Resposta inválida — campo 'message.content' ausente ou inválido");
+  const content = data.message?.content?.trim() || "";
+  if (!content) {
+    const rawThinking = (data.message as any)?.thinking || (data.message as any)?.reasoning_content;
+    console.warn("⚠️  [Ollama Rewrite] Retornou content vazio. Detalhes:", {
+      hasThinking: Boolean(rawThinking),
+      promptTokens: data.prompt_eval_count,
+      evalCount: data.eval_count,
+    });
   }
 
   recordLlmCall("rewrite", REWRITE_MODEL, Date.now() - callStart, data);
 
-  return data.message.content.trim();
+  return content;
 }
 
 /**
@@ -308,7 +329,7 @@ export async function streamOllamaResponse(
   const url = `${OLLAMA_BASE_URL}/api/chat`;
   const safeMessages = pruneHistory(messages);
 
-  res.write(`data: ${JSON.stringify({ type: "sources", sources })}\n\n`);
+  safeWrite(res, `data: ${JSON.stringify({ type: "sources", sources })}\n\n`);
 
   // Métricas da chamada: instante de início, primeiro token e estatísticas finais do Ollama
   const callStart = Date.now();
@@ -415,7 +436,7 @@ export async function streamOllamaResponse(
       generatedTokens = true;
       noteFirstToken();
       fullText += safe;
-      res.write(`data: ${JSON.stringify({ type: "token", content: safe })}\n\n`);
+      safeWrite(res, `data: ${JSON.stringify({ type: "token", content: safe })}\n\n`);
     }
   }
 
@@ -483,7 +504,7 @@ export async function streamOllamaResponse(
       generatedTokens = true;
       noteFirstToken();
       fullText += thinkBuffer;
-      res.write(`data: ${JSON.stringify({ type: "token", content: thinkBuffer })}\n\n`);
+      safeWrite(res, `data: ${JSON.stringify({ type: "token", content: thinkBuffer })}\n\n`);
     }
   } finally {
     reader.releaseLock();
@@ -506,19 +527,20 @@ export async function streamOllamaResponse(
       generatedTokens = true;
       noteFirstToken();
       fullText = extractedResponse;
-      res.write(`data: ${JSON.stringify({ type: "token", content: extractedResponse })}\n\n`);
+      safeWrite(res, `data: ${JSON.stringify({ type: "token", content: extractedResponse })}\n\n`);
     } else {
       console.warn("⚠️ [Ollama] Resposta vazia no streaming. Enviando fallback.");
       const fallbackMsg = "Não encontrei essa informação nos documentos disponíveis. Recomendo consultar a coordenação do curso ou acessar o portal do IFMG.";
       noteFirstToken();
       markFallback();
-      res.write(
+      safeWrite(
+        res,
         `data: ${JSON.stringify({ type: "token", content: fallbackMsg })}\n\n`
       );
     }
   }
 
-  res.write(`data: [DONE]\n\n`);
+  safeWrite(res, `data: [DONE]\n\n`);
 
   return fullText;
 }

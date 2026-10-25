@@ -23,8 +23,10 @@ import { runWithRequestMetrics } from "./request_metrics.service.js";
 /** Número máximo de requests processados simultaneamente pelo Ollama */
 const MAX_CONCURRENT = Number(process.env.OLLAMA_MAX_CONCURRENT) || 2;
 
-/** Timeout máximo de espera na fila (ms) */
-const QUEUE_TIMEOUT_MS = 120_0000; // 20 minutos
+/** Timeout máximo de espera na fila (ms) — padrão: 120 segundos */
+const QUEUE_TIMEOUT_MS = Number(process.env.QUEUE_TIMEOUT_MS) || 120_000;
+
+console.log(`🚦 [Semáforo] Concorrência configurada para ${MAX_CONCURRENT} slots simultâneos (Timeout fila: ${QUEUE_TIMEOUT_MS / 1000}s)`);
 
 /** Nome da fila */
 const QUEUE_NAME = "chatifme-llm";

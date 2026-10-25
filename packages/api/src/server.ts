@@ -7,7 +7,7 @@ import { agentRouter } from "./routes/agent.routes.js";
 import { agentBetaRouter } from "./routes/agent_beta.routes.js";
 import { statsRouter } from "./routes/stats.routes.js";
 import { participantRouter } from "./routes/participant.routes.js";
-import { pool, testDBConnection, verifyEmbeddingDimension, verifyFeedbacksTable, verifyParticipantsTable, verifyInteractionsTable } from "./config/database.js";
+import { pool, testDBConnection, verifyEmbeddingDimension, verifyFeedbacksTable, verifyParticipantsTable, verifyInteractionsTable, verifyVramSamplesTable } from "./config/database.js";
 import { checkOllama } from "./config/ollama.js";
 import { chatLimiter, uploadLimiter } from "./middlewares/rateLimiter.js";
 
@@ -21,6 +21,10 @@ import {
   getSessionStats,
   clearAllSessions,
 } from "./services/memory.service.js";
+import {
+  startVramSampler,
+  stopVramSampler,
+} from "./services/gpu_monitor.service.js";
 
 /**
  * Arquivo principal de inicialização do servidor.
@@ -154,8 +158,11 @@ const server = app.listen(PORT, async () => {
   await verifyFeedbacksTable(); // Garante tabela de feedback (ICL)
   await verifyParticipantsTable(); // Garante tabela de perfis de participantes (Pesquisa)
   await verifyInteractionsTable(); // Garante tabela de interações e métricas (Dashboard)
+  await verifyVramSamplesTable(); // Garante tabela de amostragem de VRAM da GPU
   await checkOllama();
 
+  // Inicia o monitor de VRAM e fila do Ollama
+  startVramSampler();
 
   // Inicializa o MCP Client (conecta ao servidor como subprocesso)
   try {
@@ -179,13 +186,15 @@ server.on("error", (err: NodeJS.ErrnoException) => {
   throw err;
 });
 
-// Cleanup: encerra o MCP Client quando o processo termina
+// Cleanup: encerra o MCP Client e o monitor de VRAM quando o processo termina
 process.on("SIGINT", async () => {
+  stopVramSampler();
   clearAllSessions();
   await closeMCPClient();
   process.exit(0);
 });
 process.on("SIGTERM", async () => {
+  stopVramSampler();
   clearAllSessions();
   await closeMCPClient();
   process.exit(0);

@@ -314,5 +314,46 @@ export async function verifyInteractionsTable(): Promise<void> {
   }
 }
 
+/**
+ * Verifica e cria a tabela de amostragem de VRAM da GPU (Ollama) se não existir.
+ */
+export async function verifyVramSamplesTable(): Promise<void> {
+  try {
+    const tableExists = await pool.query(`
+      SELECT EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_name = 'gpu_vram_samples'
+      ) AS exists
+    `);
+
+    if (!tableExists.rows[0]?.exists) {
+      console.log("🔄 [Database] Tabela 'gpu_vram_samples' não encontrada. Criando...");
+      const sql = `
+        CREATE TABLE gpu_vram_samples (
+          id BIGSERIAL PRIMARY KEY,
+          sampled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          vram_used_mb INTEGER NOT NULL,
+          model_total_mb INTEGER NOT NULL,
+          cpu_spill_mb INTEGER NOT NULL DEFAULT 0,
+          models JSONB NOT NULL DEFAULT '[]',
+          queue_active SMALLINT,
+          queue_waiting SMALLINT,
+          queue_max SMALLINT
+        );
+        CREATE INDEX idx_vram_sampled_at ON gpu_vram_samples (sampled_at DESC);
+      `;
+      await pool.query(sql);
+      console.log("✅ [Database] Tabela 'gpu_vram_samples' criada com sucesso!");
+    } else {
+      console.log("✅ [Database] Tabela 'gpu_vram_samples' pronta ✓");
+    }
+  } catch (error) {
+    console.error(
+      "❌ [Database] Falha na verificação da tabela gpu_vram_samples:",
+      error instanceof Error ? error.message : error
+    );
+  }
+}
+
 
 

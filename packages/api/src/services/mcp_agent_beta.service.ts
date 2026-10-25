@@ -14,10 +14,12 @@ import {
 import {
   extractDraftFromThinking,
   generateOllamaEmbedding,
+  safeWrite,
 } from "../config/ollama.js";
 import { getPositiveExamples, type FewShotExample } from "./feedback.service.js";
 import { getMCPClient, getMCPBetaTools } from "./mcp_agent.service.js";
 import { logInteraction } from "./analytics.service.js";
+import { formatVramStatus } from "./gpu_monitor.service.js";
 import {
   recordLlmCall,
   recordToolTime,
@@ -126,12 +128,14 @@ export async function processAgentBetaQuestionStream(
   console.log(`🧪 [Agente Beta] Nova pergunta: "${question}"`);
   if (sessionId) console.log(`🧠 [Agente Beta] Sessão: ${sessionId.substring(0, 8)}...`);
   if (participantId) console.log(`👤 [Agente Beta] Participante: ${participantId.substring(0, 8)}...`);
+  console.log(formatVramStatus());
+  console.log(`${"─".repeat(50)}`);
 
   // 1. Verificação de sessão expirada
   if (sessionId && isSessionExpired(sessionId)) {
     console.log(`⏰ [Agente Beta] Sessão expirada: ${sessionId.substring(0, 8)}...`);
-    res.write(`data: ${JSON.stringify({ type: "session_expired" })}\n\n`);
-    res.write(`data: [DONE]\n\n`);
+    safeWrite(res, `data: ${JSON.stringify({ type: "session_expired" })}\n\n`);
+    safeWrite(res, `data: [DONE]\n\n`);
     return;
   }
 
@@ -572,5 +576,6 @@ Sua resposta deve basear-se ESTRITAMENTE nos trechos de documentos retornados pe
     totalDurationMs: totalMs,
   }).catch((err) => console.error("Erro ao registrar log Agente Beta:", err));
 
+  console.log(formatVramStatus());
   console.log(`⏱️  [Agente Beta] Pipeline concluído com sucesso em ${duration}s\n`);
 }

@@ -1,5 +1,6 @@
 import { Router } from "express";
-import { sendQuestion, registerFeedback } from "../controllers/chat.controller.js";
+import { sendQuestion, registerFeedback, getLastSessionInteraction } from "../controllers/chat.controller.js";
+import { chatLimiter } from "../middlewares/rateLimiter.js";
 
 /**
  * Rotas do módulo de chat.
@@ -18,6 +19,12 @@ const chatRouter = Router();
  * Resposta: { "response": "string", "sources": ["string"] }
  */
 chatRouter.post("/", sendQuestion);
+
+/**
+ * GET /api/chat/last?sessionId=...
+ * Recupera a última interação gerada para a sessão se gerada nos últimos 5 minutos.
+ */
+chatRouter.get("/last", chatLimiter, getLastSessionInteraction);
 
 /**
  * POST /api/chat/feedback

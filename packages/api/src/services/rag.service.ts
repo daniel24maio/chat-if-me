@@ -5,6 +5,7 @@ import {
   generateOllamaEmbedding,
   streamOllamaResponse,
   rewriteWithLLM,
+  safeWrite,
   type OllamaChatMessage,
 } from "../config/ollama.js";
 import {
@@ -26,6 +27,7 @@ import {
   type FewShotExample,
 } from "./feedback.service.js";
 import { logInteraction } from "./analytics.service.js";
+import { formatVramStatus } from "./gpu_monitor.service.js";
 
 /**
  * Serviço RAG (Retrieval-Augmented Generation) com Streaming.
@@ -78,7 +80,8 @@ REGRAS:
 3. Transforme linguagem coloquial em linguagem formal/acadêmica.
 4. Adicione contexto implícito quando cabível (ex: "reprovar" → "critérios de reprovação").
 5. Mantenha o sentido original da pergunta.
-6. Responda APENAS com a Tag de Intenção seguida da pergunta reescrita, sem aspas. Exemplo: "[DISCIPLINA] qual é a carga horária de cálculo 1?"`;
+6. Se houver histórico de diálogo anterior fornecido e a pergunta contiver termos anafóricos ou referências dependentes (ex: "desse prazo", "dele", "nessa disciplina", "o que acontece se passar"), resolva a referência substituindo pelo tema correspondente citado anteriormente.
+7. Responda APENAS com a Tag de Intenção seguida da pergunta reescrita, sem aspas. Exemplo: "[DISCIPLINA] qual é a carga horária de cálculo 1?"`;
 
 /**
  * Infere a intenção da pergunta com base em palavras-chave quando a reescrita do LLM falha ou retorna "OUTRAS".
@@ -121,15 +124,32 @@ function inferIntentionFromKeywords(text: string): string {
  * @param question - Pergunta original do aluno
  * @returns Pergunta reescrita e expandida
  */
-async function rewriteQuestion(question: string): Promise<{ intention: string; rewrittenQuestion: string }> {
+async function rewriteQuestion(
+  question: string,
+  sessionHistory?: SessionMessage[]
+): Promise<{ intention: string; rewrittenQuestion: string }> {
   try {
     console.log(`✍️  [Reescrita] Original: "${question}"`);
 
-    const rewritten = await rewriteWithLLM(REWRITE_SYSTEM_PROMPT, question);
+    let inputToRewrite = question;
+    if (sessionHistory && sessionHistory.length > 0) {
+      // Pega os últimos 2 turnos (até 4 mensagens) formatados para contexto
+      const recent = sessionHistory.slice(-4).map((m) => {
+        const sender = m.role === "assistant" ? "Assistente" : "Aluno";
+        const contentSnippet = m.content.length > 200 ? m.content.substring(0, 200) + "..." : m.content;
+        return `${sender}: ${contentSnippet}`;
+      }).join("\n");
+
+      if (recent.trim()) {
+        inputToRewrite = `Contexto do diálogo anterior:\n${recent}\n\nPergunta atual a ser reescrita e contextualizada:\n${question}`;
+      }
+    }
+
+    const rewritten = await rewriteWithLLM(REWRITE_SYSTEM_PROMPT, inputToRewrite);
 
     // Validação: se a reescrita ficou vazia ou absurdamente longa, usa a original
     if (!rewritten || rewritten.length > 1000) {
-      console.log(`✍️  [Reescrita] Resultado inválido, usando original.`);
+      console.log(`✍️  [Reescrita] Resultado inválido (retorno vazio ou > 1000 chars), usando original.`);
       return { intention: inferIntentionFromKeywords(question), rewrittenQuestion: question };
     }
 
@@ -535,13 +555,14 @@ export async function processQuestionStream(
   console.log(`📨 [RAG] Nova pergunta (stream): "${question}"`);
   if (sessionId) console.log(`🧠 [RAG] Sessão: ${sessionId.substring(0, 8)}...`);
   if (participantId) console.log(`👤 [RAG] Participante: ${participantId.substring(0, 8)}...`);
+  console.log(formatVramStatus());
   console.log(`${"─".repeat(50)}`);
 
   // ── Verificação de sessão expirada ──
   if (sessionId && isSessionExpired(sessionId)) {
     console.log(`⏰ [RAG] Sessão expirada: ${sessionId.substring(0, 8)}...`);
-    res.write(`data: ${JSON.stringify({ type: "session_expired" })}\n\n`);
-    res.write(`data: [DONE]\n\n`);
+    safeWrite(res, `data: ${JSON.stringify({ type: "session_expired" })}\n\n`);
+    safeWrite(res, `data: [DONE]\n\n`);
     return;
   }
 
@@ -554,7 +575,7 @@ export async function processQuestionStream(
     ? resolveReferences(question, session)
     : question;
 
-  res.write(`data: ${JSON.stringify({ type: "status", status: "Analisando pergunta..." })}\n\n`);
+  safeWrite(res, `data: ${JSON.stringify({ type: "status", status: "Analisando pergunta..." })}\n\n`);
 
   const start = Date.now();
 
@@ -590,22 +611,22 @@ export async function processQuestionStream(
     return;
   }
 
-  // Etapa 0: Reescrever a pergunta (com pronomes já resolvidos) para melhorar a busca semântica
+  // Etapa 0: Reescrever a pergunta (com histórico da sessão para resolver dependências)
   const t0 = Date.now();
-  const { intention, rewrittenQuestion } = await rewriteQuestion(contextualizedQuestion);
+  const { intention, rewrittenQuestion } = await rewriteQuestion(contextualizedQuestion, session?.messages);
   const rewriteMs = Date.now() - t0;
 
   // 2. Verificação pós-reescrita para saudações classificadas pelo LLM
   if (intention === "GREETING") {
     console.log(`🚀 [RAG] Fast-path ativado: reescrevedor classificou como GREETING.`);
-    res.write(`data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}\n\n`);
+    safeWrite(res, `data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}\n\n`);
 
     const t3 = Date.now();
     await streamStaticGreeting(res);
     const generationMs = Date.now() - t3;
     const totalMs = Date.now() - start;
 
-    res.write(`data: ${JSON.stringify({ type: "metrics", timings: { rewrite: rewriteMs, embedding: 0, retrieval: 0, generation: generationMs, total: totalMs } })}\n\n`);
+    safeWrite(res, `data: ${JSON.stringify({ type: "metrics", timings: { rewrite: rewriteMs, embedding: 0, retrieval: 0, generation: generationMs, total: totalMs } })}\n\n`);
 
     if (session) {
       updateSession(session.sessionId, question, "GREETING", STATIC_GREETING_RESPONSE);
@@ -627,7 +648,7 @@ export async function processQuestionStream(
     return;
   }
 
-  res.write(`data: ${JSON.stringify({ type: "status", status: "Buscando nos documentos..." })}\n\n`);
+  safeWrite(res, `data: ${JSON.stringify({ type: "status", status: "Buscando nos documentos..." })}\n\n`);
 
   // Etapa 1: Vetorizar a pergunta REESCRITA (não a original)
   const t1 = Date.now();
@@ -687,7 +708,7 @@ export async function processQuestionStream(
     total: totalMs,
   };
 
-  res.write(`data: ${JSON.stringify({ type: "metrics", timings })}\n\n`);
+  safeWrite(res, `data: ${JSON.stringify({ type: "metrics", timings })}\n\n`);
 
   // ── Atualizar memória da sessão ──
   if (session) {
@@ -715,6 +736,7 @@ export async function processQuestionStream(
     totalDurationMs: totalMs,
   }).catch((err) => console.error("Erro ao registrar log RAG:", err));
 
+  console.log(formatVramStatus());
   console.log(
     `⏱️  [RAG] Pipeline concluído em ${(totalMs / 1000).toFixed(1)}s ` +
     `(rewrite: ${rewriteMs}ms, embed: ${embedMs}ms, retrieval: ${retrievalMs}ms, gen: ${generationMs}ms)\n`

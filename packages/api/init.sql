@@ -127,3 +127,21 @@ CREATE INDEX IF NOT EXISTS idx_interactions_participant ON chat_interactions (pa
 CREATE INDEX IF NOT EXISTS idx_interactions_intent ON chat_interactions (intent);
 CREATE INDEX IF NOT EXISTS idx_interactions_feedback ON chat_interactions (feedback);
 
+-- ---------------------------------------------------------------------------
+-- Tabela de Amostragem de VRAM da GPU (Homelab Ollama)
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS gpu_vram_samples (
+  id BIGSERIAL PRIMARY KEY,
+  sampled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  vram_used_mb INTEGER NOT NULL,
+  model_total_mb INTEGER NOT NULL,
+  cpu_spill_mb INTEGER NOT NULL DEFAULT 0,
+  models JSONB NOT NULL DEFAULT '[]',
+  queue_active SMALLINT,
+  queue_waiting SMALLINT,
+  queue_max SMALLINT
+);
+
+CREATE INDEX IF NOT EXISTS idx_vram_sampled_at ON gpu_vram_samples (sampled_at DESC);
+

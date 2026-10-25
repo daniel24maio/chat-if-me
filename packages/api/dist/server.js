@@ -966,6 +966,42 @@ async function verifyInteractionsTable() {
     );
   }
 }
+async function verifyVramSamplesTable() {
+  try {
+    const tableExists = await pool.query(`
+      SELECT EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_name = 'gpu_vram_samples'
+      ) AS exists
+    `);
+    if (!tableExists.rows[0]?.exists) {
+      console.log("\u{1F504} [Database] Tabela 'gpu_vram_samples' n\xE3o encontrada. Criando...");
+      const sql = `
+        CREATE TABLE gpu_vram_samples (
+          id BIGSERIAL PRIMARY KEY,
+          sampled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          vram_used_mb INTEGER NOT NULL,
+          model_total_mb INTEGER NOT NULL,
+          cpu_spill_mb INTEGER NOT NULL DEFAULT 0,
+          models JSONB NOT NULL DEFAULT '[]',
+          queue_active SMALLINT,
+          queue_waiting SMALLINT,
+          queue_max SMALLINT
+        );
+        CREATE INDEX idx_vram_sampled_at ON gpu_vram_samples (sampled_at DESC);
+      `;
+      await pool.query(sql);
+      console.log("\u2705 [Database] Tabela 'gpu_vram_samples' criada com sucesso!");
+    } else {
+      console.log("\u2705 [Database] Tabela 'gpu_vram_samples' pronta \u2713");
+    }
+  } catch (error) {
+    console.error(
+      "\u274C [Database] Falha na verifica\xE7\xE3o da tabela gpu_vram_samples:",
+      error instanceof Error ? error.message : error
+    );
+  }
+}
 
 // src/services/request_metrics.service.ts
 import { AsyncLocalStorage } from "async_hooks";
@@ -975,6 +1011,13 @@ function runWithRequestMetrics(ctx, fn) {
 }
 function getRequestMetrics() {
   return storage.getStore();
+}
+function markClientDisconnected() {
+  const ctx = storage.getStore();
+  if (ctx) {
+    ctx.clientDisconnected = true;
+    ctx.disconnectedAt = Date.now();
+  }
 }
 function markFirstToken() {
   const ctx = storage.getStore();
@@ -1023,6 +1066,16 @@ var REWRITE_MODEL = process.env.OLLAMA_REWRITE_MODEL || "qwen3.5:4b";
 var NUM_CTX = Number(process.env.OLLAMA_NUM_CTX) || 10240;
 var NUM_GPU = Number(process.env.OLLAMA_NUM_GPU) || 24;
 var FETCH_TIMEOUT_MS = 6e5;
+function safeWrite(res, data) {
+  if (res.writableEnded || res.destroyed) {
+    return false;
+  }
+  try {
+    return res.write(data);
+  } catch {
+    return false;
+  }
+}
 function pruneHistory(messages, maxInteractions = 6) {
   if (messages.length <= maxInteractions + 1)
     return messages;
@@ -1088,11 +1141,12 @@ async function rewriteWithLLM(systemPrompt, question) {
         { role: "user", content: question }
       ],
       stream: false,
+      think: false,
       keep_alive: "24h",
       options: {
         temperature: 0,
         num_ctx: NUM_CTX,
-        num_predict: 100,
+        num_predict: 150,
         num_gpu: NUM_GPU
       }
     })
@@ -1105,12 +1159,17 @@ async function rewriteWithLLM(systemPrompt, question) {
   if (data.error) {
     throw new Error(`[Ollama Rewrite] Erro do Ollama: ${data.error}`);
   }
-  if (!data.message || typeof data.message.content !== "string") {
-    console.error("\u274C [Ollama Rewrite] Resposta inv\xE1lida:", JSON.stringify(data));
-    throw new Error("[Ollama Rewrite] Resposta inv\xE1lida \u2014 campo 'message.content' ausente ou inv\xE1lido");
+  const content = data.message?.content?.trim() || "";
+  if (!content) {
+    const rawThinking = data.message?.thinking || data.message?.reasoning_content;
+    console.warn("\u26A0\uFE0F  [Ollama Rewrite] Retornou content vazio. Detalhes:", {
+      hasThinking: Boolean(rawThinking),
+      promptTokens: data.prompt_eval_count,
+      evalCount: data.eval_count
+    });
   }
   recordLlmCall("rewrite", REWRITE_MODEL, Date.now() - callStart, data);
-  return data.message.content.trim();
+  return content;
 }
 function extractDraftFromThinking(fullThought) {
   if (!fullThought || fullThought.trim().length < 20)
@@ -1156,7 +1215,7 @@ function extractDraftFromThinking(fullThought) {
 async function streamOllamaResponse(messages, res, sources) {
   const url = `${OLLAMA_BASE_URL}/api/chat`;
   const safeMessages = pruneHistory(messages);
-  res.write(`data: ${JSON.stringify({ type: "sources", sources })}
+  safeWrite(res, `data: ${JSON.stringify({ type: "sources", sources })}
 
 `);
   const callStart = Date.now();
@@ -1243,7 +1302,7 @@ async function streamOllamaResponse(messages, res, sources) {
       generatedTokens = true;
       noteFirstToken();
       fullText += safe;
-      res.write(`data: ${JSON.stringify({ type: "token", content: safe })}
+      safeWrite(res, `data: ${JSON.stringify({ type: "token", content: safe })}
 
 `);
     }
@@ -1294,7 +1353,7 @@ async function streamOllamaResponse(messages, res, sources) {
       generatedTokens = true;
       noteFirstToken();
       fullText += thinkBuffer;
-      res.write(`data: ${JSON.stringify({ type: "token", content: thinkBuffer })}
+      safeWrite(res, `data: ${JSON.stringify({ type: "token", content: thinkBuffer })}
 
 `);
     }
@@ -1315,7 +1374,7 @@ async function streamOllamaResponse(messages, res, sources) {
       generatedTokens = true;
       noteFirstToken();
       fullText = extractedResponse;
-      res.write(`data: ${JSON.stringify({ type: "token", content: extractedResponse })}
+      safeWrite(res, `data: ${JSON.stringify({ type: "token", content: extractedResponse })}
 
 `);
     } else {
@@ -1323,14 +1382,15 @@ async function streamOllamaResponse(messages, res, sources) {
       const fallbackMsg = "N\xE3o encontrei essa informa\xE7\xE3o nos documentos dispon\xEDveis. Recomendo consultar a coordena\xE7\xE3o do curso ou acessar o portal do IFMG.";
       noteFirstToken();
       markFallback();
-      res.write(
+      safeWrite(
+        res,
         `data: ${JSON.stringify({ type: "token", content: fallbackMsg })}
 
 `
       );
     }
   }
-  res.write(`data: [DONE]
+  safeWrite(res, `data: [DONE]
 
 `);
   return fullText;
@@ -1797,6 +1857,7 @@ async function logInteraction(params) {
     ...promptTokens ? { prompt_tokens: promptTokens } : {},
     ...completionTokens ? { completion_tokens: completionTokens } : {},
     ...reqMetrics?.fallback ? { fallback: true } : {},
+    ...reqMetrics?.clientDisconnected ? { client_disconnected: true } : {},
     ...reqMetrics?.llmCalls && reqMetrics.llmCalls.length > 0 ? { llm_calls: reqMetrics.llmCalls } : {}
   };
   try {
@@ -2138,6 +2199,243 @@ async function exportAnalyticsCSV(filters) {
   ]);
   return [header.join(","), ...rows.map((r) => r.join(","))].join("\n");
 }
+async function getLastInteractionBySession(sessionId) {
+  const result = await pool.query(
+    `SELECT
+       id,
+       session_id,
+       participant_id,
+       mode,
+       question,
+       response,
+       sources,
+       chunk_ids,
+       timings,
+       total_duration_ms,
+       created_at
+     FROM chat_interactions
+     WHERE session_id = $1
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [sessionId]
+  );
+  return result.rows[0] || null;
+}
+
+// src/services/queue.service.ts
+var MAX_CONCURRENT = Number(process.env.OLLAMA_MAX_CONCURRENT) || 2;
+var QUEUE_TIMEOUT_MS = Number(process.env.QUEUE_TIMEOUT_MS) || 12e4;
+console.log(`\u{1F6A6} [Sem\xE1foro] Concorr\xEAncia configurada para ${MAX_CONCURRENT} slots simult\xE2neos (Timeout fila: ${QUEUE_TIMEOUT_MS / 1e3}s)`);
+var OllamaSemaphore = class {
+  constructor(maxConcurrent) {
+    this.maxConcurrent = maxConcurrent;
+  }
+  currentCount = 0;
+  waitQueue = [];
+  /**
+   * Aguarda até que um slot esteja disponível.
+   * @throws Error se o timeout for atingido
+   */
+  async acquire() {
+    if (this.currentCount < this.maxConcurrent) {
+      this.currentCount++;
+      return;
+    }
+    return new Promise((resolve3, reject) => {
+      const timer = setTimeout(() => {
+        const idx = this.waitQueue.findIndex((w) => w.resolve === resolve3);
+        if (idx !== -1)
+          this.waitQueue.splice(idx, 1);
+        reject(new Error("Tempo de espera na fila esgotado. Tente novamente."));
+      }, QUEUE_TIMEOUT_MS);
+      this.waitQueue.push({ resolve: resolve3, timer });
+    });
+  }
+  /** Libera um slot, desbloqueando o próximo request na fila. */
+  release() {
+    if (this.waitQueue.length > 0) {
+      const next = this.waitQueue.shift();
+      clearTimeout(next.timer);
+      next.resolve();
+    } else {
+      this.currentCount = Math.max(0, this.currentCount - 1);
+    }
+  }
+  /** Retorna métricas da fila para observabilidade. */
+  getStatus() {
+    return {
+      active: this.currentCount,
+      waiting: this.waitQueue.length,
+      maxConcurrent: this.maxConcurrent
+    };
+  }
+};
+var ollamaSemaphore = new OllamaSemaphore(MAX_CONCURRENT);
+async function withConcurrencyControl(fn) {
+  const enqueuedAt = Date.now();
+  const { active, waiting } = ollamaSemaphore.getStatus();
+  await ollamaSemaphore.acquire();
+  const acquiredAt = Date.now();
+  try {
+    return await runWithRequestMetrics(
+      {
+        enqueuedAt,
+        acquiredAt,
+        queueWaitMs: acquiredAt - enqueuedAt,
+        activeOnEnqueue: active,
+        waitingOnEnqueue: waiting,
+        llmCalls: [],
+        toolMs: 0,
+        toolInvocations: 0,
+        fallback: false
+      },
+      fn
+    );
+  } finally {
+    ollamaSemaphore.release();
+  }
+}
+
+// src/services/gpu_monitor.service.ts
+var OLLAMA_BASE_URL2 = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
+var SAMPLE_INTERVAL_MS = Number(process.env.VRAM_SAMPLE_INTERVAL_MS) || 5e3;
+var RETENTION_DAYS = Number(process.env.VRAM_RETENTION_DAYS) || 30;
+var latestSample = null;
+var samplerIntervalTimer = null;
+var cleanupIntervalTimer = null;
+var lastErrorLogTimestamp = 0;
+async function queryOllamaVram() {
+  try {
+    const res = await fetch(`${OLLAMA_BASE_URL2}/api/ps`, {
+      signal: AbortSignal.timeout(3e3)
+    });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    let totalSizeBytes = 0;
+    let totalVramBytes = 0;
+    const modelDetails = [];
+    if (Array.isArray(data.models)) {
+      for (const m of data.models) {
+        const sizeBytes = m.size || 0;
+        const vramBytes = m.size_vram || 0;
+        totalSizeBytes += sizeBytes;
+        totalVramBytes += vramBytes;
+        const sizeMb = Math.round(sizeBytes / (1024 * 1024));
+        const vramMb = Math.round(vramBytes / (1024 * 1024));
+        const spillMb = Math.max(0, sizeMb - vramMb);
+        modelDetails.push({
+          name: m.name,
+          size_mb: sizeMb,
+          vram_mb: vramMb,
+          cpu_spill_mb: spillMb
+        });
+      }
+    }
+    const modelTotalMb = Math.round(totalSizeBytes / (1024 * 1024));
+    const vramUsedMb = Math.round(totalVramBytes / (1024 * 1024));
+    const cpuSpillMb = Math.max(0, modelTotalMb - vramUsedMb);
+    return {
+      vramUsedMb,
+      modelTotalMb,
+      cpuSpillMb,
+      models: modelDetails
+    };
+  } catch (error) {
+    const now = Date.now();
+    if (now - lastErrorLogTimestamp > 6e4) {
+      lastErrorLogTimestamp = now;
+      console.warn(
+        `\u26A0\uFE0F  [VRAM Monitor] N\xE3o foi poss\xEDvel consultar /api/ps do Ollama:`,
+        error instanceof Error ? error.message : error
+      );
+    }
+    return null;
+  }
+}
+async function sampleAndRecordVram() {
+  const vramData = await queryOllamaVram();
+  if (!vramData)
+    return latestSample;
+  const queueStatus = ollamaSemaphore.getStatus();
+  const sample = {
+    timestamp: /* @__PURE__ */ new Date(),
+    vramUsedMb: vramData.vramUsedMb,
+    modelTotalMb: vramData.modelTotalMb,
+    cpuSpillMb: vramData.cpuSpillMb,
+    models: vramData.models,
+    queueActive: queueStatus.active,
+    queueWaiting: queueStatus.waiting,
+    queueMax: queueStatus.maxConcurrent
+  };
+  latestSample = sample;
+  pool.query(
+    `INSERT INTO gpu_vram_samples
+        (sampled_at, vram_used_mb, model_total_mb, cpu_spill_mb, models, queue_active, queue_waiting, queue_max)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [
+      sample.timestamp,
+      sample.vramUsedMb,
+      sample.modelTotalMb,
+      sample.cpuSpillMb,
+      JSON.stringify(sample.models),
+      sample.queueActive,
+      sample.queueWaiting,
+      sample.queueMax
+    ]
+  ).catch((err) => {
+    console.error("\u274C [VRAM Monitor] Erro ao salvar amostra de VRAM:", err);
+  });
+  return sample;
+}
+function formatVramStatus(sample) {
+  const s = sample ?? latestSample;
+  if (!s) {
+    const q = ollamaSemaphore.getStatus();
+    return `\u{1F3AE} [VRAM] N/D | fila: ${q.active} ativa(s) / ${q.waiting} aguardando (max: ${q.maxConcurrent})`;
+  }
+  const vramGb = (s.vramUsedMb / 1024).toFixed(1);
+  const spillWarning = s.cpuSpillMb > 0 ? ` \u26A0\uFE0F [SPILL CPU: ${s.cpuSpillMb} MB]` : "";
+  return `\u{1F3AE} [VRAM] ${vramGb} GB em GPU | spill CPU: ${s.cpuSpillMb} MB${spillWarning} | fila: ${s.queueActive} ativa(s) / ${s.queueWaiting} aguardando (max: ${s.queueMax})`;
+}
+async function cleanOldVramSamples() {
+  try {
+    const res = await pool.query(
+      `DELETE FROM gpu_vram_samples WHERE sampled_at < NOW() - ($1 || ' days')::INTERVAL`,
+      [RETENTION_DAYS]
+    );
+    if ((res.rowCount ?? 0) > 0) {
+      console.log(`\u{1F9F9} [VRAM Monitor] Limpeza: ${res.rowCount} amostras antigas removidas (> ${RETENTION_DAYS} dias).`);
+    }
+  } catch (err) {
+    console.error("\u274C [VRAM Monitor] Erro ao limpar amostras antigas:", err);
+  }
+}
+function startVramSampler() {
+  if (SAMPLE_INTERVAL_MS <= 0) {
+    console.log("\u2139\uFE0F  [VRAM Monitor] Amostragem autom\xE1tica desativada (VRAM_SAMPLE_INTERVAL_MS <= 0).");
+    return;
+  }
+  console.log(`\u{1F3AE} [VRAM Monitor] Iniciando monitoramento a cada ${SAMPLE_INTERVAL_MS}ms (Ollama: ${OLLAMA_BASE_URL2})`);
+  sampleAndRecordVram();
+  samplerIntervalTimer = setInterval(() => {
+    sampleAndRecordVram();
+  }, SAMPLE_INTERVAL_MS);
+  cleanupIntervalTimer = setInterval(() => {
+    cleanOldVramSamples();
+  }, 24 * 60 * 60 * 1e3);
+}
+function stopVramSampler() {
+  if (samplerIntervalTimer) {
+    clearInterval(samplerIntervalTimer);
+    samplerIntervalTimer = null;
+  }
+  if (cleanupIntervalTimer) {
+    clearInterval(cleanupIntervalTimer);
+    cleanupIntervalTimer = null;
+  }
+}
 
 // src/services/rag.service.ts
 var REWRITE_SYSTEM_PROMPT = `Voc\xEA \xE9 um assistente de pr\xE9-processamento de consultas para um sistema de busca de documentos acad\xEAmicos do IFMG (Instituto Federal de Gerais), Campus Ouro Branco.
@@ -2167,7 +2465,8 @@ REGRAS:
 3. Transforme linguagem coloquial em linguagem formal/acad\xEAmica.
 4. Adicione contexto impl\xEDcito quando cab\xEDvel (ex: "reprovar" \u2192 "crit\xE9rios de reprova\xE7\xE3o").
 5. Mantenha o sentido original da pergunta.
-6. Responda APENAS com a Tag de Inten\xE7\xE3o seguida da pergunta reescrita, sem aspas. Exemplo: "[DISCIPLINA] qual \xE9 a carga hor\xE1ria de c\xE1lculo 1?"`;
+6. Se houver hist\xF3rico de di\xE1logo anterior fornecido e a pergunta contiver termos anaf\xF3ricos ou refer\xEAncias dependentes (ex: "desse prazo", "dele", "nessa disciplina", "o que acontece se passar"), resolva a refer\xEAncia substituindo pelo tema correspondente citado anteriormente.
+7. Responda APENAS com a Tag de Inten\xE7\xE3o seguida da pergunta reescrita, sem aspas. Exemplo: "[DISCIPLINA] qual \xE9 a carga hor\xE1ria de c\xE1lculo 1?"`;
 function inferIntentionFromKeywords(text) {
   const t = text.toLowerCase();
   if (/(?:disciplinas?|mat[eé]rias?|grade)\s+(?:do|da|no|na|de)?\s*(?:\d+[oaºª]?\s*)?per[íi]odo/i.test(text))
@@ -2192,12 +2491,27 @@ function inferIntentionFromKeywords(text) {
     return "AVALIACAO_FREQUENCIA";
   return "OUTRAS";
 }
-async function rewriteQuestion(question) {
+async function rewriteQuestion(question, sessionHistory) {
   try {
     console.log(`\u270D\uFE0F  [Reescrita] Original: "${question}"`);
-    const rewritten = await rewriteWithLLM(REWRITE_SYSTEM_PROMPT, question);
+    let inputToRewrite = question;
+    if (sessionHistory && sessionHistory.length > 0) {
+      const recent = sessionHistory.slice(-4).map((m) => {
+        const sender = m.role === "assistant" ? "Assistente" : "Aluno";
+        const contentSnippet = m.content.length > 200 ? m.content.substring(0, 200) + "..." : m.content;
+        return `${sender}: ${contentSnippet}`;
+      }).join("\n");
+      if (recent.trim()) {
+        inputToRewrite = `Contexto do di\xE1logo anterior:
+${recent}
+
+Pergunta atual a ser reescrita e contextualizada:
+${question}`;
+      }
+    }
+    const rewritten = await rewriteWithLLM(REWRITE_SYSTEM_PROMPT, inputToRewrite);
     if (!rewritten || rewritten.length > 1e3) {
-      console.log(`\u270D\uFE0F  [Reescrita] Resultado inv\xE1lido, usando original.`);
+      console.log(`\u270D\uFE0F  [Reescrita] Resultado inv\xE1lido (retorno vazio ou > 1000 chars), usando original.`);
       return { intention: inferIntentionFromKeywords(question), rewrittenQuestion: question };
     }
     const match = rewritten.trim().match(/^\[(.*?)\]\s*(.*)/);
@@ -2483,13 +2797,14 @@ ${"\u2500".repeat(50)}`);
     console.log(`\u{1F9E0} [RAG] Sess\xE3o: ${sessionId.substring(0, 8)}...`);
   if (participantId)
     console.log(`\u{1F464} [RAG] Participante: ${participantId.substring(0, 8)}...`);
+  console.log(formatVramStatus());
   console.log(`${"\u2500".repeat(50)}`);
   if (sessionId && isSessionExpired(sessionId)) {
     console.log(`\u23F0 [RAG] Sess\xE3o expirada: ${sessionId.substring(0, 8)}...`);
-    res.write(`data: ${JSON.stringify({ type: "session_expired" })}
+    safeWrite(res, `data: ${JSON.stringify({ type: "session_expired" })}
 
 `);
-    res.write(`data: [DONE]
+    safeWrite(res, `data: [DONE]
 
 `);
     return;
@@ -2497,7 +2812,7 @@ ${"\u2500".repeat(50)}`);
   const session = sessionId ? getOrCreateSession(sessionId, participantId) : null;
   const effectiveParticipantId = participantId ?? session?.participantId;
   const contextualizedQuestion = session ? resolveReferences(question, session) : question;
-  res.write(`data: ${JSON.stringify({ type: "status", status: "Analisando pergunta..." })}
+  safeWrite(res, `data: ${JSON.stringify({ type: "status", status: "Analisando pergunta..." })}
 
 `);
   const start = Date.now();
@@ -2532,18 +2847,18 @@ ${"\u2500".repeat(50)}`);
     return;
   }
   const t0 = Date.now();
-  const { intention, rewrittenQuestion } = await rewriteQuestion(contextualizedQuestion);
+  const { intention, rewrittenQuestion } = await rewriteQuestion(contextualizedQuestion, session?.messages);
   const rewriteMs = Date.now() - t0;
   if (intention === "GREETING") {
     console.log(`\u{1F680} [RAG] Fast-path ativado: reescrevedor classificou como GREETING.`);
-    res.write(`data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}
+    safeWrite(res, `data: ${JSON.stringify({ type: "status", status: "Preparando resposta..." })}
 
 `);
     const t32 = Date.now();
     await streamStaticGreeting(res);
     const generationMs2 = Date.now() - t32;
     const totalMs2 = Date.now() - start;
-    res.write(`data: ${JSON.stringify({ type: "metrics", timings: { rewrite: rewriteMs, embedding: 0, retrieval: 0, generation: generationMs2, total: totalMs2 } })}
+    safeWrite(res, `data: ${JSON.stringify({ type: "metrics", timings: { rewrite: rewriteMs, embedding: 0, retrieval: 0, generation: generationMs2, total: totalMs2 } })}
 
 `);
     if (session) {
@@ -2564,7 +2879,7 @@ ${"\u2500".repeat(50)}`);
 `);
     return;
   }
-  res.write(`data: ${JSON.stringify({ type: "status", status: "Buscando nos documentos..." })}
+  safeWrite(res, `data: ${JSON.stringify({ type: "status", status: "Buscando nos documentos..." })}
 
 `);
   const t1 = Date.now();
@@ -2603,7 +2918,7 @@ ${"\u2500".repeat(50)}`);
     generation: generationMs,
     total: totalMs
   };
-  res.write(`data: ${JSON.stringify({ type: "metrics", timings })}
+  safeWrite(res, `data: ${JSON.stringify({ type: "metrics", timings })}
 
 `);
   if (session) {
@@ -2629,87 +2944,16 @@ ${"\u2500".repeat(50)}`);
     },
     totalDurationMs: totalMs
   }).catch((err) => console.error("Erro ao registrar log RAG:", err));
+  console.log(formatVramStatus());
   console.log(
     `\u23F1\uFE0F  [RAG] Pipeline conclu\xEDdo em ${(totalMs / 1e3).toFixed(1)}s (rewrite: ${rewriteMs}ms, embed: ${embedMs}ms, retrieval: ${retrievalMs}ms, gen: ${generationMs}ms)
 `
   );
 }
 
-// src/services/queue.service.ts
-var MAX_CONCURRENT = Number(process.env.OLLAMA_MAX_CONCURRENT) || 2;
-var QUEUE_TIMEOUT_MS = 12e5;
-var OllamaSemaphore = class {
-  constructor(maxConcurrent) {
-    this.maxConcurrent = maxConcurrent;
-  }
-  currentCount = 0;
-  waitQueue = [];
-  /**
-   * Aguarda até que um slot esteja disponível.
-   * @throws Error se o timeout for atingido
-   */
-  async acquire() {
-    if (this.currentCount < this.maxConcurrent) {
-      this.currentCount++;
-      return;
-    }
-    return new Promise((resolve3, reject) => {
-      const timer = setTimeout(() => {
-        const idx = this.waitQueue.findIndex((w) => w.resolve === resolve3);
-        if (idx !== -1)
-          this.waitQueue.splice(idx, 1);
-        reject(new Error("Tempo de espera na fila esgotado. Tente novamente."));
-      }, QUEUE_TIMEOUT_MS);
-      this.waitQueue.push({ resolve: resolve3, timer });
-    });
-  }
-  /** Libera um slot, desbloqueando o próximo request na fila. */
-  release() {
-    if (this.waitQueue.length > 0) {
-      const next = this.waitQueue.shift();
-      clearTimeout(next.timer);
-      next.resolve();
-    } else {
-      this.currentCount = Math.max(0, this.currentCount - 1);
-    }
-  }
-  /** Retorna métricas da fila para observabilidade. */
-  getStatus() {
-    return {
-      active: this.currentCount,
-      waiting: this.waitQueue.length,
-      maxConcurrent: this.maxConcurrent
-    };
-  }
-};
-var ollamaSemaphore = new OllamaSemaphore(MAX_CONCURRENT);
-async function withConcurrencyControl(fn) {
-  const enqueuedAt = Date.now();
-  const { active, waiting } = ollamaSemaphore.getStatus();
-  await ollamaSemaphore.acquire();
-  const acquiredAt = Date.now();
-  try {
-    return await runWithRequestMetrics(
-      {
-        enqueuedAt,
-        acquiredAt,
-        queueWaitMs: acquiredAt - enqueuedAt,
-        activeOnEnqueue: active,
-        waitingOnEnqueue: waiting,
-        llmCalls: [],
-        toolMs: 0,
-        toolInvocations: 0,
-        fallback: false
-      },
-      fn
-    );
-  } finally {
-    ollamaSemaphore.release();
-  }
-}
-
 // src/controllers/chat.controller.ts
 async function sendQuestion(req, res) {
+  let heartbeatTimer = null;
   try {
     const { question, sessionId, participantId } = req.body;
     if (!question || typeof question !== "string") {
@@ -2738,28 +2982,76 @@ async function sendQuestion(req, res) {
       "X-Accel-Buffering": "no"
       // Desabilita buffering em proxies nginx
     });
-    req.on("close", () => {
-      console.log("\u{1F50C} [SSE] Cliente desconectou durante o stream");
+    heartbeatTimer = setInterval(() => {
+      safeWrite(res, ": ping\n\n");
+    }, 1e4);
+    res.on("close", () => {
+      if (heartbeatTimer)
+        clearInterval(heartbeatTimer);
+      if (!res.writableEnded) {
+        console.log("\u{1F50C} [SSE] Cliente desconectou durante o stream");
+        markClientDisconnected();
+      }
     });
     await withConcurrencyControl(async () => {
       await processQuestionStream(questionTrimmed, res, sessionId, participantId);
     });
-    res.end();
+    if (heartbeatTimer)
+      clearInterval(heartbeatTimer);
+    if (!res.writableEnded) {
+      res.end();
+    }
   } catch (error) {
+    if (heartbeatTimer)
+      clearInterval(heartbeatTimer);
     console.error("[ChatController] Erro ao processar pergunta:", error);
     if (res.headersSent) {
       const errorMessage = error instanceof Error && error.message.includes("Ollama") ? "O servidor de IA ficou inacess\xEDvel durante a gera\xE7\xE3o. Tente novamente." : "Ocorreu um erro durante a gera\xE7\xE3o da resposta.";
-      res.write(
+      safeWrite(
+        res,
         `data: ${JSON.stringify({ type: "error", message: errorMessage })}
 
 `
       );
-      res.end();
+      if (!res.writableEnded) {
+        res.end();
+      }
     } else {
       res.status(500).json({
         error: "Ocorreu um erro interno ao processar sua pergunta. Tente novamente mais tarde."
       });
     }
+  }
+}
+async function getLastSessionInteraction(req, res) {
+  try {
+    const sessionId = req.query.sessionId;
+    if (!sessionId || typeof sessionId !== "string") {
+      res.status(400).json({ error: "O par\xE2metro 'sessionId' \xE9 obrigat\xF3rio." });
+      return;
+    }
+    const last = await getLastInteractionBySession(sessionId);
+    if (!last) {
+      res.status(404).json({ error: "Nenhuma intera\xE7\xE3o registrada para esta sess\xE3o." });
+      return;
+    }
+    const ageMs = Date.now() - new Date(last.created_at).getTime();
+    if (ageMs > 5 * 60 * 1e3) {
+      res.status(410).json({ error: "A \xFAltima intera\xE7\xE3o expirou (> 5 minutos)." });
+      return;
+    }
+    res.json({
+      id: last.id,
+      sessionId: last.session_id,
+      mode: last.mode,
+      question: last.question,
+      response: last.response,
+      sources: last.sources,
+      createdAt: last.created_at
+    });
+  } catch (error) {
+    console.error("[ChatController] Erro ao recuperar \xFAltima intera\xE7\xE3o:", error);
+    res.status(500).json({ error: "Erro interno ao buscar \xFAltima intera\xE7\xE3o." });
   }
 }
 async function registerFeedback(req, res) {
@@ -2812,9 +3104,31 @@ async function registerFeedback(req, res) {
   }
 }
 
+// src/middlewares/rateLimiter.ts
+import rateLimit from "express-rate-limit";
+var chatLimiter = rateLimit({
+  windowMs: 60 * 1e3,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: "Muitas requisi\xE7\xF5es. Aguarde um momento e tente novamente."
+  }
+});
+var uploadLimiter = rateLimit({
+  windowMs: 60 * 1e3,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: "Limite de uploads atingido. Tente novamente em 1 minuto."
+  }
+});
+
 // src/routes/chat.routes.ts
 var chatRouter = Router();
 chatRouter.post("/", sendQuestion);
+chatRouter.get("/last", chatLimiter, getLastSessionInteraction);
 chatRouter.post("/feedback", registerFeedback);
 
 // src/routes/embedding.routes.ts
@@ -28237,7 +28551,7 @@ import { Client as Client2 } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { fileURLToPath } from "url";
 import { dirname, resolve as resolve2 } from "path";
-var OLLAMA_BASE_URL2 = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
+var OLLAMA_BASE_URL3 = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
 var LLM_MODEL2 = process.env.OLLAMA_LLM_MODEL || "qwen3.5:4b";
 var NUM_CTX2 = Number(process.env.OLLAMA_NUM_CTX) || 10240;
 var FETCH_TIMEOUT_MS2 = 6e5;
@@ -28359,13 +28673,14 @@ ${"\u2500".repeat(50)}`);
     console.log(`\u{1F9E0} [Agente] Sess\xE3o: ${sessionId.substring(0, 8)}...`);
   if (participantId)
     console.log(`\u{1F464} [Agente] Participante: ${participantId.substring(0, 8)}...`);
+  console.log(formatVramStatus());
   console.log(`${"\u2500".repeat(50)}`);
   if (sessionId && isSessionExpired(sessionId)) {
     console.log(`\u23F0 [Agente] Sess\xE3o expirada: ${sessionId.substring(0, 8)}...`);
-    res.write(`data: ${JSON.stringify({ type: "session_expired" })}
+    safeWrite(res, `data: ${JSON.stringify({ type: "session_expired" })}
 
 `);
-    res.write(`data: [DONE]
+    safeWrite(res, `data: [DONE]
 
 `);
     return;
@@ -28415,7 +28730,7 @@ ${"\u2500".repeat(50)}`);
 
 `);
   const step1Start = Date.now();
-  const firstResponse = await fetch(`${OLLAMA_BASE_URL2}/api/chat`, {
+  const firstResponse = await fetch(`${OLLAMA_BASE_URL3}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS2),
@@ -28608,7 +28923,7 @@ ${"\u2500".repeat(50)}`);
       step3FirstTokenAt = Date.now();
     markFirstToken();
   };
-  const streamResponse = await fetch(`${OLLAMA_BASE_URL2}/api/chat`, {
+  const streamResponse = await fetch(`${OLLAMA_BASE_URL3}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS2),
@@ -28760,6 +29075,7 @@ ${"\u2500".repeat(50)}`);
     response: fullText,
     totalDurationMs: totalMs
   }).catch((err) => console.error("Erro ao registrar log Agente:", err));
+  console.log(formatVramStatus());
   console.log(`\u23F1\uFE0F  [Agente] Pipeline streaming conclu\xEDdo em ${duration2}s
 `);
 }
@@ -28793,23 +29109,36 @@ async function sendAgentQuestion(req, res) {
       Connection: "keep-alive",
       "X-Accel-Buffering": "no"
     });
-    req.on("close", () => {
-      console.log("\u{1F50C} [SSE Agent] Cliente desconectou");
+    const heartbeatTimer = setInterval(() => {
+      safeWrite(res, ": ping\n\n");
+    }, 1e4);
+    res.on("close", () => {
+      clearInterval(heartbeatTimer);
+      if (!res.writableEnded) {
+        console.log("\u{1F50C} [SSE Agent] Cliente desconectou durante o stream");
+        markClientDisconnected();
+      }
     });
     await withConcurrencyControl(async () => {
       await processAgentQuestion(questionTrimmed, res, sessionId, participantId);
     });
-    res.end();
+    clearInterval(heartbeatTimer);
+    if (!res.writableEnded) {
+      res.end();
+    }
   } catch (error) {
     console.error("[AgentController] Erro:", error);
     if (res.headersSent) {
       const errorMessage = error instanceof Error && error.message.includes("Ollama") ? "O servidor de IA ficou inacess\xEDvel. Tente novamente." : "Ocorreu um erro durante a gera\xE7\xE3o da resposta.";
-      res.write(
+      safeWrite(
+        res,
         `data: ${JSON.stringify({ type: "error", message: errorMessage })}
 
 `
       );
-      res.end();
+      if (!res.writableEnded) {
+        res.end();
+      }
     } else {
       res.status(500).json({
         error: "Erro interno ao processar sua pergunta."
@@ -28826,7 +29155,7 @@ agentRouter.post("/", sendAgentQuestion);
 import { Router as Router4 } from "express";
 
 // src/services/mcp_agent_beta.service.ts
-var OLLAMA_BASE_URL3 = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
+var OLLAMA_BASE_URL4 = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
 var LLM_MODEL3 = process.env.OLLAMA_LLM_MODEL || "qwen3.5:4b";
 var NUM_CTX3 = Number(process.env.OLLAMA_NUM_CTX) || 10240;
 var FETCH_TIMEOUT_MS3 = 6e5;
@@ -28897,12 +29226,14 @@ ${"\u2500".repeat(50)}`);
     console.log(`\u{1F9E0} [Agente Beta] Sess\xE3o: ${sessionId.substring(0, 8)}...`);
   if (participantId)
     console.log(`\u{1F464} [Agente Beta] Participante: ${participantId.substring(0, 8)}...`);
+  console.log(formatVramStatus());
+  console.log(`${"\u2500".repeat(50)}`);
   if (sessionId && isSessionExpired(sessionId)) {
     console.log(`\u23F0 [Agente Beta] Sess\xE3o expirada: ${sessionId.substring(0, 8)}...`);
-    res.write(`data: ${JSON.stringify({ type: "session_expired" })}
+    safeWrite(res, `data: ${JSON.stringify({ type: "session_expired" })}
 
 `);
-    res.write(`data: [DONE]
+    safeWrite(res, `data: [DONE]
 
 `);
     return;
@@ -28957,7 +29288,7 @@ ${"\u2500".repeat(50)}`);
 
 `);
   const step1Start = Date.now();
-  const firstResponse = await fetch(`${OLLAMA_BASE_URL3}/api/chat`, {
+  const firstResponse = await fetch(`${OLLAMA_BASE_URL4}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS3),
@@ -29138,7 +29469,7 @@ Sua resposta deve basear-se ESTRITAMENTE nos trechos de documentos retornados pe
       step3FirstTokenAt = Date.now();
     markFirstToken();
   };
-  const streamResponse = await fetch(`${OLLAMA_BASE_URL3}/api/chat`, {
+  const streamResponse = await fetch(`${OLLAMA_BASE_URL4}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS3),
@@ -29289,12 +29620,14 @@ Sua resposta deve basear-se ESTRITAMENTE nos trechos de documentos retornados pe
     response: fullText,
     totalDurationMs: totalMs
   }).catch((err) => console.error("Erro ao registrar log Agente Beta:", err));
+  console.log(formatVramStatus());
   console.log(`\u23F1\uFE0F  [Agente Beta] Pipeline conclu\xEDdo com sucesso em ${duration2}s
 `);
 }
 
 // src/controllers/agent_beta.controller.ts
 async function sendAgentBetaQuestion(req, res) {
+  let heartbeatTimer = null;
   try {
     const { question, sessionId, participantId } = req.body;
     if (!question || typeof question !== "string") {
@@ -29322,23 +29655,40 @@ async function sendAgentBetaQuestion(req, res) {
       Connection: "keep-alive",
       "X-Accel-Buffering": "no"
     });
-    req.on("close", () => {
-      console.log("\u{1F50C} [SSE Agent Beta] Cliente desconectou");
+    heartbeatTimer = setInterval(() => {
+      safeWrite(res, ": ping\n\n");
+    }, 1e4);
+    res.on("close", () => {
+      if (heartbeatTimer)
+        clearInterval(heartbeatTimer);
+      if (!res.writableEnded) {
+        console.log("\u{1F50C} [SSE Agent Beta] Cliente desconectou durante o stream");
+        markClientDisconnected();
+      }
     });
     await withConcurrencyControl(async () => {
       await processAgentBetaQuestionStream(questionTrimmed, res, sessionId, participantId);
     });
-    res.end();
+    if (heartbeatTimer)
+      clearInterval(heartbeatTimer);
+    if (!res.writableEnded) {
+      res.end();
+    }
   } catch (error) {
+    if (heartbeatTimer)
+      clearInterval(heartbeatTimer);
     console.error("[AgentBetaController] Erro:", error);
     if (res.headersSent) {
       const errorMessage = error instanceof Error && error.message.includes("Ollama") ? "O servidor de IA ficou inacess\xEDvel. Tente novamente." : "Ocorreu um erro durante o processamento no Agente Beta.";
-      res.write(
+      safeWrite(
+        res,
         `data: ${JSON.stringify({ type: "error", message: errorMessage })}
 
 `
       );
-      res.end();
+      if (!res.writableEnded) {
+        res.end();
+      }
     } else {
       res.status(500).json({
         error: "Erro interno ao processar sua pergunta no modo Beta."
@@ -29547,27 +29897,6 @@ async function registerParticipant(req, res) {
 var participantRouter = Router6();
 participantRouter.post("/", registerParticipant);
 
-// src/middlewares/rateLimiter.ts
-import rateLimit from "express-rate-limit";
-var chatLimiter = rateLimit({
-  windowMs: 60 * 1e3,
-  max: 20,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: {
-    error: "Muitas requisi\xE7\xF5es. Aguarde um momento e tente novamente."
-  }
-});
-var uploadLimiter = rateLimit({
-  windowMs: 60 * 1e3,
-  max: 5,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: {
-    error: "Limite de uploads atingido. Tente novamente em 1 minuto."
-  }
-});
-
 // src/middlewares/adminAuth.ts
 function adminAuth(req, res, next) {
   if (req.method === "GET") {
@@ -29663,7 +29992,9 @@ var server = app.listen(PORT, async () => {
   await verifyFeedbacksTable();
   await verifyParticipantsTable();
   await verifyInteractionsTable();
+  await verifyVramSamplesTable();
   await checkOllama();
+  startVramSampler();
   try {
     await initializeMCPClient();
   } catch (error) {
@@ -29684,11 +30015,13 @@ server.on("error", (err) => {
   throw err;
 });
 process.on("SIGINT", async () => {
+  stopVramSampler();
   clearAllSessions();
   await closeMCPClient();
   process.exit(0);
 });
 process.on("SIGTERM", async () => {
+  stopVramSampler();
   clearAllSessions();
   await closeMCPClient();
   process.exit(0);

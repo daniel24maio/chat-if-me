@@ -718,6 +718,40 @@
   outline-offset: 2px;
 }
 
+/* ── Botão de Retry / Tentar Novamente em falhas ── */
+.retry-action-container {
+  margin-top: 0.65rem;
+  display: flex;
+  align-items: center;
+}
+
+.retry-btn {
+  background-color: var(--primary-light);
+  border: 1px solid var(--primary-border);
+  color: var(--ifmg-verde);
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.35rem 0.8rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  transition: all var(--transition-fast);
+}
+
+.retry-btn:hover:not(:disabled) {
+  background-color: var(--ifmg-verde);
+  color: #ffffff;
+  transform: translateY(-1px);
+}
+
+.retry-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .message-fontes-inline {
   display: flex;
   flex-wrap: wrap;

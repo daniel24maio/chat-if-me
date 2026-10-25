@@ -38,6 +38,10 @@ interface Message {
   feedback?: 'up' | 'down';
   /** Modo em que a mensagem foi gerada */
   mode?: 'rag' | 'agent';
+  /** Indica se a mensagem foi interrompida antes do término */
+  isInterrupted?: boolean;
+  /** Pergunta que gerou a mensagem (usada para tentar novamente) */
+  failedQuestion?: string;
 }
 
 interface ChatInterfaceProps {
@@ -153,6 +157,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ isBeta = false }) => {
 
       const decoder = new TextDecoder();
       let buffer = '';
+      let receivedTokens = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -167,6 +172,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ isBeta = false }) => {
         for (const line of lines) {
           const trimmed = line.trim();
 
+          // Ignora comentários SSE (ex: ": ping" de heartbeat)
+          if (trimmed.startsWith(':')) continue;
+
           // Linhas SSE começam com "data: "
           if (!trimmed.startsWith('data: ')) continue;
 
@@ -176,7 +184,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ isBeta = false }) => {
           if (payload === '[DONE]') {
             setMessages((prev) =>
               prev.map((m) =>
-                m.id === aiMessageId ? { ...m, isStreaming: false } : m
+                m.id === aiMessageId ? { ...m, isStreaming: false, isInterrupted: false } : m
               )
             );
             setIsStreaming(false);
@@ -199,6 +207,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ isBeta = false }) => {
                // Atualiza a mensagem de status exibida no frontend
                setStatusMessage(event.status);
              } else if (event.type === 'token' && event.content) {
+              receivedTokens = true;
               // Acumula token no texto da mensagem (atualização progressiva)
               setMessages((prev) =>
                 prev.map((m) =>
@@ -224,6 +233,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ isBeta = false }) => {
                         ...m,
                         text: `⚠️ ${event.message || 'Erro durante a geração.'}`,
                         isStreaming: false,
+                        isInterrupted: true,
+                        failedQuestion: question,
                       }
                     : m
                 )
@@ -242,12 +253,66 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ isBeta = false }) => {
         }
       }
 
-      // Se o stream terminou sem [DONE] (conexão cortada)
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === aiMessageId ? { ...m, isStreaming: false } : m
-        )
-      );
+      // Se o stream terminou sem [DONE] (conexão cortada pelo servidor ou rede)
+      if (receivedTokens) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === aiMessageId
+              ? {
+                  ...m,
+                  text: m.text + '\n\n⚠️ *[Conexão finalizada antes da conclusão]*',
+                  isStreaming: false,
+                  isInterrupted: true,
+                  failedQuestion: question,
+                }
+              : m
+          )
+        );
+      } else {
+        // Tenta auto-recuperação da interação concluída no backend
+        let recovered = false;
+        try {
+          const recRes = await fetch(`${API_URL}/api/chat/last?sessionId=${sessionId}`);
+          if (recRes.ok) {
+            const lastData = await recRes.json();
+            if (lastData && lastData.question === question && lastData.response) {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === aiMessageId
+                    ? {
+                        ...m,
+                        text: lastData.response,
+                        sources: lastData.sources || [],
+                        isStreaming: false,
+                        isInterrupted: false,
+                      }
+                    : m
+                )
+              );
+              setCompletedExchanges((prev) => prev + 1);
+              recovered = true;
+            }
+          }
+        } catch {
+          // Fallback normal
+        }
+
+        if (!recovered) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === aiMessageId
+                ? {
+                    ...m,
+                    text: '⚠️ A conexão com o servidor foi interrompida antes de receber a resposta.',
+                    isStreaming: false,
+                    isInterrupted: true,
+                    failedQuestion: question,
+                  }
+                : m
+            )
+          );
+        }
+      }
       setIsStreaming(false);
     } catch (error) {
       // Tratamento de erros de rede / abort
@@ -257,19 +322,80 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ isBeta = false }) => {
       }
 
       console.error('[Stream] Erro:', error);
-      setMessages((prev) =>
-        prev.map((m) =>
+
+      // 1. Se já havia tokens recebidos, NUNCA apague o texto gerado!
+      setMessages((prev) => {
+        const targetMsg = prev.find((m) => m.id === aiMessageId);
+        const hasText = targetMsg && targetMsg.text.trim().length > 0;
+
+        if (hasText) {
+          return prev.map((m) =>
+            m.id === aiMessageId
+              ? {
+                  ...m,
+                  text: m.text + '\n\n⚠️ *[Conexão interrompida. A resposta acima pode estar incompleta]*',
+                  isStreaming: false,
+                  isInterrupted: true,
+                  failedQuestion: question,
+                }
+              : m
+          );
+        }
+
+        // 2. Se não recebeu nenhum texto, tenta auto-recuperar da API caso ela tenha concluído
+        return prev;
+      });
+
+      // Tenta recuperação em background se a mensagem estava vazia
+      try {
+        const recRes = await fetch(`${API_URL}/api/chat/last?sessionId=${sessionId}`);
+        if (recRes.ok) {
+          const lastData = await recRes.json();
+          if (lastData && lastData.question === question && lastData.response) {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === aiMessageId
+                  ? {
+                      ...m,
+                      text: lastData.response,
+                      sources: lastData.sources || [],
+                      isStreaming: false,
+                      isInterrupted: false,
+                    }
+                  : m
+              )
+            );
+            setCompletedExchanges((prev) => prev + 1);
+            setIsStreaming(false);
+            return;
+          }
+        }
+      } catch {
+        // Ignora erro de rede na tentativa de recuperação
+      }
+
+      // 3. Fallback com mensagem contextualizada
+      setMessages((prev) => {
+        const targetMsg = prev.find((m) => m.id === aiMessageId);
+        if (targetMsg && targetMsg.text.trim().length > 0) {
+          return prev;
+        }
+
+        const isTimeout = error instanceof Error && error.message.includes('timeout');
+        return prev.map((m) =>
           m.id === aiMessageId
             ? {
                 ...m,
-                text: error instanceof Error && error.message.includes('timeout') 
+                text: isTimeout
                   ? '⚠️ O servidor demorou muito para responder (timeout). Tente novamente.'
-                  : '⚠️ Não foi possível conectar ao servidor. Verifique se a API está rodando.',
+                  : '⚠️ Conexão interrompida com o servidor. Verifique sua conexão e tente novamente.',
                 isStreaming: false,
+                isInterrupted: true,
+                failedQuestion: question,
               }
             : m
-        )
-      );
+        );
+      });
       setIsStreaming(false);
     } finally {
       abortControllerRef.current = null;
@@ -316,6 +442,31 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ isBeta = false }) => {
 
     // 3. Inicia o stream
     processStream(currentInput, aiMsgId);
+  };
+
+  /**
+   * Reenvia uma pergunta que sofreu interrupção de conexão ou erro.
+   */
+  const handleRetry = (questionToRetry: string) => {
+    if (isStreaming || isExpired || !isProfileSelected) return;
+
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    const aiMsgId = Date.now().toString();
+    const aiPlaceholder: Message = {
+      id: aiMsgId,
+      text: '',
+      sender: 'ai',
+      timestamp: new Date(),
+      isStreaming: true,
+      mode: useAgent ? 'agent' : 'rag',
+    };
+
+    setMessages((prev) => [...prev, aiPlaceholder]);
+    setIsStreaming(true);
+    processStream(questionToRetry, aiMsgId);
   };
 
   /**
@@ -528,6 +679,20 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ isBeta = false }) => {
                     {msg.sources.map((fonte, i) => (
                       <span key={i} className="fonte-tag">{fonte}</span>
                     ))}
+                  </div>
+                )}
+
+                {msg.isInterrupted && msg.failedQuestion && (
+                  <div className="retry-action-container">
+                    <button
+                      type="button"
+                      className="retry-btn"
+                      onClick={() => handleRetry(msg.failedQuestion!)}
+                      disabled={isStreaming}
+                      aria-label="Tentar novamente"
+                    >
+                      🔄 Tentar novamente
+                    </button>
                   </div>
                 )}
               </div>

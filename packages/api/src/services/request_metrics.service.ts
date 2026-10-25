@@ -59,6 +59,10 @@ export interface RequestMetrics {
   toolInvocations: number;
   /** O pipeline respondeu com mensagem de contingência (modelo não produziu resposta). */
   fallback: boolean;
+  /** Indica se o cliente desconectou prematuramente durante o stream SSE */
+  clientDisconnected?: boolean;
+  /** Instante da desconexão prematura do cliente */
+  disconnectedAt?: number;
 }
 
 const storage = new AsyncLocalStorage<RequestMetrics>();
@@ -71,6 +75,15 @@ export function runWithRequestMetrics<T>(ctx: RequestMetrics, fn: () => Promise<
 /** Retorna o contexto da requisição atual (ou undefined fora de uma requisição). */
 export function getRequestMetrics(): RequestMetrics | undefined {
   return storage.getStore();
+}
+
+/** Registra que o cliente encerrou a conexão prematuramente. */
+export function markClientDisconnected(): void {
+  const ctx = storage.getStore();
+  if (ctx) {
+    ctx.clientDisconnected = true;
+    ctx.disconnectedAt = Date.now();
+  }
 }
 
 /** Registra o instante do primeiro token enviado ao cliente (só a primeira chamada vale). */
