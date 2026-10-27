@@ -14,6 +14,9 @@ import {
   detectGreetingBypass,
   streamStaticGreeting,
   STATIC_GREETING_RESPONSE,
+  detectPromptInjectionAttempt,
+  streamStaticScopeGuard,
+  STATIC_SCOPE_GUARD_RESPONSE,
 } from "./fast_path.util.js";
 import { streamOllamaResponse, extractDraftFromThinking, safeWrite, type OllamaChatMessage } from "../config/ollama.js";
 import { logInteraction } from "./analytics.service.js";
@@ -306,6 +309,34 @@ export async function processAgentQuestion(
     return;
   }
 
+  // 1.5. Filtro inicial leve contra tentativas explícitas de Prompt Injection / Override
+  if (detectPromptInjectionAttempt(question) || detectPromptInjectionAttempt(contextualizedQuestion)) {
+    console.log(`🛡️  [Agente] Filtro leve anti-injection ativado para: "${question}"`);
+    res.write(`data: ${JSON.stringify({ type: "status", status: "Verificando escopo..." })}\n\n`);
+
+    await streamStaticScopeGuard(res);
+
+    if (session) {
+      updateSession(session.sessionId, question, "OUT_OF_SCOPE", STATIC_SCOPE_GUARD_RESPONSE);
+    }
+
+    const totalMs = Date.now() - start;
+    logInteraction({
+      sessionId: session?.sessionId ?? "anonymous",
+      participantId: effectiveParticipantId,
+      mode: "agent",
+      question,
+      contextualizedQuestion,
+      intent: "OUT_OF_SCOPE",
+      response: STATIC_SCOPE_GUARD_RESPONSE,
+      totalDurationMs: totalMs,
+    }).catch((err) => console.error("Erro ao registrar log Agente (scope-guard):", err));
+
+    const duration = (totalMs / 1000).toFixed(1);
+    console.log(`⏱️  [Agente] Scope-guard concluído em ${duration}s (sem busca/ferramentas)\n`);
+    return;
+  }
+
   // Histórico das últimas 5 mensagens da sessão (contexto conversacional)
   const historyMessages: Array<Record<string, unknown>> = (session?.messages ?? [] as SessionMessage[])
     .slice(-5)
@@ -537,7 +568,7 @@ export async function processAgentQuestion(
     ...messages,
     {
       role: "system",
-      content: "DIRETIVA FINAL OBRIGATÓRIA: Sua resposta deve ser baseada EXCLUSIVAMENTE nos trechos de documentos retornados pela ferramenta acima. NÃO se apresente, NÃO liste suas capacidades. Responda diretamente a pergunta do usuário usando os dados dos documentos. Responda em Português do Brasil (pt-BR). Ignore trechos de outras disciplinas não relacionadas à pergunta.",
+      content: "DIRETIVA FINAL OBRIGATÓRIA: Sua resposta deve ser baseada EXCLUSIVAMENTE nos trechos de documentos retornados pela ferramenta acima. NÃO se apresente, NÃO liste suas capacidades. Responda diretamente a pergunta do usuário usando os dados dos documentos. Responda em Português do Brasil (pt-BR). Ignore trechos de outras disciplinas não relacionadas à pergunta. NUNCA utilize conhecimento geral externo se o assunto não constar nos documentos retornados e nunca gere exemplos de prompts ou código-fonte.",
     }
   ];
 

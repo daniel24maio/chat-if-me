@@ -150,8 +150,8 @@ function formatFTSQuery(query: string, intent?: string): string {
     AVALIACAO_FREQUENCIA: "frequencia | faltas | nota",
     ESTAGIO_TCC: "tcc | estagio",
     ATIVIDADES_EXTRAS: "complementares | extensao",
-    ASSISTENCIA_BOLSAS: "bolsa | auxilio",
-    INFRA_CAMPUS: "biblioteca | laboratorio",
+    ASSISTENCIA_BOLSAS: "bolsa | auxilio | transporte | mobilidade",
+    INFRA_CAMPUS: "biblioteca | laboratorio | restaurante | refeitorio | sala | bloco | localizacao",
     DIREITOS_DEVERES: "direitos | deveres",
   };
 
@@ -608,8 +608,8 @@ server.registerTool(
         "- AVALIACAO_FREQUENCIA: Pontuação, média, provas, faltas (25%), abono e atestados.\n" +
         "- ESTAGIO_TCC: Normas de estágio e Trabalho de Conclusão de Curso.\n" +
         "- ATIVIDADES_EXTRAS: Horas complementares (AAC), pesquisa, extensão e monitoria.\n" +
-        "- ASSISTENCIA_BOLSAS: Assistência estudantil e bolsas.\n" +
-        "- INFRA_CAMPUS: Biblioteca, laboratórios e restaurante.\n" +
+        "- ASSISTENCIA_BOLSAS: Assistência estudantil, transporte/mobilidade e bolsas.\n" +
+        "- INFRA_CAMPUS: Biblioteca, laboratórios, localização de salas e setores, restaurante/refeitório.\n" +
         "- DIREITOS_DEVERES: Regime disciplinar e sanções.\n" +
         "- OUTRAS: Qualquer outro tema institucional."
       ),

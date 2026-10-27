@@ -79,18 +79,25 @@ export interface OllamaChatMessage {
  * asfixiada com histórico irrelevante, mantendo SEMPRE o System Prompt intacto.
  */
 function pruneHistory(messages: OllamaChatMessage[], maxInteractions: number = 6): OllamaChatMessage[] {
-  // Se o array já for pequeno, não faz nada
-  if (messages.length <= maxInteractions + 1) return messages;
+  // Separa o system prompt inicial e eventual diretiva final (Sandwich Defense) do histórico conversacional
+  const firstSystem = messages[0]?.role === "system" ? messages[0] : undefined;
+  const lastMsg = messages[messages.length - 1];
+  const trailingSystem =
+    messages.length > 1 && lastMsg?.role === "system" ? lastMsg : undefined;
 
-  // Separa o system prompt (geralmente a primeira mensagem) do resto
-  const systemPrompt = messages.find(m => m.role === "system");
-  const otherMessages = messages.filter(m => m.role !== "system");
+  const conversationMessages = messages.filter((m) => m.role !== "system");
 
-  // Pega apenas as interações mais recentes
-  const recentMessages = otherMessages.slice(-maxInteractions);
+  if (conversationMessages.length <= maxInteractions) {
+    return messages;
+  }
 
-  // Remonta o array garantindo que o Agente não esqueça as suas regras vitais
-  return systemPrompt ? [systemPrompt, ...recentMessages] : recentMessages;
+  // Pega apenas as interações mais recentes preservando System Prompt inicial e diretiva final
+  const recentMessages = conversationMessages.slice(-maxInteractions);
+  const result: OllamaChatMessage[] = [];
+  if (firstSystem) result.push(firstSystem);
+  result.push(...recentMessages);
+  if (trailingSystem) result.push(trailingSystem);
+  return result;
 }
 
 // ---------------------------------------------------------------------------
