@@ -30,6 +30,7 @@ interface ProcessedDocument {
   filename: string;
   totalChunks: number;
   lastUpdated: string;
+  sourceUrl?: string;
 }
 
 /**
@@ -45,6 +46,7 @@ const EmbeddingPage: React.FC = () => {
   const [files, setFiles] = useState<FileItem[]>([]);
   const [documents, setDocuments] = useState<ProcessedDocument[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [sourceUrlInput, setSourceUrlInput] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Carrega documentos já processados ao montar o componente
@@ -109,7 +111,7 @@ const EmbeddingPage: React.FC = () => {
 
     // Inicia o upload de cada arquivo
     newFiles.forEach((item) => uploadFile(item));
-  }, []);
+  }, [sourceUrlInput]);
 
   /** Envia um arquivo para a API e acompanha o progresso */
   async function uploadFile(item: FileItem) {
@@ -118,6 +120,9 @@ const EmbeddingPage: React.FC = () => {
 
     const formData = new FormData();
     formData.append('file', item.file);
+    if (sourceUrlInput.trim()) {
+      formData.append('sourceUrl', sourceUrlInput.trim());
+    }
 
     try {
       updateFile(item.id, { status: 'processing', progress: 30 });
@@ -239,6 +244,19 @@ const EmbeddingPage: React.FC = () => {
         {/* Upload Zone */}
         <section className="upload-card">
           <h2>📄 Upload de Documentos</h2>
+          <div className="source-url-field">
+            <label htmlFor="source-url-input" className="source-url-label">
+              🔗 Link Oficial do Documento (opcional):
+            </label>
+            <input
+              id="source-url-input"
+              type="url"
+              value={sourceUrlInput}
+              onChange={(e) => setSourceUrlInput(e.target.value)}
+              placeholder="Ex: https://www.ourobranco.ifmg.edu.br/.../ppc-bsi.pdf"
+              className="source-url-input"
+            />
+          </div>
           <div
             className={`dropzone ${isDragOver ? 'drag-over' : ''}`}
             onDragOver={handleDragOver}
@@ -312,6 +330,17 @@ const EmbeddingPage: React.FC = () => {
                 <div className="doc-info">
                   <span className="doc-name">📄 {doc.filename}</span>
                   <span className="doc-chunks">{doc.totalChunks} chunks</span>
+                  {doc.sourceUrl && (
+                    <a
+                      href={doc.sourceUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="doc-link-badge"
+                      title={doc.sourceUrl}
+                    >
+                      🔗 Link oficial
+                    </a>
+                  )}
                 </div>
                 <button
                   className="delete-doc-btn"

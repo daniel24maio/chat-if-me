@@ -42,10 +42,17 @@ async function extractTextFromPDF(buffer: Buffer, filename: string): Promise<str
     const parser = new LiteParse();
     const result = await parser.parse(tempPath);
 
-    // Extrai o texto preservando a estrutura semântica/markdown gerada pela IA espacial
-    const finalText = result.text || JSON.stringify(result);
+    // Preserva a numeração de página retornada pelo LiteParse inserindo marcadores [[PAG_N]]
+    let finalText = "";
+    if (result.pages && Array.isArray(result.pages) && result.pages.length > 0) {
+      finalText = result.pages
+        .map((p) => `\n[[PAG_${p.pageNum}]]\n${p.text || ""}`)
+        .join("\n\n");
+    } else {
+      finalText = result.text || JSON.stringify(result);
+    }
 
-    console.log(`📄 [Extração] Concluído via LiteParse: ${finalText.length} caracteres extraídos de "${filename}"`);
+    console.log(`📄 [Extração] Concluído via LiteParse: ${finalText.length} caracteres extraídos de "${filename}" (${result.pages?.length ?? 0} páginas)`);
     return finalText;
   } catch (error) {
     console.error(`❌ [Extração] Erro no LiteParse ao processar "${filename}":`, error);
@@ -144,12 +151,62 @@ function generateDocumentName(filename: string): string {
     .trim();
 }
 
-function injectContext(text: string, documentName: string, sectionContext: string): string {
+function injectContext(
+  text: string,
+  documentName: string,
+  sectionContext: string,
+  pages?: string,
+  sourceUrl?: string
+): string {
   const parts = [`Documento: ${documentName}`];
+  if (pages) {
+    parts.push(`Página: ${pages}`);
+  }
   if (sectionContext) {
     parts.push(`Contexto: ${sectionContext}`);
   }
+  if (sourceUrl) {
+    parts.push(`Link: ${sourceUrl}`);
+  }
   return `[${parts.join(" | ")}]\n\n${text}`;
+}
+
+/**
+ * Extrai os marcadores de página [[PAG_N]] de um trecho, limpa o texto e
+ * retorna o intervalo de páginas (ex: "42" ou "42-43") e a última página vista.
+ */
+function extractPageInfoFromChunk(
+  rawPart: string,
+  lastKnownPage: string
+): { cleanText: string; pages: string; nextLastPage: string } {
+  const pageMatches = Array.from(rawPart.matchAll(/\[\[\s*PAG_(\d+)\s*\]\]/gi));
+  const pageNums = Array.from(
+    new Set(pageMatches.map((m) => Number(m[1])).filter((n) => !Number.isNaN(n) && n > 0))
+  ).sort((a, b) => a - b);
+
+  const cleanText = rawPart
+    .replace(/\[\[\s*PAG_\d+\s*\]\]/gi, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  if (pageNums.length > 0) {
+    const first = pageNums[0];
+    const last = pageNums[pageNums.length - 1];
+    const pages = first === last ? `${first}` : `${first}-${last}`;
+    return { cleanText, pages, nextLastPage: `${last}` };
+  }
+
+  return { cleanText, pages: lastKnownPage, nextLastPage: lastKnownPage };
+}
+
+/**
+ * Extrai a primeira URL válida presente no trecho como fallback quando nenhuma
+ * sourceUrl explícita foi informada no momento do upload.
+ */
+function extractUrlFromText(text: string): string | undefined {
+  const match = text.match(/https?:\/\/[^\s)\]>,"']+/i);
+  if (!match) return undefined;
+  return match[0].replace(/[.;,:!?]+$/, "");
 }
 
 type ChunkingType = "normative" | "syllabus" | "table" | "general";
@@ -188,9 +245,9 @@ function detectChunkingType(text: string, filename: string): ChunkingType {
 /**
  * Estratégia de Chunking para Ementários e Fichas de Disciplina.
  * Garante que Código + Nome + Carga Horária + Ementa + Objetivos + Bibliografia
- * permaneçam integrados no mesmo chunk semântico autônomo.
+ * permaneçam integrados no mesmo chunk semântico autônomo e preserva os blocos de Matriz/Período.
  */
-async function syllabusChunking(text: string, filename: string): Promise<ChunkData[]> {
+async function syllabusChunking(text: string, filename: string, sourceUrl?: string): Promise<ChunkData[]> {
   const documentName = generateDocumentName(filename);
   const chunks: ChunkData[] = [];
 
@@ -202,6 +259,7 @@ async function syllabusChunking(text: string, filename: string): Promise<ChunkDa
       "\nNome da disciplina:",
       "\nDISCIPLINAS OBRIGATÓRIAS",
       "\nDISCIPLINAS OPTATIVAS",
+      "\nMatriz Curricular",
       "\n1º Período",
       "\n2º Período",
       "\n3º Período",
@@ -223,39 +281,68 @@ async function syllabusChunking(text: string, filename: string): Promise<ChunkDa
   const parts = await splitter.splitText(text);
   let currentDiscipline = "";
   let currentPeriod = "";
+  let lastPage = "";
 
   for (const part of parts) {
-    const partTrimmed = part.trim();
+    const { cleanText: partTrimmed, pages, nextLastPage } = extractPageInfoFromChunk(part, lastPage);
+    lastPage = nextLastPage;
     if (partTrimmed.length === 0) continue;
 
-    // Detecta seção de período (ex: "1º Período", "2º Período")
-    const periodMatch = partTrimmed.match(/^(\d{1,2}[oOºª]?\s*Per[íi]odo)/im);
+    // Detecta seção de período no chunk (ex: "1º Período", "7º Período", "PERÍODO")
+    const periodMatch = partTrimmed.match(/(?:^|\n|\b)(\d{1,2}[oOºª]?\s*Per[íi]odo)\b/i);
     if (periodMatch) {
       currentPeriod = periodMatch[1].trim();
     }
 
-    // Busca código de disciplina no texto completo do chunk (não apenas no início)
-    const codeMatchFull = partTrimmed.match(/\bC[oó]digo:\s*([A-Za-z]{3,}[\w._-]*\d{3})/i)
-      || partTrimmed.match(/\bNome da disciplina:\s*([^\n]+)/i)
-      // Fallback: código isolado tipo OBBGSIN.016 em qualquer lugar do chunk
-      || partTrimmed.match(/\b((?:OBBG|OBL)[A-Z]{2,6}\.\d{3})\b/);
+    const hasExplicitSyllabusFields = /\b(?:Ementa|Conte[uú]do\s+Program[aá]tico|Bibliografia\s+B[aá]sica):\s*/i.test(partTrimmed)
+      || /\b(?:C[oó]digo|Nome da disciplina):\s*/i.test(partTrimmed);
+    const distinctCourseCodes = new Set(
+      (partTrimmed.match(/\b(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}\b/gi) || []).map((c) => c.toUpperCase())
+    );
+    const isMatrixOrPeriodList =
+      !hasExplicitSyllabusFields &&
+      (Boolean(periodMatch) ||
+        /PER[IÍ]ODO\s+COD\.?\s+DISCIPLINA|Matriz\s+Curricular/i.test(partTrimmed) ||
+        distinctCourseCodes.size >= 2);
 
-    if (codeMatchFull) {
-      // Nome da disciplina via "Nome da disciplina:"
-      const nameMatch = partTrimmed.match(/Nome da disciplina:\s*([^\n]+)/i);
-      const codeOnlyMatch = partTrimmed.match(/\bC[oó]digo:\s*([A-Za-z0-9._-]+)/i)
-        || partTrimmed.match(/\b((?:OBBG|OBL)[A-Z]{2,6}\.\d{3})\b/);
+    if (isMatrixOrPeriodList) {
+      // Se é tabela de matriz curricular ou listagem de período, não contamina com disciplina individual
+      currentDiscipline = "";
+    } else {
+      // Busca código/nome de disciplina para fichas de ementa
+      const codeMatchFull = partTrimmed.match(/\bC[oó]digo:\s*([A-Za-z]{3,}[\w._-]*\d{3})/i)
+        || partTrimmed.match(/\bNome da disciplina:\s*([^\n]+)/i)
+        || (hasExplicitSyllabusFields ? partTrimmed.match(/\b((?:OBBG|OBL)[A-Z]{2,6}\.\d{3})\b/) : null);
 
-      const code = codeOnlyMatch ? codeOnlyMatch[1].trim() : "";
-      const name = nameMatch ? nameMatch[1].trim() : "";
-      if (name || code) {
-        currentDiscipline = [name, code].filter(Boolean).join(" ");
+      if (codeMatchFull) {
+        const nameMatch = partTrimmed.match(/Nome da disciplina:\s*([^\n]+)/i);
+        const codeOnlyMatch = partTrimmed.match(/\bC[oó]digo:\s*([A-Za-z0-9._-]+)/i)
+          || partTrimmed.match(/\b((?:OBBG|OBL)[A-Z]{2,6}\.\d{3})\b/);
+
+        const code = codeOnlyMatch ? codeOnlyMatch[1].trim() : "";
+        const name = nameMatch ? nameMatch[1].trim() : "";
+        if (name || code) {
+          currentDiscipline = [name, code].filter(Boolean).join(" ");
+        }
       }
     }
 
-    // Determina contexto: disciplina específica > seção de período > fallback Ementário
+    // Determina contexto: listagem de período/matriz > disciplina específica > fallback Ementário
     let context: string;
-    if (currentDiscipline) {
+    if (isMatrixOrPeriodList) {
+      const allPeriodsInChunk = Array.from(
+        new Set(
+          Array.from(partTrimmed.matchAll(/\b(\d{1,2}[oOºª]?\s*Per[íi]odo)\b/gi)).map((m) => m[1].trim())
+        )
+      );
+      if (allPeriodsInChunk.length > 0) {
+        context = `Grade Curricular — ${allPeriodsInChunk.join(", ")}`;
+      } else if (currentPeriod) {
+        context = `Grade Curricular — ${currentPeriod}`;
+      } else {
+        context = "Matriz Curricular";
+      }
+    } else if (currentDiscipline) {
       context = `Disciplina: ${currentDiscipline}`;
     } else if (currentPeriod) {
       context = `Grade Curricular — ${currentPeriod}`;
@@ -263,7 +350,8 @@ async function syllabusChunking(text: string, filename: string): Promise<ChunkDa
       context = "Ementário";
     }
 
-    const contentWithContext = injectContext(partTrimmed, documentName, context);
+    const effectiveUrl = sourceUrl || extractUrlFromText(partTrimmed);
+    const contentWithContext = injectContext(partTrimmed, documentName, context, pages || undefined, effectiveUrl);
 
     chunks.push({
       content: contentWithContext,
@@ -274,6 +362,8 @@ async function syllabusChunking(text: string, filename: string): Promise<ChunkDa
         documentName,
         chunkingType: "syllabus",
         sectionContext: context,
+        ...(pages ? { pages } : {}),
+        ...(effectiveUrl ? { sourceUrl: effectiveUrl } : {}),
       },
     });
   }
@@ -284,7 +374,7 @@ async function syllabusChunking(text: string, filename: string): Promise<ChunkDa
 /**
  * Estratégia de Chunking para Regulamentos e Normas Acadêmicas (Artigos/Capítulos).
  */
-async function normativeChunking(text: string, filename: string): Promise<ChunkData[]> {
+async function normativeChunking(text: string, filename: string, sourceUrl?: string): Promise<ChunkData[]> {
   const documentName = generateDocumentName(filename);
   const chunks: ChunkData[] = [];
 
@@ -309,9 +399,11 @@ async function normativeChunking(text: string, filename: string): Promise<ChunkD
 
   const parts = await splitter.splitText(text);
   let currentContext = "";
+  let lastPage = "";
 
   for (const part of parts) {
-    const partTrimmed = part.trim();
+    const { cleanText: partTrimmed, pages, nextLastPage } = extractPageInfoFromChunk(part, lastPage);
+    lastPage = nextLastPage;
     if (partTrimmed.length === 0) continue;
 
     const hierarchyMatch = partTrimmed.match(/^(?:CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o|Art\.\s+\d+º?)\s+[IVXLCDM\d\w\s]+.*?(?:\n|$)/i);
@@ -319,7 +411,8 @@ async function normativeChunking(text: string, filename: string): Promise<ChunkD
       currentContext = hierarchyMatch[0].trim();
     }
 
-    const contentWithContext = injectContext(partTrimmed, documentName, currentContext);
+    const effectiveUrl = sourceUrl || extractUrlFromText(partTrimmed);
+    const contentWithContext = injectContext(partTrimmed, documentName, currentContext, pages || undefined, effectiveUrl);
 
     chunks.push({
       content: contentWithContext,
@@ -330,6 +423,8 @@ async function normativeChunking(text: string, filename: string): Promise<ChunkD
         documentName,
         chunkingType: "normative",
         sectionContext: currentContext,
+        ...(pages ? { pages } : {}),
+        ...(effectiveUrl ? { sourceUrl: effectiveUrl } : {}),
       },
     });
   }
@@ -337,19 +432,26 @@ async function normativeChunking(text: string, filename: string): Promise<ChunkD
   return chunks;
 }
 
-async function tableChunking(text: string, filename: string): Promise<ChunkData[]> {
+async function tableChunking(text: string, filename: string, sourceUrl?: string): Promise<ChunkData[]> {
   const documentName = generateDocumentName(filename);
   const chunks: ChunkData[] = [];
   const blocks = separateTableBlocks(text);
+  let lastPage = "";
 
   for (const block of blocks) {
     if (block.type === "texto") {
-      const subChunks = await generalChunking(block.content, filename, "table");
+      const subChunks = await generalChunking(block.content, filename, "table", sourceUrl, lastPage);
+      if (subChunks.length > 0) {
+        const lastSubPages = subChunks[subChunks.length - 1]?.metadata.pages;
+        if (lastSubPages) lastPage = lastSubPages.split("-").pop() || lastPage;
+      }
       chunks.push(...subChunks);
       continue;
     }
 
-    const lines = block.content.split("\n").filter((l) => l.trim().length > 0);
+    const { cleanText: cleanBlockContent, pages, nextLastPage } = extractPageInfoFromChunk(block.content, lastPage);
+    lastPage = nextLastPage;
+    const lines = cleanBlockContent.split("\n").filter((l) => l.trim().length > 0);
     if (lines.length === 0) continue;
 
     let header = "";
@@ -363,7 +465,8 @@ async function tableChunking(text: string, filename: string): Promise<ChunkData[
     }
 
     if (dataLines.length <= TABLE_MAX_ROWS_PER_CHUNK) {
-      const content = injectContext(block.content.trim(), documentName, "Tabela/Matriz");
+      const effectiveUrl = sourceUrl || extractUrlFromText(cleanBlockContent);
+      const content = injectContext(cleanBlockContent.trim(), documentName, "Tabela/Matriz", pages || undefined, effectiveUrl);
       chunks.push({
         content,
         metadata: {
@@ -373,6 +476,8 @@ async function tableChunking(text: string, filename: string): Promise<ChunkData[
           documentName,
           chunkingType: "table",
           sectionContext: "Tabela/Matriz",
+          ...(pages ? { pages } : {}),
+          ...(effectiveUrl ? { sourceUrl: effectiveUrl } : {}),
         },
       });
       continue;
@@ -385,7 +490,8 @@ async function tableChunking(text: string, filename: string): Promise<ChunkData[
       const context = `Tabela/Matriz (parte ${partNum}/${totalPartes})`;
 
       const tableChunk = header ? `${header}\n${slice.join("\n")}` : slice.join("\n");
-      const content = injectContext(tableChunk, documentName, context);
+      const effectiveUrl = sourceUrl || extractUrlFromText(tableChunk);
+      const content = injectContext(tableChunk, documentName, context, pages || undefined, effectiveUrl);
 
       chunks.push({
         content,
@@ -396,6 +502,8 @@ async function tableChunking(text: string, filename: string): Promise<ChunkData[
           documentName,
           chunkingType: "table",
           sectionContext: context,
+          ...(pages ? { pages } : {}),
+          ...(effectiveUrl ? { sourceUrl: effectiveUrl } : {}),
         },
       });
     }
@@ -438,7 +546,9 @@ function separateTableBlocks(text: string): TableBlock[] {
 async function generalChunking(
   text: string,
   filename: string,
-  typeOverride?: "table" | "general"
+  typeOverride?: "table" | "general",
+  sourceUrl?: string,
+  initialPage: string = ""
 ): Promise<ChunkData[]> {
   const documentName = generateDocumentName(filename);
   const chunks: ChunkData[] = [];
@@ -452,10 +562,15 @@ async function generalChunking(
   });
 
   const parts = await splitter.splitText(text);
+  let lastPage = initialPage;
 
   for (const part of parts) {
-    if (part.trim().length === 0) continue;
-    const content = injectContext(part.trim(), documentName, "");
+    const { cleanText: partTrimmed, pages, nextLastPage } = extractPageInfoFromChunk(part, lastPage);
+    lastPage = nextLastPage;
+    if (partTrimmed.length === 0) continue;
+
+    const effectiveUrl = sourceUrl || extractUrlFromText(partTrimmed);
+    const content = injectContext(partTrimmed, documentName, "", pages || undefined, effectiveUrl);
 
     chunks.push({
       content,
@@ -466,6 +581,8 @@ async function generalChunking(
         documentName,
         chunkingType: type,
         sectionContext: "",
+        ...(pages ? { pages } : {}),
+        ...(effectiveUrl ? { sourceUrl: effectiveUrl } : {}),
       },
     });
   }
@@ -473,7 +590,7 @@ async function generalChunking(
   return chunks;
 }
 
-async function splitIntoChunks(text: string, filename: string): Promise<ChunkData[]> {
+async function splitIntoChunks(text: string, filename: string, sourceUrl?: string): Promise<ChunkData[]> {
   const chunkingType = detectChunkingType(text, filename);
   console.log(`🔀 [Roteamento] "${filename}" → estratégia: ${chunkingType.toUpperCase()}`);
 
@@ -481,17 +598,17 @@ async function splitIntoChunks(text: string, filename: string): Promise<ChunkDat
 
   switch (chunkingType) {
     case "syllabus":
-      chunks = await syllabusChunking(text, filename);
+      chunks = await syllabusChunking(text, filename, sourceUrl);
       break;
     case "normative":
-      chunks = await normativeChunking(text, filename);
+      chunks = await normativeChunking(text, filename, sourceUrl);
       break;
     case "table":
-      chunks = await tableChunking(text, filename);
+      chunks = await tableChunking(text, filename, sourceUrl);
       break;
     case "general":
     default:
-      chunks = await generalChunking(text, filename);
+      chunks = await generalChunking(text, filename, undefined, sourceUrl);
       break;
   }
 
@@ -575,10 +692,11 @@ async function vectorizeAndSave(chunks: ChunkData[]): Promise<number> {
 export async function processDocument(
   buffer: Buffer,
   filename: string,
-  mimetype: string = "application/pdf"
+  mimetype: string = "application/pdf",
+  sourceUrl?: string
 ): Promise<UploadResponse> {
   console.log(`\n${"=".repeat(60)}`);
-  console.log(`🚀 [Ingestão] Processando "${filename}" (${mimetype})`);
+  console.log(`🚀 [Ingestão] Processando "${filename}" (${mimetype})${sourceUrl ? ` | Link: ${sourceUrl}` : ""}`);
   console.log(`${"=".repeat(60)}\n`);
 
   const start = Date.now();
@@ -590,7 +708,7 @@ export async function processDocument(
 
   const text = sanitizeText(rawText);
 
-  const chunks = await splitIntoChunks(text, filename);
+  const chunks = await splitIntoChunks(text, filename, sourceUrl);
 
   const savedChunks = await vectorizeAndSave(chunks);
   const duration = ((Date.now() - start) / 1000).toFixed(1);
@@ -620,13 +738,24 @@ export async function processDocument(
 // LISTAGEM E REMOÇÃO DE DOCUMENTOS
 // ===========================================================================
 
-export async function listProcessedDocuments(): Promise<{ filename: string; totalChunks: number; ultimaAtualizacao: string }[]> {
+export async function listProcessedDocuments(): Promise<{ filename: string; totalChunks: number; ultimaAtualizacao: string; sourceUrl?: string }[]> {
   try {
     const result = await pool.query(`
-      SELECT metadata->>'filename' AS filename, COUNT(*) AS total_chunks, MAX(created_at) AS ultima_atualizacao
-      FROM documents GROUP BY metadata->>'filename' ORDER BY MAX(created_at) DESC
+      SELECT
+        metadata->>'filename' AS filename,
+        COUNT(*) AS total_chunks,
+        MAX(created_at) AS ultima_atualizacao,
+        MAX(metadata->>'sourceUrl') AS source_url
+      FROM documents
+      GROUP BY metadata->>'filename'
+      ORDER BY MAX(created_at) DESC
     `);
-    return result.rows.map((row) => ({ filename: row.filename, totalChunks: Number(row.total_chunks), ultimaAtualizacao: row.ultima_atualizacao }));
+    return result.rows.map((row) => ({
+      filename: row.filename,
+      totalChunks: Number(row.total_chunks),
+      ultimaAtualizacao: row.ultima_atualizacao,
+      ...(row.source_url ? { sourceUrl: row.source_url } : {}),
+    }));
   } catch (error) {
     console.error("[Embedding] Erro ao listar documentos:", error);
     return [];

@@ -105,8 +105,8 @@ const RE_CABECALHOS: RegExp[] = [
   // E-mails institucionais do IFMG
   /[\w.-]+@ifmg\.edu\.br/gi,
 
-  // URLs institucionais
-  /(?:https?:\/\/)?(?:www\.)?ifmg\.edu\.br[^\s]*/gi,
+  // URLs institucionais genéricas de rodapé (preserva links profundos específicos)
+  /(?:https?:\/\/)?(?:www\.)?(?:ourobranco\.)?ifmg\.edu\.br\/?(?=\s|$)/gi,
 
   // Rodapés tipo "Página X de Y" ou "X/Y"
   /P[aá]gina\s+\d+\s+de\s+\d+/gi,
@@ -195,7 +195,7 @@ function prepareNormativeChunking(text: string): string {
   // Preserva quebras duplas (\n\n) que já existem.
   resultText = resultText.replace(/([^\n])\n(?!\n)([^\n])/g, (_, antes, depois) => {
     // Se a próxima linha começa com um marcador estrutural, NÃO colapsar
-    if (/^(?:Art\.\s|CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o|RESOLU[CÇ])/i.test(depois + resultText.charAt(0))) {
+    if (/^(?:Art\.\s|CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o|RESOLU[CÇ]|\[\[\s*PAG_\d+|C[oó]digo:|Nome da disciplina:|Ementa:|Matriz Curricular|DISCIPLINAS\s+(?:OBRIGAT|OPTAT)|\d{1,2}[oOºª]?\s*Per[íi]odo|PER[IÍ]ODO\s)/i.test(depois + resultText.charAt(0))) {
       return `${antes}\n\n${depois}`;
     }
     return `${antes} ${depois}`;
@@ -214,6 +214,10 @@ function prepareNormativeChunking(text: string): string {
     /(?<!\n\n)(?=^[\t ]*DA\s+ORGANIZA[CÇ][AÃ]O\s)/gm,        // DA ORGANIZAÇÃO ...
     /(?<!\n\n)(?=^[\t ]*DOS?\s+DIREITOS?\s)/gm,               // DOS DIREITOS ...
     /(?<!\n\n)(?=^[\t ]*DOS?\s+DEVERES?\s)/gm,                // DOS DEVERES ...
+    /(?<!\n\n)(?=^[\t ]*\d{1,2}[oOºª]?\s*Per[íi]odo\b)/gim,  // 1º Período ... 10º Período
+    /(?<!\n\n)(?=^[\t ]*C[oó]digo:\s)/gim,                    // Código: OBBG...
+    /(?<!\n\n)(?=^[\t ]*Nome da disciplina:\s)/gim,           // Nome da disciplina: ...
+    /(?<!\n\n)(?=^[\t ]*Matriz Curricular\b)/gim,             // Matriz Curricular
   ];
 
   for (const regex of markers) {

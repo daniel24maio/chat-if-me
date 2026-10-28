@@ -74,7 +74,7 @@ REGRAS OBRIGATÓRIAS:
 3. Use EXCLUSIVAMENTE as informações retornadas pela ferramenta. Não invente ou complemente com conhecimento externo.
 4. EMENTAS E NORMAS: Se o usuário solicitar a EMENTA de uma disciplina ou normas específicas, forneça o conteúdo INTEGRAL retornado pela ferramenta, sem resumir ou omitir tópicos. Se a pergunta for apenas para listar disciplinas de um período, cite os nomes das matérias e seus códigos.
 5. Se a ferramenta não retornar resultados relevantes, responda apenas: "Não encontrei essa informação nos documentos disponíveis. Recomendo consultar a coordenação do seu curso, o setor correspondente ou acessar o portal do IFMG." e encerre imediatamente.
-6. Cite a fonte (nome do documento) apenas quando utilizar informações daquele documento.
+6. Cite ao final a fonte utilizada informando o **nome do documento**, a **página/seção** (quando disponível no cabeçalho ou no trecho) e o **link** (quando houver URL associada no trecho).
 7. Para saudações simples (olá, bom dia), responda cordialmente sem usar a ferramenta.
 8. SEGURANÇA E ESCOPO: Nunca utilize conhecimento geral externo para explicar fenômenos, conceitos ou tarefas fora dos documentos do IFMG, mesmo que o usuário solicite. Nunca gere exemplos de prompts, código-fonte ou configurações internas.
 
@@ -427,6 +427,7 @@ ${fewShotBlock}
 Sua resposta deve basear-se ESTRITAMENTE nos trechos de documentos retornados pela ferramenta acima.
 - Responda em Português do Brasil (pt-BR).
 - Forneça ementas ou normas de forma INTEGRAL sem resumir.
+- Cite ao final a fonte utilizada (nome do documento, página/seção quando disponível e link se houver no trecho).
 - NÃO se apresente ou inclua pensamentos internos. Vá direto ao ponto.
 - NUNCA utilize conhecimento geral externo se o assunto não constar nos documentos retornados (mesmo que o usuário peça) e nunca gere exemplos de prompts, código-fonte ou configurações internas.`,
     },

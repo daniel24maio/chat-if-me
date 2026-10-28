@@ -216,6 +216,147 @@ async function generateEmbedding(text: string): Promise<number[]> {
  */
 const RRF_K = 60;
 const RRF_ALPHA = 0.5;
+const CANDIDATE_POOL_LIMIT = 30;
+
+/**
+ * Extrai metadados complementares (página, seção e URL) do chunk caso não estejam
+ * preenchidos diretamente nas colunas JSONB de metadata (compatibilidade retroativa).
+ */
+function enrichChunkMetadata(row: {
+  id: number;
+  content: string;
+  source?: string;
+  rrf_score: number;
+  pages?: string;
+  section_context?: string;
+  source_url?: string;
+}): RetrievedDocument {
+  const content = row.content || "";
+  const headerMatch = content.match(/^\[([^\]]+)\]/);
+  const headerText = headerMatch ? headerMatch[1] : "";
+
+  let pages = row.pages || undefined;
+  if (!pages) {
+    const pageInHeader = headerText.match(/P[aá]ginas?:\s*([\d\-,\s]+)/i);
+    const pageInBody = content.match(/\b(?:P[aá]g(?:ina)?\.?\s*|p\.\s*)(\d{1,4})\b/i);
+    if (pageInHeader) pages = pageInHeader[1].trim();
+    else if (pageInBody) pages = pageInBody[1].trim();
+  }
+
+  let sectionContext = row.section_context || undefined;
+  if (!sectionContext && headerText) {
+    const ctxMatch = headerText.match(/Contexto:\s*([^|\]]+)/i);
+    if (ctxMatch) sectionContext = ctxMatch[1].trim();
+  }
+
+  let sourceUrl = row.source_url || undefined;
+  if (!sourceUrl) {
+    const linkInHeader = headerText.match(/Link:\s*(https?:\/\/[^\s|\]]+)/i);
+    const linkInBody = content.match(/https?:\/\/[^\s)\]>,"']+/i);
+    if (linkInHeader) sourceUrl = linkInHeader[1].trim();
+    else if (linkInBody) sourceUrl = linkInBody[0].replace(/[.;,:!?]+$/, "");
+  }
+
+  return {
+    id: Number(row.id),
+    content,
+    source: row.source || "documento desconhecido",
+    similarity: Number(row.rrf_score),
+    ...(pages ? { pages } : {}),
+    ...(sectionContext ? { sectionContext } : {}),
+    ...(sourceUrl ? { sourceUrl } : {}),
+  };
+}
+
+/**
+ * Formata a identificação completa da fonte (Documento + Página/Seção + Link)
+ * para exibição no cabeçalho do trecho e na lista de fontes do frontend.
+ */
+export function formatSourceDisplay(doc: RetrievedDocument): string {
+  const details: string[] = [];
+  if (doc.pages) {
+    details.push(`pág. ${doc.pages}`);
+  }
+  if (doc.sectionContext) {
+    details.push(doc.sectionContext);
+  }
+  let label = details.length > 0 ? `${doc.source} (${details.join(" — ")})` : doc.source;
+  if (doc.sourceUrl) {
+    label += ` | ${doc.sourceUrl}`;
+  }
+  return label;
+}
+
+/**
+ * Detecta o número do período (1 a 10) mencionado na consulta, se houver.
+ */
+function detectTargetPeriod(text: string): number | null {
+  const t = text.toLowerCase();
+  const numMatch =
+    t.match(/\b(\d{1,2})\s*[oºª]?\s*(?:per[íi]odo|semestre)\b/i) ||
+    t.match(/\b(?:per[íi]odo|semestre)\s*(\d{1,2})\b/i);
+  if (numMatch) {
+    const n = Number(numMatch[1]);
+    if (n >= 1 && n <= 10) return n;
+  }
+
+  const wordMap: Array<[RegExp, number]> = [
+    [/\bprimeiro\s+(?:per[íi]odo|semestre)\b/i, 1],
+    [/\bsegundo\s+(?:per[íi]odo|semestre)\b/i, 2],
+    [/\bterceiro\s+(?:per[íi]odo|semestre)\b/i, 3],
+    [/\bquarto\s+(?:per[íi]odo|semestre)\b/i, 4],
+    [/\bquinto\s+(?:per[íi]odo|semestre)\b/i, 5],
+    [/\bsexto\s+(?:per[íi]odo|semestre)\b/i, 6],
+    [/\bs[eé]timo\s+(?:per[íi]odo|semestre)\b/i, 7],
+    [/\boitavo\s+(?:per[íi]odo|semestre)\b/i, 8],
+    [/\bnono\s+(?:per[íi]odo|semestre)\b/i, 9],
+    [/\bd[eé]cimo\s+(?:per[íi]odo|semestre)\b/i, 10],
+  ];
+  for (const [rx, num] of wordMap) {
+    if (rx.test(t)) return num;
+  }
+  return null;
+}
+
+interface CourseProfile {
+  id: string;
+  queryRegex: RegExp;
+  docMatchRegex: RegExp;
+  ftsClause: string;
+}
+
+const COURSE_PROFILES: CourseProfile[] = [
+  {
+    id: "BSI",
+    queryRegex: /\b(?:sistemas?\s+de\s+informa[cç][aã]o|bsi|ppcbsi|obbgsin)\b/i,
+    docMatchRegex: /\b(?:ppcbsi|obbgsin|sistemas?\s+de\s+informa[cç][aã]o)\b/i,
+    ftsClause: "(obbgsin | ppcbsi | (sistemas & informacao))",
+  },
+  {
+    id: "ADM",
+    queryRegex: /\b(?:administra[cç][aã]o|obbgadm|ppcadm)\b/i,
+    docMatchRegex: /\b(?:ppcadm|obbgadm|bacharelado\s+em\s+administra[cç][aã]o|curso\s+de\s+administra[cç][aã]o)\b/i,
+    ftsClause: "(obbgadm | ppcadm | administracao)",
+  },
+  {
+    id: "EMT",
+    queryRegex: /\b(?:engenharia\s+metal[uú]rgica|metal[uú]rgica|metalurgia|obbgemt|ppcemt)\b/i,
+    docMatchRegex: /\b(?:ppcemt|obbgemt|engenharia\s+metal[uú]rgica)\b/i,
+    ftsClause: "(obbgemt | ppcemt | metalurgica)",
+  },
+  {
+    id: "PED",
+    queryRegex: /\b(?:pedagogia|oblped|ppcped)\b/i,
+    docMatchRegex: /\b(?:ppcped|oblped|licenciatura\s+em\s+pedagogia|curso\s+de\s+pedagogia)\b/i,
+    ftsClause: "(oblped | ppcped | pedagogia)",
+  },
+  {
+    id: "COMP",
+    queryRegex: /\b(?:licenciatura\s+em\s+computa[cç][aã]o|computa[cç][aã]o|oblcomp|ppccomp)\b/i,
+    docMatchRegex: /\b(?:ppccomp|oblcomp|licenciatura\s+em\s+computa[cç][aã]o)\b/i,
+    ftsClause: "(oblcomp | ppccomp | computacao)",
+  },
+];
 
 /**
  * Formata a query para o formato tsquery do PostgreSQL (FTS).
@@ -225,7 +366,11 @@ function formatFTSQuery(query: string, intent?: string): string {
   const stopWords = new Set([
     "qual", "quais", "como", "onde", "quando", "para", "sobre", "entre", "este", "esta",
     "esses", "essas", "pode", "podia", "poderia", "favor", "voce", "sao", "tem", "ter",
-    "conteudo", "conteúdo", "disciplina", "disciplinas", "detalhes", "programa"
+    "conteudo", "conteúdo", "disciplina", "disciplinas", "disiciplina", "disiciplinas",
+    "materia", "materias", "matéria", "matérias", "grade", "detalhes", "programa",
+    "curso", "cursos", "bacharelado", "licenciatura", "tecnologo", "tecnólogo",
+    "ifmg", "campus", "ouro", "branco", "de", "da", "do", "das", "dos", "em", "na", "no",
+    "nas", "nos", "por", "com", "sem", "ao", "aos", "as", "os", "um", "uma"
   ]);
 
   const ordinalMap: Record<string, string> = {
@@ -273,15 +418,28 @@ function formatFTSQuery(query: string, intent?: string): string {
   const queryLimpa = query.replace(/[^\p{L}\p{N}\s]/gu, " ").toLowerCase().trim();
   if (!queryLimpa) return codeFTS || "dummy_fallback_query";
 
-  const rawTerms = queryLimpa.split(/\s+/).filter((w) => w.length >= 2 && !stopWords.has(w));
+  const rawTerms = queryLimpa.split(/\s+/).filter((w) => w.length >= 1 && (w.length >= 2 || /^\d$/.test(w)) && !stopWords.has(w));
   const terms = rawTerms.map((w) => ordinalMap[w] || w);
   let mainFTS = terms.length > 0 ? terms.join(" & ") : "";
 
-  if (codeFTS) {
-    mainFTS = mainFTS ? `${codeFTS} | (${mainFTS})` : codeFTS;
+  const targetPeriod = detectTargetPeriod(query);
+  const targetCourse = COURSE_PROFILES.find((c) => c.queryRegex.test(query));
+  const periodOrdinalClause = targetPeriod ? ordinalMap[String(targetPeriod)] : null;
+
+  const focusedClauses: string[] = [];
+  if (codeFTS) focusedClauses.push(codeFTS);
+  if (mainFTS) focusedClauses.push(`(${mainFTS})`);
+  if (periodOrdinalClause && targetCourse) {
+    focusedClauses.push(`(${periodOrdinalClause} & periodo & ${targetCourse.ftsClause})`);
+  }
+  if (periodOrdinalClause) {
+    focusedClauses.push(`(${periodOrdinalClause} & periodo)`);
+  }
+  if (targetCourse) {
+    focusedClauses.push(targetCourse.ftsClause);
   }
 
-  if (!mainFTS) mainFTS = "dummy_fallback_query";
+  mainFTS = focusedClauses.length > 0 ? focusedClauses.join(" | ") : "dummy_fallback_query";
 
   const effectiveIntent = (!intent || intent === "OUTRAS") ? inferIntentionFromKeywords(query) : intent;
 
@@ -319,32 +477,44 @@ function formatFTSQuery(query: string, intent?: string): string {
  * @param queryText  - Texto da pergunta (para Full-Text Search)
  * @param limit      - Número máximo de resultados (default: 5)
  * @param intention  - Intenção classificada (para expansão FTS)
+ * @param rawQuestion - Pergunta original do usuário (para sinais extras de re-ranking)
  */
 async function hybridSearch(
   embedding: number[],
   queryText: string,
   limit: number = 5,
-  intention?: string
+  intention?: string,
+  rawQuestion?: string
 ): Promise<RetrievedDocument[]> {
   console.log(
     `🔍 [RAG] Busca híbrida: vetorial (α=${RRF_ALPHA}) + FTS (1-α=${1 - RRF_ALPHA}), k=${RRF_K} | Intenção: [${intention || "N/A"}]`
   );
 
   const vectorStr = `[${embedding.join(",")}]`;
-  const ftsQuery = formatFTSQuery(queryText, intention);
+  const fullSearchText = `${rawQuestion || ""} ${queryText || ""}`.trim();
+  const ftsQuery = formatFTSQuery(fullSearchText, intention);
+  const candidateLimit = Math.max(limit * 6, CANDIDATE_POOL_LIMIT);
 
   const result = await pool.query(
     `WITH
        semantic AS (
-         SELECT id, content AS content, metadata->>'filename' AS source,
+         SELECT id, content AS content,
+           metadata->>'filename' AS source,
+           metadata->>'pages' AS pages,
+           metadata->>'sectionContext' AS section_context,
+           metadata->>'sourceUrl' AS source_url,
            1 - (embedding <=> $1::vector) AS similarity,
            ROW_NUMBER() OVER (ORDER BY embedding <=> $1::vector) AS rank
          FROM documents
          ORDER BY embedding <=> $1::vector
-         LIMIT 40
+         LIMIT 50
        ),
        lexical AS (
-         SELECT id, content AS content, metadata->>'filename' AS source,
+         SELECT id, content AS content,
+           metadata->>'filename' AS source,
+           metadata->>'pages' AS pages,
+           metadata->>'sectionContext' AS section_context,
+           metadata->>'sourceUrl' AS source_url,
            ts_rank_cd(content_tsv, to_tsquery('portuguese_unaccent', $2::text)) AS ts_score,
            ROW_NUMBER() OVER (
              ORDER BY ts_rank_cd(content_tsv, to_tsquery('portuguese_unaccent', $2::text)) DESC
@@ -352,12 +522,15 @@ async function hybridSearch(
          FROM documents
          WHERE content_tsv @@ to_tsquery('portuguese_unaccent', $2::text)
          ORDER BY ts_score DESC
-         LIMIT 40
+         LIMIT 50
        )
      SELECT
        COALESCE(s.id, l.id) AS id,
        COALESCE(s.content, l.content) AS content,
        COALESCE(s.source, l.source) AS source,
+       COALESCE(s.pages, l.pages) AS pages,
+       COALESCE(s.section_context, l.section_context) AS section_context,
+       COALESCE(s.source_url, l.source_url) AS source_url,
        COALESCE(s.similarity, 0) AS similarity,
        (
          ${RRF_ALPHA} * COALESCE(1.0 / (${RRF_K} + s.rank), 0.0) +
@@ -367,28 +540,58 @@ async function hybridSearch(
      FULL OUTER JOIN lexical l ON s.id = l.id
      ORDER BY rrf_score DESC
      LIMIT $3`,
-    [vectorStr, ftsQuery, limit]
+    [vectorStr, ftsQuery, candidateLimit]
   );
 
-  let documents: RetrievedDocument[] = result.rows.map((row) => ({
-    id: Number(row.id),
-    content: row.content,
-    source: row.source || "documento desconhecido",
-    similarity: Number(row.rrf_score),
-  }));
+  let documents: RetrievedDocument[] = result.rows.map((row) => enrichChunkMetadata(row));
 
-  // ── Boost e Penalizações para Ementas ──
-  const effectiveIntent = (!intention || intention === "OUTRAS") ? inferIntentionFromKeywords(queryText) : intention;
+  // ── Boost e Penalizações sobre o pool de candidatos (Curso, Período, Ementas e Matriz) ──
+  const effectiveIntent = (!intention || intention === "OUTRAS") ? inferIntentionFromKeywords(fullSearchText) : intention;
   const isEmentaQuery = effectiveIntent === "DISCIPLINA_EMENTA" || effectiveIntent === "DISCIPLINA" || effectiveIntent === "CONTEUDO";
   const isCursoQuery = effectiveIntent === "CURSO" || effectiveIntent === "ESTRUTURA_CURSOS";
 
-  const codeMatch = queryText.match(/(OBBGSIN|OBBGADM|OBBGEMT|OBLCOMP|OBLPED)\.?(\d{3})/i);
+  const codeMatch = fullSearchText.match(/(OBBGSIN|OBBGADM|OBBGEMT|OBLCOMP|OBLPED)\.?(\d{3})/i);
   const targetCode = codeMatch ? `${codeMatch[1]}.${codeMatch[2]}`.toLowerCase() : null;
+
+  const targetCourse = COURSE_PROFILES.find((c) => c.queryRegex.test(fullSearchText));
+  const otherCourses = targetCourse
+    ? COURSE_PROFILES.filter((c) => c.id !== targetCourse.id)
+    : [];
+
+  const targetPeriod = detectTargetPeriod(fullSearchText);
+  const periodOrdWords: Record<number, string> = {
+    1: "primeiro",
+    2: "segundo",
+    3: "terceiro",
+    4: "quarto",
+    5: "quinto",
+    6: "sexto",
+    7: "s[eé]timo",
+    8: "oitavo",
+    9: "nono",
+    10: "d[eé]cimo",
+  };
+  const targetPeriodRegex = targetPeriod
+    ? new RegExp(
+        `\\b(?:${targetPeriod}\\s*[oºª]?\\s*per[íi]odo|${periodOrdWords[targetPeriod]}\\s+per[íi]odo|per[íi]odo\\s*[:\\-]?\\s*${targetPeriod}\\b)`,
+        "i"
+      )
+    : null;
 
   for (const doc of documents) {
     const contentLower = doc.content.toLowerCase();
+    const docFullText = `${doc.source} ${doc.sectionContext || ""} ${doc.content}`;
 
-    // Se a busca tem um código específico (ex: OBBGSIN.034)
+    // 1. Afinidade por Curso (evita colisão entre múltiplos PPCs no banco)
+    if (targetCourse) {
+      if (targetCourse.docMatchRegex.test(docFullText)) {
+        doc.similarity += 0.14;
+      } else if (otherCourses.some((oc) => oc.docMatchRegex.test(docFullText))) {
+        doc.similarity -= 0.15;
+      }
+    }
+
+    // 2. Se a busca tem um código específico (ex: OBBGSIN.034)
     if (targetCode && contentLower.includes(targetCode)) {
       doc.similarity += 0.15;
 
@@ -400,17 +603,34 @@ async function hybridSearch(
       doc.similarity += 0.10;
     }
 
-    // Boost para chunks com Matriz Curricular quando pergunta é sobre estrutura/listagem de período
-    if (isCursoQuery && /PER[IÍ]ODO\s+COD\.?\s+DISCIPLINA|1[oº]\s+Per[íi]odo|Matriz\s+Curricular/i.test(doc.content)) {
+    // 3. Período específico solicitado (ex: 7º Período) + presença de disciplinas/códigos
+    const hasCourseCodes = /\b(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}\b/i.test(doc.content);
+    if (targetPeriodRegex) {
+      if (targetPeriodRegex.test(docFullText)) {
+        if (hasCourseCodes || /PER[IÍ]ODO\s+COD\.?\s+DISCIPLINA|Grade\s+Curricular|Tabela\/Matriz/i.test(docFullText)) {
+          doc.similarity += 0.24;
+        } else {
+          doc.similarity += 0.03;
+        }
+      } else if (isCursoQuery && /\b(?:[1-9]|10)\s*[oºª]\s*Per[íi]odo\b/i.test(docFullText)) {
+        doc.similarity -= 0.06;
+      }
+    }
+
+    // 4. Boost para chunks com Matriz Curricular quando pergunta é sobre estrutura/listagem de período
+    if (
+      isCursoQuery &&
+      /PER[IÍ]ODO\s+COD\.?\s+DISCIPLINA|\b(?:[1-9]|10)\s*[oºª]?\s*Per[íi]odo\b|Matriz\s+Curricular|Grade\s+Curricular/i.test(docFullText)
+    ) {
       doc.similarity += 0.12;
     }
 
-    // Se for busca de estrutura e o chunk for uma ficha detalhada de ementa sem período, penaliza levemente
-    if (isCursoQuery && /\bEmenta:\s/i.test(doc.content) && !/PER[IÍ]ODO|per[íi]odo/i.test(doc.content)) {
-      doc.similarity -= 0.05;
+    // 5. Se for busca de estrutura e o chunk for uma ficha detalhada de ementa sem o período alvo, penaliza
+    if (isCursoQuery && /\bEmenta:\s/i.test(doc.content) && !targetPeriodRegex?.test(docFullText)) {
+      doc.similarity -= 0.08;
     }
 
-    // Se for busca de ementa e o trecho for apenas a tabela da Matriz Curricular, reduz prioridade (-0.15)
+    // 6. Se for busca de ementa e o trecho for apenas a tabela da Matriz Curricular, reduz prioridade (-0.15)
     if (isEmentaQuery && /PERÍODO\s+COD\.\s+DISCIPLINA/i.test(doc.content)) {
       doc.similarity -= 0.15;
     }
@@ -419,8 +639,6 @@ async function hybridSearch(
   documents.sort((a, b) => b.similarity - a.similarity);
 
   // ── Penalização por feedback negativo (ICL Dinâmico) ──
-  // Chunks com feedbacks negativos acumulados têm o score RRF reduzido:
-  //   Score_final = Score_RRF × 1 / (1 + β × N_negativos)
   if (documents.length > 0) {
     const chunkIds = documents.map((d) => d.id);
     const negatives = await countNegativesByChunk(chunkIds);
@@ -440,9 +658,10 @@ async function hybridSearch(
 
       // Re-ordenar após penalização
       documents.sort((a, b) => b.similarity - a.similarity);
-      documents = documents.slice(0, limit);
     }
   }
+
+  documents = documents.slice(0, limit);
 
   if (documents.length === 0) {
     console.log(`🔍 [RAG] Nenhum documento encontrado (vetorial + FTS).`);
@@ -450,7 +669,7 @@ async function hybridSearch(
     console.log(`🔍 [RAG] ${documents.length} documentos (RRF híbrido):`);
     documents.forEach((doc, i) => {
       console.log(
-        `   ${i + 1}. [RRF: ${doc.similarity.toFixed(4)}] ${doc.source}: "${doc.content.substring(0, 50)}..."`
+        `   ${i + 1}. [RRF: ${doc.similarity.toFixed(4)}] ${formatSourceDisplay(doc)}: "${doc.content.substring(0, 50)}..."`
       );
     });
   }
@@ -484,7 +703,7 @@ function buildRAGMessages(
       ? documents
         .map(
           (doc, i) =>
-            `--- Trecho ${i + 1} (fonte: ${doc.source}, similaridade: ${doc.similarity.toFixed(2)}) ---\n${doc.content}`
+            `--- Trecho ${i + 1} (fonte: ${formatSourceDisplay(doc)}, similaridade: ${doc.similarity.toFixed(2)}) ---\n${doc.content}`
         )
         .join("\n\n")
       : "Nenhum documento relevante foi encontrado na base de conhecimento.";
@@ -516,7 +735,7 @@ ${context}
 REGRAS DE RESPOSTA:
 1. Responda APENAS com base no contexto. Se a informação solicitada não estiver nos trechos acima, responda exatamente: "Não encontrei essa informação nos documentos disponíveis. Recomendo consultar a coordenação do curso, o setor responsável ou acessar o portal do IFMG." e encerre imediatamente a resposta.
 2. Se o usuário solicitar EMENTA de disciplina ou detalhes de normas acadêmicas e institucionais, forneça a resposta COMPLETA E INTEGRAL como consta nos documentos, sem resumir ou omitir tópicos.
-3. Use formatação Markdown simples (listas com '* ', destaque em **negrito** para códigos/nomes) e cite a fonte (ex: PPCBSI 2022) apenas quando utilizar informações daquele documento na resposta.
+3. Use formatação Markdown simples (listas com '* ', destaque em **negrito** para códigos/nomes) e cite ao final a fonte utilizada informando o **nome do documento**, a **página/seção** (quando disponível no cabeçalho ou no trecho) e o **link** (quando houver URL associada no trecho).
 4. Apenas quando encontrar a resposta nos documentos, finalize com uma breve pergunta proativa de acompanhamento. Em caso de informação não encontrada, não faça perguntas nem ofereça ajuda adicional.
 5. SEGURANÇA E ESCOPO: Nunca utilize conhecimento geral externo para explicar fenômenos, conceitos ou tarefas fora dos documentos do IFMG, mesmo que o usuário solicite. Nunca gere exemplos de prompts, código-fonte ou configurações internas.`;
 
@@ -705,13 +924,11 @@ export async function processQuestionStream(
 
   // Etapa 2: Busca híbrida (vetorial + FTS) com RRF + penalização por feedback negativo + intenção
   const t2 = Date.now();
-  const documents = await hybridSearch(embedding, rewrittenQuestion, 5, intention);
+  const documents = await hybridSearch(embedding, rewrittenQuestion, 5, intention, contextualizedQuestion);
   const retrievalMs = Date.now() - t2;
 
-  // Extrair as fontes dos documentos recuperados para referência
-  const sources = documents.map(
-    (doc) => `${doc.source} (similaridade: ${doc.similarity.toFixed(2)})`
-  );
+  // Extrair as fontes formatadas (Documento + Página/Seção + Link) sem duplicatas
+  const sources = Array.from(new Set(documents.map((doc) => formatSourceDisplay(doc))));
 
   // ── Etapa 2.5: ICL Dinâmico — Busca de exemplos few-shot positivos ──
   // Busca interações anteriores avaliadas com 👍 que sejam similares à

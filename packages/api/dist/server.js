@@ -2595,6 +2595,117 @@ async function generateEmbedding(text) {
 }
 var RRF_K = 60;
 var RRF_ALPHA = 0.5;
+var CANDIDATE_POOL_LIMIT = 30;
+function enrichChunkMetadata(row) {
+  const content = row.content || "";
+  const headerMatch = content.match(/^\[([^\]]+)\]/);
+  const headerText = headerMatch ? headerMatch[1] : "";
+  let pages = row.pages || void 0;
+  if (!pages) {
+    const pageInHeader = headerText.match(/P[aá]ginas?:\s*([\d\-,\s]+)/i);
+    const pageInBody = content.match(/\b(?:P[aá]g(?:ina)?\.?\s*|p\.\s*)(\d{1,4})\b/i);
+    if (pageInHeader)
+      pages = pageInHeader[1].trim();
+    else if (pageInBody)
+      pages = pageInBody[1].trim();
+  }
+  let sectionContext = row.section_context || void 0;
+  if (!sectionContext && headerText) {
+    const ctxMatch = headerText.match(/Contexto:\s*([^|\]]+)/i);
+    if (ctxMatch)
+      sectionContext = ctxMatch[1].trim();
+  }
+  let sourceUrl = row.source_url || void 0;
+  if (!sourceUrl) {
+    const linkInHeader = headerText.match(/Link:\s*(https?:\/\/[^\s|\]]+)/i);
+    const linkInBody = content.match(/https?:\/\/[^\s)\]>,"']+/i);
+    if (linkInHeader)
+      sourceUrl = linkInHeader[1].trim();
+    else if (linkInBody)
+      sourceUrl = linkInBody[0].replace(/[.;,:!?]+$/, "");
+  }
+  return {
+    id: Number(row.id),
+    content,
+    source: row.source || "documento desconhecido",
+    similarity: Number(row.rrf_score),
+    ...pages ? { pages } : {},
+    ...sectionContext ? { sectionContext } : {},
+    ...sourceUrl ? { sourceUrl } : {}
+  };
+}
+function formatSourceDisplay(doc) {
+  const details = [];
+  if (doc.pages) {
+    details.push(`p\xE1g. ${doc.pages}`);
+  }
+  if (doc.sectionContext) {
+    details.push(doc.sectionContext);
+  }
+  let label = details.length > 0 ? `${doc.source} (${details.join(" \u2014 ")})` : doc.source;
+  if (doc.sourceUrl) {
+    label += ` | ${doc.sourceUrl}`;
+  }
+  return label;
+}
+function detectTargetPeriod(text) {
+  const t = text.toLowerCase();
+  const numMatch = t.match(/\b(\d{1,2})\s*[oºª]?\s*(?:per[íi]odo|semestre)\b/i) || t.match(/\b(?:per[íi]odo|semestre)\s*(\d{1,2})\b/i);
+  if (numMatch) {
+    const n2 = Number(numMatch[1]);
+    if (n2 >= 1 && n2 <= 10)
+      return n2;
+  }
+  const wordMap = [
+    [/\bprimeiro\s+(?:per[íi]odo|semestre)\b/i, 1],
+    [/\bsegundo\s+(?:per[íi]odo|semestre)\b/i, 2],
+    [/\bterceiro\s+(?:per[íi]odo|semestre)\b/i, 3],
+    [/\bquarto\s+(?:per[íi]odo|semestre)\b/i, 4],
+    [/\bquinto\s+(?:per[íi]odo|semestre)\b/i, 5],
+    [/\bsexto\s+(?:per[íi]odo|semestre)\b/i, 6],
+    [/\bs[eé]timo\s+(?:per[íi]odo|semestre)\b/i, 7],
+    [/\boitavo\s+(?:per[íi]odo|semestre)\b/i, 8],
+    [/\bnono\s+(?:per[íi]odo|semestre)\b/i, 9],
+    [/\bd[eé]cimo\s+(?:per[íi]odo|semestre)\b/i, 10]
+  ];
+  for (const [rx, num] of wordMap) {
+    if (rx.test(t))
+      return num;
+  }
+  return null;
+}
+var COURSE_PROFILES = [
+  {
+    id: "BSI",
+    queryRegex: /\b(?:sistemas?\s+de\s+informa[cç][aã]o|bsi|ppcbsi|obbgsin)\b/i,
+    docMatchRegex: /\b(?:ppcbsi|obbgsin|sistemas?\s+de\s+informa[cç][aã]o)\b/i,
+    ftsClause: "(obbgsin | ppcbsi | (sistemas & informacao))"
+  },
+  {
+    id: "ADM",
+    queryRegex: /\b(?:administra[cç][aã]o|obbgadm|ppcadm)\b/i,
+    docMatchRegex: /\b(?:ppcadm|obbgadm|bacharelado\s+em\s+administra[cç][aã]o|curso\s+de\s+administra[cç][aã]o)\b/i,
+    ftsClause: "(obbgadm | ppcadm | administracao)"
+  },
+  {
+    id: "EMT",
+    queryRegex: /\b(?:engenharia\s+metal[uú]rgica|metal[uú]rgica|metalurgia|obbgemt|ppcemt)\b/i,
+    docMatchRegex: /\b(?:ppcemt|obbgemt|engenharia\s+metal[uú]rgica)\b/i,
+    ftsClause: "(obbgemt | ppcemt | metalurgica)"
+  },
+  {
+    id: "PED",
+    queryRegex: /\b(?:pedagogia|oblped|ppcped)\b/i,
+    docMatchRegex: /\b(?:ppcped|oblped|licenciatura\s+em\s+pedagogia|curso\s+de\s+pedagogia)\b/i,
+    ftsClause: "(oblped | ppcped | pedagogia)"
+  },
+  {
+    id: "COMP",
+    queryRegex: /\b(?:licenciatura\s+em\s+computa[cç][aã]o|computa[cç][aã]o|oblcomp|ppccomp)\b/i,
+    docMatchRegex: /\b(?:ppccomp|oblcomp|licenciatura\s+em\s+computa[cç][aã]o)\b/i,
+    ftsClause: "(oblcomp | ppccomp | computacao)"
+  }
+];
 function formatFTSQuery(query, intent) {
   const stopWords = /* @__PURE__ */ new Set([
     "qual",
@@ -2621,8 +2732,44 @@ function formatFTSQuery(query, intent) {
     "conte\xFAdo",
     "disciplina",
     "disciplinas",
+    "disiciplina",
+    "disiciplinas",
+    "materia",
+    "materias",
+    "mat\xE9ria",
+    "mat\xE9rias",
+    "grade",
     "detalhes",
-    "programa"
+    "programa",
+    "curso",
+    "cursos",
+    "bacharelado",
+    "licenciatura",
+    "tecnologo",
+    "tecn\xF3logo",
+    "ifmg",
+    "campus",
+    "ouro",
+    "branco",
+    "de",
+    "da",
+    "do",
+    "das",
+    "dos",
+    "em",
+    "na",
+    "no",
+    "nas",
+    "nos",
+    "por",
+    "com",
+    "sem",
+    "ao",
+    "aos",
+    "as",
+    "os",
+    "um",
+    "uma"
   ]);
   const ordinalMap = {
     primeiro: "(primeiro | 1 | 1\xBA)",
@@ -2666,14 +2813,27 @@ function formatFTSQuery(query, intent) {
   const queryLimpa = query.replace(/[^\p{L}\p{N}\s]/gu, " ").toLowerCase().trim();
   if (!queryLimpa)
     return codeFTS || "dummy_fallback_query";
-  const rawTerms = queryLimpa.split(/\s+/).filter((w) => w.length >= 2 && !stopWords.has(w));
+  const rawTerms = queryLimpa.split(/\s+/).filter((w) => w.length >= 1 && (w.length >= 2 || /^\d$/.test(w)) && !stopWords.has(w));
   const terms = rawTerms.map((w) => ordinalMap[w] || w);
   let mainFTS = terms.length > 0 ? terms.join(" & ") : "";
-  if (codeFTS) {
-    mainFTS = mainFTS ? `${codeFTS} | (${mainFTS})` : codeFTS;
+  const targetPeriod = detectTargetPeriod(query);
+  const targetCourse = COURSE_PROFILES.find((c) => c.queryRegex.test(query));
+  const periodOrdinalClause = targetPeriod ? ordinalMap[String(targetPeriod)] : null;
+  const focusedClauses = [];
+  if (codeFTS)
+    focusedClauses.push(codeFTS);
+  if (mainFTS)
+    focusedClauses.push(`(${mainFTS})`);
+  if (periodOrdinalClause && targetCourse) {
+    focusedClauses.push(`(${periodOrdinalClause} & periodo & ${targetCourse.ftsClause})`);
   }
-  if (!mainFTS)
-    mainFTS = "dummy_fallback_query";
+  if (periodOrdinalClause) {
+    focusedClauses.push(`(${periodOrdinalClause} & periodo)`);
+  }
+  if (targetCourse) {
+    focusedClauses.push(targetCourse.ftsClause);
+  }
+  mainFTS = focusedClauses.length > 0 ? focusedClauses.join(" | ") : "dummy_fallback_query";
   const effectiveIntent = !intent || intent === "OUTRAS" ? inferIntentionFromKeywords(query) : intent;
   const intentKeywords = {
     CURSO: "matriz | curricular | periodo",
@@ -2696,24 +2856,34 @@ function formatFTSQuery(query, intent) {
   }
   return mainFTS;
 }
-async function hybridSearch(embedding, queryText, limit = 5, intention) {
+async function hybridSearch(embedding, queryText, limit = 5, intention, rawQuestion) {
   console.log(
     `\u{1F50D} [RAG] Busca h\xEDbrida: vetorial (\u03B1=${RRF_ALPHA}) + FTS (1-\u03B1=${1 - RRF_ALPHA}), k=${RRF_K} | Inten\xE7\xE3o: [${intention || "N/A"}]`
   );
   const vectorStr = `[${embedding.join(",")}]`;
-  const ftsQuery = formatFTSQuery(queryText, intention);
+  const fullSearchText = `${rawQuestion || ""} ${queryText || ""}`.trim();
+  const ftsQuery = formatFTSQuery(fullSearchText, intention);
+  const candidateLimit = Math.max(limit * 6, CANDIDATE_POOL_LIMIT);
   const result = await pool.query(
     `WITH
        semantic AS (
-         SELECT id, content AS content, metadata->>'filename' AS source,
+         SELECT id, content AS content,
+           metadata->>'filename' AS source,
+           metadata->>'pages' AS pages,
+           metadata->>'sectionContext' AS section_context,
+           metadata->>'sourceUrl' AS source_url,
            1 - (embedding <=> $1::vector) AS similarity,
            ROW_NUMBER() OVER (ORDER BY embedding <=> $1::vector) AS rank
          FROM documents
          ORDER BY embedding <=> $1::vector
-         LIMIT 40
+         LIMIT 50
        ),
        lexical AS (
-         SELECT id, content AS content, metadata->>'filename' AS source,
+         SELECT id, content AS content,
+           metadata->>'filename' AS source,
+           metadata->>'pages' AS pages,
+           metadata->>'sectionContext' AS section_context,
+           metadata->>'sourceUrl' AS source_url,
            ts_rank_cd(content_tsv, to_tsquery('portuguese_unaccent', $2::text)) AS ts_score,
            ROW_NUMBER() OVER (
              ORDER BY ts_rank_cd(content_tsv, to_tsquery('portuguese_unaccent', $2::text)) DESC
@@ -2721,12 +2891,15 @@ async function hybridSearch(embedding, queryText, limit = 5, intention) {
          FROM documents
          WHERE content_tsv @@ to_tsquery('portuguese_unaccent', $2::text)
          ORDER BY ts_score DESC
-         LIMIT 40
+         LIMIT 50
        )
      SELECT
        COALESCE(s.id, l.id) AS id,
        COALESCE(s.content, l.content) AS content,
        COALESCE(s.source, l.source) AS source,
+       COALESCE(s.pages, l.pages) AS pages,
+       COALESCE(s.section_context, l.section_context) AS section_context,
+       COALESCE(s.source_url, l.source_url) AS source_url,
        COALESCE(s.similarity, 0) AS similarity,
        (
          ${RRF_ALPHA} * COALESCE(1.0 / (${RRF_K} + s.rank), 0.0) +
@@ -2736,21 +2909,43 @@ async function hybridSearch(embedding, queryText, limit = 5, intention) {
      FULL OUTER JOIN lexical l ON s.id = l.id
      ORDER BY rrf_score DESC
      LIMIT $3`,
-    [vectorStr, ftsQuery, limit]
+    [vectorStr, ftsQuery, candidateLimit]
   );
-  let documents = result.rows.map((row) => ({
-    id: Number(row.id),
-    content: row.content,
-    source: row.source || "documento desconhecido",
-    similarity: Number(row.rrf_score)
-  }));
-  const effectiveIntent = !intention || intention === "OUTRAS" ? inferIntentionFromKeywords(queryText) : intention;
+  let documents = result.rows.map((row) => enrichChunkMetadata(row));
+  const effectiveIntent = !intention || intention === "OUTRAS" ? inferIntentionFromKeywords(fullSearchText) : intention;
   const isEmentaQuery = effectiveIntent === "DISCIPLINA_EMENTA" || effectiveIntent === "DISCIPLINA" || effectiveIntent === "CONTEUDO";
   const isCursoQuery = effectiveIntent === "CURSO" || effectiveIntent === "ESTRUTURA_CURSOS";
-  const codeMatch = queryText.match(/(OBBGSIN|OBBGADM|OBBGEMT|OBLCOMP|OBLPED)\.?(\d{3})/i);
+  const codeMatch = fullSearchText.match(/(OBBGSIN|OBBGADM|OBBGEMT|OBLCOMP|OBLPED)\.?(\d{3})/i);
   const targetCode = codeMatch ? `${codeMatch[1]}.${codeMatch[2]}`.toLowerCase() : null;
+  const targetCourse = COURSE_PROFILES.find((c) => c.queryRegex.test(fullSearchText));
+  const otherCourses = targetCourse ? COURSE_PROFILES.filter((c) => c.id !== targetCourse.id) : [];
+  const targetPeriod = detectTargetPeriod(fullSearchText);
+  const periodOrdWords = {
+    1: "primeiro",
+    2: "segundo",
+    3: "terceiro",
+    4: "quarto",
+    5: "quinto",
+    6: "sexto",
+    7: "s[e\xE9]timo",
+    8: "oitavo",
+    9: "nono",
+    10: "d[e\xE9]cimo"
+  };
+  const targetPeriodRegex = targetPeriod ? new RegExp(
+    `\\b(?:${targetPeriod}\\s*[o\xBA\xAA]?\\s*per[\xEDi]odo|${periodOrdWords[targetPeriod]}\\s+per[\xEDi]odo|per[\xEDi]odo\\s*[:\\-]?\\s*${targetPeriod}\\b)`,
+    "i"
+  ) : null;
   for (const doc of documents) {
     const contentLower = doc.content.toLowerCase();
+    const docFullText = `${doc.source} ${doc.sectionContext || ""} ${doc.content}`;
+    if (targetCourse) {
+      if (targetCourse.docMatchRegex.test(docFullText)) {
+        doc.similarity += 0.14;
+      } else if (otherCourses.some((oc) => oc.docMatchRegex.test(docFullText))) {
+        doc.similarity -= 0.15;
+      }
+    }
     if (targetCode && contentLower.includes(targetCode)) {
       doc.similarity += 0.15;
       if (isEmentaQuery && /ementa:/i.test(doc.content)) {
@@ -2759,11 +2954,23 @@ async function hybridSearch(embedding, queryText, limit = 5, intention) {
     } else if (isEmentaQuery && /ementa:/i.test(doc.content)) {
       doc.similarity += 0.1;
     }
-    if (isCursoQuery && /PER[IÍ]ODO\s+COD\.?\s+DISCIPLINA|1[oº]\s+Per[íi]odo|Matriz\s+Curricular/i.test(doc.content)) {
+    const hasCourseCodes = /\b(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}\b/i.test(doc.content);
+    if (targetPeriodRegex) {
+      if (targetPeriodRegex.test(docFullText)) {
+        if (hasCourseCodes || /PER[IÍ]ODO\s+COD\.?\s+DISCIPLINA|Grade\s+Curricular|Tabela\/Matriz/i.test(docFullText)) {
+          doc.similarity += 0.24;
+        } else {
+          doc.similarity += 0.03;
+        }
+      } else if (isCursoQuery && /\b(?:[1-9]|10)\s*[oºª]\s*Per[íi]odo\b/i.test(docFullText)) {
+        doc.similarity -= 0.06;
+      }
+    }
+    if (isCursoQuery && /PER[IÍ]ODO\s+COD\.?\s+DISCIPLINA|\b(?:[1-9]|10)\s*[oºª]?\s*Per[íi]odo\b|Matriz\s+Curricular|Grade\s+Curricular/i.test(docFullText)) {
       doc.similarity += 0.12;
     }
-    if (isCursoQuery && /\bEmenta:\s/i.test(doc.content) && !/PER[IÍ]ODO|per[íi]odo/i.test(doc.content)) {
-      doc.similarity -= 0.05;
+    if (isCursoQuery && /\bEmenta:\s/i.test(doc.content) && !targetPeriodRegex?.test(docFullText)) {
+      doc.similarity -= 0.08;
     }
     if (isEmentaQuery && /PERÍODO\s+COD\.\s+DISCIPLINA/i.test(doc.content)) {
       doc.similarity -= 0.15;
@@ -2785,16 +2992,16 @@ async function hybridSearch(embedding, queryText, limit = 5, intention) {
         }
       }
       documents.sort((a, b) => b.similarity - a.similarity);
-      documents = documents.slice(0, limit);
     }
   }
+  documents = documents.slice(0, limit);
   if (documents.length === 0) {
     console.log(`\u{1F50D} [RAG] Nenhum documento encontrado (vetorial + FTS).`);
   } else {
     console.log(`\u{1F50D} [RAG] ${documents.length} documentos (RRF h\xEDbrido):`);
     documents.forEach((doc, i) => {
       console.log(
-        `   ${i + 1}. [RRF: ${doc.similarity.toFixed(4)}] ${doc.source}: "${doc.content.substring(0, 50)}..."`
+        `   ${i + 1}. [RRF: ${doc.similarity.toFixed(4)}] ${formatSourceDisplay(doc)}: "${doc.content.substring(0, 50)}..."`
       );
     });
   }
@@ -2802,7 +3009,7 @@ async function hybridSearch(embedding, queryText, limit = 5, intention) {
 }
 function buildRAGMessages(question, documents, intention, fewShotExamples = [], sessionMessages = []) {
   const context = documents.length > 0 ? documents.map(
-    (doc, i) => `--- Trecho ${i + 1} (fonte: ${doc.source}, similaridade: ${doc.similarity.toFixed(2)}) ---
+    (doc, i) => `--- Trecho ${i + 1} (fonte: ${formatSourceDisplay(doc)}, similaridade: ${doc.similarity.toFixed(2)}) ---
 ${doc.content}`
   ).join("\n\n") : "Nenhum documento relevante foi encontrado na base de conhecimento.";
   let fewShotBlock = "";
@@ -2831,7 +3038,7 @@ ${context}
 REGRAS DE RESPOSTA:
 1. Responda APENAS com base no contexto. Se a informa\xE7\xE3o solicitada n\xE3o estiver nos trechos acima, responda exatamente: "N\xE3o encontrei essa informa\xE7\xE3o nos documentos dispon\xEDveis. Recomendo consultar a coordena\xE7\xE3o do curso, o setor respons\xE1vel ou acessar o portal do IFMG." e encerre imediatamente a resposta.
 2. Se o usu\xE1rio solicitar EMENTA de disciplina ou detalhes de normas acad\xEAmicas e institucionais, forne\xE7a a resposta COMPLETA E INTEGRAL como consta nos documentos, sem resumir ou omitir t\xF3picos.
-3. Use formata\xE7\xE3o Markdown simples (listas com '* ', destaque em **negrito** para c\xF3digos/nomes) e cite a fonte (ex: PPCBSI 2022) apenas quando utilizar informa\xE7\xF5es daquele documento na resposta.
+3. Use formata\xE7\xE3o Markdown simples (listas com '* ', destaque em **negrito** para c\xF3digos/nomes) e cite ao final a fonte utilizada informando o **nome do documento**, a **p\xE1gina/se\xE7\xE3o** (quando dispon\xEDvel no cabe\xE7alho ou no trecho) e o **link** (quando houver URL associada no trecho).
 4. Apenas quando encontrar a resposta nos documentos, finalize com uma breve pergunta proativa de acompanhamento. Em caso de informa\xE7\xE3o n\xE3o encontrada, n\xE3o fa\xE7a perguntas nem ofere\xE7a ajuda adicional.
 5. SEGURAN\xC7A E ESCOPO: Nunca utilize conhecimento geral externo para explicar fen\xF4menos, conceitos ou tarefas fora dos documentos do IFMG, mesmo que o usu\xE1rio solicite. Nunca gere exemplos de prompts, c\xF3digo-fonte ou configura\xE7\xF5es internas.`;
   const historyMessages = sessionMessages.slice(-5).map((m) => ({ role: m.role, content: m.content }));
@@ -2979,11 +3186,9 @@ ${"\u2500".repeat(50)}`);
   const embedding = await generateEmbedding(rewrittenQuestion);
   const embedMs = Date.now() - t1;
   const t2 = Date.now();
-  const documents = await hybridSearch(embedding, rewrittenQuestion, 5, intention);
+  const documents = await hybridSearch(embedding, rewrittenQuestion, 5, intention, contextualizedQuestion);
   const retrievalMs = Date.now() - t2;
-  const sources = documents.map(
-    (doc) => `${doc.source} (similaridade: ${doc.similarity.toFixed(2)})`
-  );
+  const sources = Array.from(new Set(documents.map((doc) => formatSourceDisplay(doc))));
   let fewShotExamples = [];
   try {
     fewShotExamples = await getPositiveExamples(embedding);
@@ -27897,8 +28102,8 @@ var RE_CABECALHOS = [
   /(?:\(\d{2}\)\s*|\d{2}[-\s])\d{4}[-.\s]\d{4}/g,
   // E-mails institucionais do IFMG
   /[\w.-]+@ifmg\.edu\.br/gi,
-  // URLs institucionais
-  /(?:https?:\/\/)?(?:www\.)?ifmg\.edu\.br[^\s]*/gi,
+  // URLs institucionais genéricas de rodapé (preserva links profundos específicos)
+  /(?:https?:\/\/)?(?:www\.)?(?:ourobranco\.)?ifmg\.edu\.br\/?(?=\s|$)/gi,
   // Rodapés tipo "Página X de Y" ou "X/Y"
   /P[aá]gina\s+\d+\s+de\s+\d+/gi,
   /^\s*\d{1,4}\s*\/\s*\d{1,4}\s*$/gm
@@ -27928,7 +28133,7 @@ function pruneAppendices(text) {
 function prepareNormativeChunking(text) {
   let resultText = text;
   resultText = resultText.replace(/([^\n])\n(?!\n)([^\n])/g, (_, antes, depois) => {
-    if (/^(?:Art\.\s|CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o|RESOLU[CÇ])/i.test(depois + resultText.charAt(0))) {
+    if (/^(?:Art\.\s|CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o|RESOLU[CÇ]|\[\[\s*PAG_\d+|C[oó]digo:|Nome da disciplina:|Ementa:|Matriz Curricular|DISCIPLINAS\s+(?:OBRIGAT|OPTAT)|\d{1,2}[oOºª]?\s*Per[íi]odo|PER[IÍ]ODO\s)/i.test(depois + resultText.charAt(0))) {
       return `${antes}
 
 ${depois}`;
@@ -27954,8 +28159,16 @@ ${depois}`;
     // DA ORGANIZAÇÃO ...
     /(?<!\n\n)(?=^[\t ]*DOS?\s+DIREITOS?\s)/gm,
     // DOS DIREITOS ...
-    /(?<!\n\n)(?=^[\t ]*DOS?\s+DEVERES?\s)/gm
+    /(?<!\n\n)(?=^[\t ]*DOS?\s+DEVERES?\s)/gm,
     // DOS DEVERES ...
+    /(?<!\n\n)(?=^[\t ]*\d{1,2}[oOºª]?\s*Per[íi]odo\b)/gim,
+    // 1º Período ... 10º Período
+    /(?<!\n\n)(?=^[\t ]*C[oó]digo:\s)/gim,
+    // Código: OBBG...
+    /(?<!\n\n)(?=^[\t ]*Nome da disciplina:\s)/gim,
+    // Nome da disciplina: ...
+    /(?<!\n\n)(?=^[\t ]*Matriz Curricular\b)/gim
+    // Matriz Curricular
   ];
   for (const regex2 of markers) {
     resultText = resultText.replace(regex2, "\n\n");
@@ -28044,8 +28257,15 @@ async function extractTextFromPDF(buffer, filename) {
   try {
     const parser = new LiteParse();
     const result = await parser.parse(tempPath);
-    const finalText = result.text || JSON.stringify(result);
-    console.log(`\u{1F4C4} [Extra\xE7\xE3o] Conclu\xEDdo via LiteParse: ${finalText.length} caracteres extra\xEDdos de "${filename}"`);
+    let finalText = "";
+    if (result.pages && Array.isArray(result.pages) && result.pages.length > 0) {
+      finalText = result.pages.map((p) => `
+[[PAG_${p.pageNum}]]
+${p.text || ""}`).join("\n\n");
+    } else {
+      finalText = result.text || JSON.stringify(result);
+    }
+    console.log(`\u{1F4C4} [Extra\xE7\xE3o] Conclu\xEDdo via LiteParse: ${finalText.length} caracteres extra\xEDdos de "${filename}" (${result.pages?.length ?? 0} p\xE1ginas)`);
     return finalText;
   } catch (error) {
     console.error(`\u274C [Extra\xE7\xE3o] Erro no LiteParse ao processar "${filename}":`, error);
@@ -28118,14 +28338,40 @@ async function extractText(buffer, filename, mimetype) {
 function generateDocumentName(filename) {
   return filename.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").replace(/\s{2,}/g, " ").trim();
 }
-function injectContext(text, documentName, sectionContext) {
+function injectContext(text, documentName, sectionContext, pages, sourceUrl) {
   const parts = [`Documento: ${documentName}`];
+  if (pages) {
+    parts.push(`P\xE1gina: ${pages}`);
+  }
   if (sectionContext) {
     parts.push(`Contexto: ${sectionContext}`);
+  }
+  if (sourceUrl) {
+    parts.push(`Link: ${sourceUrl}`);
   }
   return `[${parts.join(" | ")}]
 
 ${text}`;
+}
+function extractPageInfoFromChunk(rawPart, lastKnownPage) {
+  const pageMatches = Array.from(rawPart.matchAll(/\[\[\s*PAG_(\d+)\s*\]\]/gi));
+  const pageNums = Array.from(
+    new Set(pageMatches.map((m) => Number(m[1])).filter((n2) => !Number.isNaN(n2) && n2 > 0))
+  ).sort((a, b) => a - b);
+  const cleanText = rawPart.replace(/\[\[\s*PAG_\d+\s*\]\]/gi, "").replace(/\n{3,}/g, "\n\n").trim();
+  if (pageNums.length > 0) {
+    const first = pageNums[0];
+    const last = pageNums[pageNums.length - 1];
+    const pages = first === last ? `${first}` : `${first}-${last}`;
+    return { cleanText, pages, nextLastPage: `${last}` };
+  }
+  return { cleanText, pages: lastKnownPage, nextLastPage: lastKnownPage };
+}
+function extractUrlFromText(text) {
+  const match = text.match(/https?:\/\/[^\s)\]>,"']+/i);
+  if (!match)
+    return void 0;
+  return match[0].replace(/[.;,:!?]+$/, "");
 }
 function detectChunkingType(text, filename) {
   const tableSeparators = (text.match(/\|[\s-]+\|/g) || []).length;
@@ -28150,7 +28396,7 @@ function detectChunkingType(text, filename) {
   }
   return "general";
 }
-async function syllabusChunking(text, filename) {
+async function syllabusChunking(text, filename, sourceUrl) {
   const documentName = generateDocumentName(filename);
   const chunks = [];
   const splitter = new RecursiveCharacterTextSplitter({
@@ -28161,6 +28407,7 @@ async function syllabusChunking(text, filename) {
       "\nNome da disciplina:",
       "\nDISCIPLINAS OBRIGAT\xD3RIAS",
       "\nDISCIPLINAS OPTATIVAS",
+      "\nMatriz Curricular",
       "\n1\xBA Per\xEDodo",
       "\n2\xBA Per\xEDodo",
       "\n3\xBA Per\xEDodo",
@@ -28181,33 +28428,58 @@ async function syllabusChunking(text, filename) {
   const parts = await splitter.splitText(text);
   let currentDiscipline = "";
   let currentPeriod = "";
+  let lastPage = "";
   for (const part of parts) {
-    const partTrimmed = part.trim();
+    const { cleanText: partTrimmed, pages, nextLastPage } = extractPageInfoFromChunk(part, lastPage);
+    lastPage = nextLastPage;
     if (partTrimmed.length === 0)
       continue;
-    const periodMatch = partTrimmed.match(/^(\d{1,2}[oOºª]?\s*Per[íi]odo)/im);
+    const periodMatch = partTrimmed.match(/(?:^|\n|\b)(\d{1,2}[oOºª]?\s*Per[íi]odo)\b/i);
     if (periodMatch) {
       currentPeriod = periodMatch[1].trim();
     }
-    const codeMatchFull = partTrimmed.match(/\bC[oó]digo:\s*([A-Za-z]{3,}[\w._-]*\d{3})/i) || partTrimmed.match(/\bNome da disciplina:\s*([^\n]+)/i) || partTrimmed.match(/\b((?:OBBG|OBL)[A-Z]{2,6}\.\d{3})\b/);
-    if (codeMatchFull) {
-      const nameMatch = partTrimmed.match(/Nome da disciplina:\s*([^\n]+)/i);
-      const codeOnlyMatch = partTrimmed.match(/\bC[oó]digo:\s*([A-Za-z0-9._-]+)/i) || partTrimmed.match(/\b((?:OBBG|OBL)[A-Z]{2,6}\.\d{3})\b/);
-      const code = codeOnlyMatch ? codeOnlyMatch[1].trim() : "";
-      const name = nameMatch ? nameMatch[1].trim() : "";
-      if (name || code) {
-        currentDiscipline = [name, code].filter(Boolean).join(" ");
+    const hasExplicitSyllabusFields = /\b(?:Ementa|Conte[uú]do\s+Program[aá]tico|Bibliografia\s+B[aá]sica):\s*/i.test(partTrimmed) || /\b(?:C[oó]digo|Nome da disciplina):\s*/i.test(partTrimmed);
+    const distinctCourseCodes = new Set(
+      (partTrimmed.match(/\b(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}\b/gi) || []).map((c) => c.toUpperCase())
+    );
+    const isMatrixOrPeriodList = !hasExplicitSyllabusFields && (Boolean(periodMatch) || /PER[IÍ]ODO\s+COD\.?\s+DISCIPLINA|Matriz\s+Curricular/i.test(partTrimmed) || distinctCourseCodes.size >= 2);
+    if (isMatrixOrPeriodList) {
+      currentDiscipline = "";
+    } else {
+      const codeMatchFull = partTrimmed.match(/\bC[oó]digo:\s*([A-Za-z]{3,}[\w._-]*\d{3})/i) || partTrimmed.match(/\bNome da disciplina:\s*([^\n]+)/i) || (hasExplicitSyllabusFields ? partTrimmed.match(/\b((?:OBBG|OBL)[A-Z]{2,6}\.\d{3})\b/) : null);
+      if (codeMatchFull) {
+        const nameMatch = partTrimmed.match(/Nome da disciplina:\s*([^\n]+)/i);
+        const codeOnlyMatch = partTrimmed.match(/\bC[oó]digo:\s*([A-Za-z0-9._-]+)/i) || partTrimmed.match(/\b((?:OBBG|OBL)[A-Z]{2,6}\.\d{3})\b/);
+        const code = codeOnlyMatch ? codeOnlyMatch[1].trim() : "";
+        const name = nameMatch ? nameMatch[1].trim() : "";
+        if (name || code) {
+          currentDiscipline = [name, code].filter(Boolean).join(" ");
+        }
       }
     }
     let context;
-    if (currentDiscipline) {
+    if (isMatrixOrPeriodList) {
+      const allPeriodsInChunk = Array.from(
+        new Set(
+          Array.from(partTrimmed.matchAll(/\b(\d{1,2}[oOºª]?\s*Per[íi]odo)\b/gi)).map((m) => m[1].trim())
+        )
+      );
+      if (allPeriodsInChunk.length > 0) {
+        context = `Grade Curricular \u2014 ${allPeriodsInChunk.join(", ")}`;
+      } else if (currentPeriod) {
+        context = `Grade Curricular \u2014 ${currentPeriod}`;
+      } else {
+        context = "Matriz Curricular";
+      }
+    } else if (currentDiscipline) {
       context = `Disciplina: ${currentDiscipline}`;
     } else if (currentPeriod) {
       context = `Grade Curricular \u2014 ${currentPeriod}`;
     } else {
       context = "Ement\xE1rio";
     }
-    const contentWithContext = injectContext(partTrimmed, documentName, context);
+    const effectiveUrl = sourceUrl || extractUrlFromText(partTrimmed);
+    const contentWithContext = injectContext(partTrimmed, documentName, context, pages || void 0, effectiveUrl);
     chunks.push({
       content: contentWithContext,
       metadata: {
@@ -28216,13 +28488,15 @@ async function syllabusChunking(text, filename) {
         totalChunks: 0,
         documentName,
         chunkingType: "syllabus",
-        sectionContext: context
+        sectionContext: context,
+        ...pages ? { pages } : {},
+        ...effectiveUrl ? { sourceUrl: effectiveUrl } : {}
       }
     });
   }
   return chunks;
 }
-async function normativeChunking(text, filename) {
+async function normativeChunking(text, filename, sourceUrl) {
   const documentName = generateDocumentName(filename);
   const chunks = [];
   const splitter = new RecursiveCharacterTextSplitter({
@@ -28245,15 +28519,18 @@ async function normativeChunking(text, filename) {
   });
   const parts = await splitter.splitText(text);
   let currentContext = "";
+  let lastPage = "";
   for (const part of parts) {
-    const partTrimmed = part.trim();
+    const { cleanText: partTrimmed, pages, nextLastPage } = extractPageInfoFromChunk(part, lastPage);
+    lastPage = nextLastPage;
     if (partTrimmed.length === 0)
       continue;
     const hierarchyMatch = partTrimmed.match(/^(?:CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o|Art\.\s+\d+º?)\s+[IVXLCDM\d\w\s]+.*?(?:\n|$)/i);
     if (hierarchyMatch) {
       currentContext = hierarchyMatch[0].trim();
     }
-    const contentWithContext = injectContext(partTrimmed, documentName, currentContext);
+    const effectiveUrl = sourceUrl || extractUrlFromText(partTrimmed);
+    const contentWithContext = injectContext(partTrimmed, documentName, currentContext, pages || void 0, effectiveUrl);
     chunks.push({
       content: contentWithContext,
       metadata: {
@@ -28262,23 +28539,33 @@ async function normativeChunking(text, filename) {
         totalChunks: 0,
         documentName,
         chunkingType: "normative",
-        sectionContext: currentContext
+        sectionContext: currentContext,
+        ...pages ? { pages } : {},
+        ...effectiveUrl ? { sourceUrl: effectiveUrl } : {}
       }
     });
   }
   return chunks;
 }
-async function tableChunking(text, filename) {
+async function tableChunking(text, filename, sourceUrl) {
   const documentName = generateDocumentName(filename);
   const chunks = [];
   const blocks = separateTableBlocks(text);
+  let lastPage = "";
   for (const block of blocks) {
     if (block.type === "texto") {
-      const subChunks = await generalChunking(block.content, filename, "table");
+      const subChunks = await generalChunking(block.content, filename, "table", sourceUrl, lastPage);
+      if (subChunks.length > 0) {
+        const lastSubPages = subChunks[subChunks.length - 1]?.metadata.pages;
+        if (lastSubPages)
+          lastPage = lastSubPages.split("-").pop() || lastPage;
+      }
       chunks.push(...subChunks);
       continue;
     }
-    const lines = block.content.split("\n").filter((l) => l.trim().length > 0);
+    const { cleanText: cleanBlockContent, pages, nextLastPage } = extractPageInfoFromChunk(block.content, lastPage);
+    lastPage = nextLastPage;
+    const lines = cleanBlockContent.split("\n").filter((l) => l.trim().length > 0);
     if (lines.length === 0)
       continue;
     let header = "";
@@ -28290,7 +28577,8 @@ async function tableChunking(text, filename) {
       dataLines = lines;
     }
     if (dataLines.length <= TABLE_MAX_ROWS_PER_CHUNK) {
-      const content = injectContext(block.content.trim(), documentName, "Tabela/Matriz");
+      const effectiveUrl = sourceUrl || extractUrlFromText(cleanBlockContent);
+      const content = injectContext(cleanBlockContent.trim(), documentName, "Tabela/Matriz", pages || void 0, effectiveUrl);
       chunks.push({
         content,
         metadata: {
@@ -28299,7 +28587,9 @@ async function tableChunking(text, filename) {
           totalChunks: 0,
           documentName,
           chunkingType: "table",
-          sectionContext: "Tabela/Matriz"
+          sectionContext: "Tabela/Matriz",
+          ...pages ? { pages } : {},
+          ...effectiveUrl ? { sourceUrl: effectiveUrl } : {}
         }
       });
       continue;
@@ -28311,7 +28601,8 @@ async function tableChunking(text, filename) {
       const context = `Tabela/Matriz (parte ${partNum}/${totalPartes})`;
       const tableChunk = header ? `${header}
 ${slice.join("\n")}` : slice.join("\n");
-      const content = injectContext(tableChunk, documentName, context);
+      const effectiveUrl = sourceUrl || extractUrlFromText(tableChunk);
+      const content = injectContext(tableChunk, documentName, context, pages || void 0, effectiveUrl);
       chunks.push({
         content,
         metadata: {
@@ -28320,7 +28611,9 @@ ${slice.join("\n")}` : slice.join("\n");
           totalChunks: 0,
           documentName,
           chunkingType: "table",
-          sectionContext: context
+          sectionContext: context,
+          ...pages ? { pages } : {},
+          ...effectiveUrl ? { sourceUrl: effectiveUrl } : {}
         }
       });
     }
@@ -28351,7 +28644,7 @@ function separateTableBlocks(text) {
   }
   return blocks;
 }
-async function generalChunking(text, filename, typeOverride) {
+async function generalChunking(text, filename, typeOverride, sourceUrl, initialPage = "") {
   const documentName = generateDocumentName(filename);
   const chunks = [];
   const type = typeOverride || "general";
@@ -28361,10 +28654,14 @@ async function generalChunking(text, filename, typeOverride) {
     separators: ["\n\n", "\n", ". ", " "]
   });
   const parts = await splitter.splitText(text);
+  let lastPage = initialPage;
   for (const part of parts) {
-    if (part.trim().length === 0)
+    const { cleanText: partTrimmed, pages, nextLastPage } = extractPageInfoFromChunk(part, lastPage);
+    lastPage = nextLastPage;
+    if (partTrimmed.length === 0)
       continue;
-    const content = injectContext(part.trim(), documentName, "");
+    const effectiveUrl = sourceUrl || extractUrlFromText(partTrimmed);
+    const content = injectContext(partTrimmed, documentName, "", pages || void 0, effectiveUrl);
     chunks.push({
       content,
       metadata: {
@@ -28373,29 +28670,31 @@ async function generalChunking(text, filename, typeOverride) {
         totalChunks: 0,
         documentName,
         chunkingType: type,
-        sectionContext: ""
+        sectionContext: "",
+        ...pages ? { pages } : {},
+        ...effectiveUrl ? { sourceUrl: effectiveUrl } : {}
       }
     });
   }
   return chunks;
 }
-async function splitIntoChunks(text, filename) {
+async function splitIntoChunks(text, filename, sourceUrl) {
   const chunkingType = detectChunkingType(text, filename);
   console.log(`\u{1F500} [Roteamento] "${filename}" \u2192 estrat\xE9gia: ${chunkingType.toUpperCase()}`);
   let chunks;
   switch (chunkingType) {
     case "syllabus":
-      chunks = await syllabusChunking(text, filename);
+      chunks = await syllabusChunking(text, filename, sourceUrl);
       break;
     case "normative":
-      chunks = await normativeChunking(text, filename);
+      chunks = await normativeChunking(text, filename, sourceUrl);
       break;
     case "table":
-      chunks = await tableChunking(text, filename);
+      chunks = await tableChunking(text, filename, sourceUrl);
       break;
     case "general":
     default:
-      chunks = await generalChunking(text, filename);
+      chunks = await generalChunking(text, filename, void 0, sourceUrl);
       break;
   }
   for (const chunk of chunks) {
@@ -28454,10 +28753,10 @@ async function vectorizeAndSave(chunks) {
   }
   return saved;
 }
-async function processDocument(buffer, filename, mimetype = "application/pdf") {
+async function processDocument(buffer, filename, mimetype = "application/pdf", sourceUrl) {
   console.log(`
 ${"=".repeat(60)}`);
-  console.log(`\u{1F680} [Ingest\xE3o] Processando "${filename}" (${mimetype})`);
+  console.log(`\u{1F680} [Ingest\xE3o] Processando "${filename}" (${mimetype})${sourceUrl ? ` | Link: ${sourceUrl}` : ""}`);
   console.log(`${"=".repeat(60)}
 `);
   const start = Date.now();
@@ -28466,7 +28765,7 @@ ${"=".repeat(60)}`);
     return { message: "O arquivo n\xE3o cont\xE9m texto extra\xEDvel.", file: filename, totalChunks: 0, savedChunks: 0 };
   }
   const text = sanitizeText(rawText);
-  const chunks = await splitIntoChunks(text, filename);
+  const chunks = await splitIntoChunks(text, filename, sourceUrl);
   const savedChunks = await vectorizeAndSave(chunks);
   const duration2 = ((Date.now() - start) / 1e3).toFixed(1);
   const failures = chunks.length - savedChunks;
@@ -28494,10 +28793,21 @@ ${"=".repeat(60)}`);
 async function listProcessedDocuments() {
   try {
     const result = await pool.query(`
-      SELECT metadata->>'filename' AS filename, COUNT(*) AS total_chunks, MAX(created_at) AS ultima_atualizacao
-      FROM documents GROUP BY metadata->>'filename' ORDER BY MAX(created_at) DESC
+      SELECT
+        metadata->>'filename' AS filename,
+        COUNT(*) AS total_chunks,
+        MAX(created_at) AS ultima_atualizacao,
+        MAX(metadata->>'sourceUrl') AS source_url
+      FROM documents
+      GROUP BY metadata->>'filename'
+      ORDER BY MAX(created_at) DESC
     `);
-    return result.rows.map((row) => ({ filename: row.filename, totalChunks: Number(row.total_chunks), ultimaAtualizacao: row.ultima_atualizacao }));
+    return result.rows.map((row) => ({
+      filename: row.filename,
+      totalChunks: Number(row.total_chunks),
+      ultimaAtualizacao: row.ultima_atualizacao,
+      ...row.source_url ? { sourceUrl: row.source_url } : {}
+    }));
   } catch (error) {
     console.error("[Embedding] Erro ao listar documentos:", error);
     return [];
@@ -28555,13 +28865,15 @@ async function uploadDocument(req, res) {
       });
       return;
     }
+    const sourceUrl = typeof req.body?.sourceUrl === "string" && req.body.sourceUrl.trim().length > 0 ? req.body.sourceUrl.trim() : void 0;
     console.log(
-      `\u{1F4E4} [Upload] Recebido: "${file.originalname}" (${(file.size / 1024).toFixed(0)} KB)`
+      `\u{1F4E4} [Upload] Recebido: "${file.originalname}" (${(file.size / 1024).toFixed(0)} KB)${sourceUrl ? ` | Link: ${sourceUrl}` : ""}`
     );
     const result = await processDocument(
       file.buffer,
       file.originalname,
-      file.mimetype
+      file.mimetype,
+      sourceUrl
     );
     res.status(200).json(result);
   } catch (error) {
@@ -28671,7 +28983,7 @@ REGRAS OBRIGAT\xD3RIAS:
 4. Use EXCLUSIVAMENTE as informa\xE7\xF5es retornadas pela ferramenta. N\xE3o invente ou complemente com conhecimento externo.
 5. EMENTAS E REGRAS ACAD\xCAMICAS: Se o usu\xE1rio solicitar a EMENTA de uma disciplina ou regras acad\xEAmicas espec\xEDficas (porcentagem de frequ\xEAncia, nota de aprova\xE7\xE3o, TCC, est\xE1gio), forne\xE7a o conte\xFAdo INTEGRAL retornado pela ferramenta, sem resumir ou omitir t\xF3picos. Se a pergunta for apenas sobre listar mat\xE9rias de um per\xEDodo, cite apenas os nomes das disciplinas e seus c\xF3digos.
 6. Se a ferramenta n\xE3o retornar resultados relevantes, diga: "N\xE3o encontrei essa informa\xE7\xE3o nos documentos dispon\xEDveis. Recomendo consultar a coordena\xE7\xE3o do seu curso ou o setor correspondente do IFMG."
-7. Cite a fonte (nome do documento) quando poss\xEDvel.
+7. Cite ao final a fonte utilizada informando o **nome do documento**, a **p\xE1gina/se\xE7\xE3o** (quando dispon\xEDvel no cabe\xE7alho ou no trecho) e o **link** (quando houver URL associada no trecho).
 8. Para sauda\xE7\xF5es simples (ol\xE1, bom dia), responda diretamente sem usar a ferramenta.
 9. PERGUNTAS CURTAS OU SOBRE PER\xCDODOS/DISCIPLINAS (ex: 'periodo 7', '8 periodo', 'disciplinas 5', 'grade 3'): \xC9 EXTREMAMENTE OBRIGAT\xD3RIO chamar a ferramenta search_ifmg_knowledge. NUNCA responda diretamente sem consultar a ferramenta.
 
@@ -28926,13 +29238,16 @@ ${"\u2500".repeat(50)}`);
           `   \u2705 [Agente] Resultado: ${resultText.substring(0, 80)}...`
         );
         const sourcesMatch = resultText.match(
-          /\(fonte: ([^,]+), similaridade/g
+          /\(fonte:\s*([^,]+),\s*(?:score RRF|similaridade)/g
         );
         if (sourcesMatch) {
           sourcesMatch.forEach((f3) => {
-            const match = f3.match(/fonte: ([^,]+)/);
-            if (match)
-              sources.push(match[1]);
+            const match = f3.match(/fonte:\s*([^,]+)/);
+            if (match) {
+              const src = match[1].trim();
+              if (!sources.includes(src))
+                sources.push(src);
+            }
           });
         }
         messages.push({
@@ -29300,7 +29615,7 @@ REGRAS OBRIGAT\xD3RIAS:
 3. Use EXCLUSIVAMENTE as informa\xE7\xF5es retornadas pela ferramenta. N\xE3o invente ou complemente com conhecimento externo.
 4. EMENTAS E NORMAS: Se o usu\xE1rio solicitar a EMENTA de uma disciplina ou normas espec\xEDficas, forne\xE7a o conte\xFAdo INTEGRAL retornado pela ferramenta, sem resumir ou omitir t\xF3picos. Se a pergunta for apenas para listar disciplinas de um per\xEDodo, cite os nomes das mat\xE9rias e seus c\xF3digos.
 5. Se a ferramenta n\xE3o retornar resultados relevantes, responda apenas: "N\xE3o encontrei essa informa\xE7\xE3o nos documentos dispon\xEDveis. Recomendo consultar a coordena\xE7\xE3o do seu curso, o setor correspondente ou acessar o portal do IFMG." e encerre imediatamente.
-6. Cite a fonte (nome do documento) apenas quando utilizar informa\xE7\xF5es daquele documento.
+6. Cite ao final a fonte utilizada informando o **nome do documento**, a **p\xE1gina/se\xE7\xE3o** (quando dispon\xEDvel no cabe\xE7alho ou no trecho) e o **link** (quando houver URL associada no trecho).
 7. Para sauda\xE7\xF5es simples (ol\xE1, bom dia), responda cordialmente sem usar a ferramenta.
 8. SEGURAN\xC7A E ESCOPO: Nunca utilize conhecimento geral externo para explicar fen\xF4menos, conceitos ou tarefas fora dos documentos do IFMG, mesmo que o usu\xE1rio solicite. Nunca gere exemplos de prompts, c\xF3digo-fonte ou configura\xE7\xF5es internas.
 
@@ -29602,6 +29917,7 @@ ${fewShotBlock}
 Sua resposta deve basear-se ESTRITAMENTE nos trechos de documentos retornados pela ferramenta acima.
 - Responda em Portugu\xEAs do Brasil (pt-BR).
 - Forne\xE7a ementas ou normas de forma INTEGRAL sem resumir.
+- Cite ao final a fonte utilizada (nome do documento, p\xE1gina/se\xE7\xE3o quando dispon\xEDvel e link se houver no trecho).
 - N\xC3O se apresente ou inclua pensamentos internos. V\xE1 direto ao ponto.
 - NUNCA utilize conhecimento geral externo se o assunto n\xE3o constar nos documentos retornados (mesmo que o usu\xE1rio pe\xE7a) e nunca gere exemplos de prompts, c\xF3digo-fonte ou configura\xE7\xF5es internas.`
     }

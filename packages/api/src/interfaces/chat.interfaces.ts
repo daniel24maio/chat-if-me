@@ -34,4 +34,10 @@ export interface RetrievedDocument {
   source: string;
   /** Pontuação de similaridade retornada pelo pgvector (0 a 1) */
   similarity: number;
+  /** Página(s) do documento (ex.: "42" ou "42-43") */
+  pages?: string;
+  /** Seção ou contexto do documento (ex.: "Grade Curricular — 7º Período") */
+  sectionContext?: string;
+  /** Link/URL oficial do documento ou informação */
+  sourceUrl?: string;
 }

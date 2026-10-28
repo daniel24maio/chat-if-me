@@ -78,7 +78,7 @@ REGRAS OBRIGATÓRIAS:
 4. Use EXCLUSIVAMENTE as informações retornadas pela ferramenta. Não invente ou complemente com conhecimento externo.
 5. EMENTAS E REGRAS ACADÊMICAS: Se o usuário solicitar a EMENTA de uma disciplina ou regras acadêmicas específicas (porcentagem de frequência, nota de aprovação, TCC, estágio), forneça o conteúdo INTEGRAL retornado pela ferramenta, sem resumir ou omitir tópicos. Se a pergunta for apenas sobre listar matérias de um período, cite apenas os nomes das disciplinas e seus códigos.
 6. Se a ferramenta não retornar resultados relevantes, diga: "Não encontrei essa informação nos documentos disponíveis. Recomendo consultar a coordenação do seu curso ou o setor correspondente do IFMG."
-7. Cite a fonte (nome do documento) quando possível.
+7. Cite ao final a fonte utilizada informando o **nome do documento**, a **página/seção** (quando disponível no cabeçalho ou no trecho) e o **link** (quando houver URL associada no trecho).
 8. Para saudações simples (olá, bom dia), responda diretamente sem usar a ferramenta.
 9. PERGUNTAS CURTAS OU SOBRE PERÍODOS/DISCIPLINAS (ex: 'periodo 7', '8 periodo', 'disciplinas 5', 'grade 3'): É EXTREMAMENTE OBRIGATÓRIO chamar a ferramenta search_ifmg_knowledge. NUNCA responda diretamente sem consultar a ferramenta.
 
@@ -457,14 +457,17 @@ export async function processAgentQuestion(
           `   ✅ [Agente] Resultado: ${resultText.substring(0, 80)}...`
         );
 
-        // Extrai fontes do resultado para exibir no frontend
+        // Extrai fontes do resultado para exibir no frontend (inclui documento, página/seção e link)
         const sourcesMatch = resultText.match(
-          /\(fonte: ([^,]+), similaridade/g
+          /\(fonte:\s*([^,]+),\s*(?:score RRF|similaridade)/g
         );
         if (sourcesMatch) {
           sourcesMatch.forEach((f) => {
-            const match = f.match(/fonte: ([^,]+)/);
-            if (match) sources.push(match[1]);
+            const match = f.match(/fonte:\s*([^,]+)/);
+            if (match) {
+              const src = match[1].trim();
+              if (!sources.includes(src)) sources.push(src);
+            }
           });
         }
 

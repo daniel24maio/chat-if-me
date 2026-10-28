@@ -50,6 +50,10 @@ export interface ChunkData {
     chunkingType: "normative" | "syllabus" | "table" | "general";
     /** Seção/capítulo do documento onde este chunk se encontra */
     sectionContext: string;
+    /** Página(s) do documento onde este chunk se encontra (ex: "42" ou "42-43") */
+    pages?: string;
+    /** URL ou link oficial de referência do documento/informação */
+    sourceUrl?: string;
   };
 }
 

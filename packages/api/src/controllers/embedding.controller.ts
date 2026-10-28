@@ -66,15 +66,21 @@ export async function uploadDocument(
       return;
     }
 
+    const sourceUrl =
+      typeof req.body?.sourceUrl === "string" && req.body.sourceUrl.trim().length > 0
+        ? req.body.sourceUrl.trim()
+        : undefined;
+
     console.log(
-      `📤 [Upload] Recebido: "${file.originalname}" (${(file.size / 1024).toFixed(0)} KB)`
+      `📤 [Upload] Recebido: "${file.originalname}" (${(file.size / 1024).toFixed(0)} KB)${sourceUrl ? ` | Link: ${sourceUrl}` : ""}`
     );
 
     // Delega o processamento ao serviço de embedding
     const result = await processDocument(
       file.buffer,
       file.originalname,
-      file.mimetype
+      file.mimetype,
+      sourceUrl
     );
 
     res.status(200).json(result);

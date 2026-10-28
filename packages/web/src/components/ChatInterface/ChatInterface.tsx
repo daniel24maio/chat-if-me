@@ -673,12 +673,31 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ isBeta = false }) => {
                   </div>
                 </div>
 
-                {msg.sources && msg.sources.length > 0 && msg.mode === 'agent' && (
+                {msg.sources && msg.sources.length > 0 && (
                   <div className="message-fontes-inline">
                     <span className="fontes-label">📚 Fontes:</span>
-                    {msg.sources.map((fonte, i) => (
-                      <span key={i} className="fonte-tag">{fonte}</span>
-                    ))}
+                    {msg.sources.map((fonte, i) => {
+                      const pipeParts = fonte.split(' | ');
+                      const urlMatch = fonte.match(/https?:\/\/[^\s]+/i);
+                      const url = urlMatch ? urlMatch[0] : undefined;
+                      const label = pipeParts[0]?.trim() || fonte;
+                      return url ? (
+                        <a
+                          key={i}
+                          href={url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="fonte-tag fonte-link"
+                          title={`Abrir documento/página oficial: ${url}`}
+                        >
+                          📄 {label} 🔗
+                        </a>
+                      ) : (
+                        <span key={i} className="fonte-tag">
+                          📄 {label}
+                        </span>
+                      );
+                    })}
                   </div>
                 )}
 
