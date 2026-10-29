@@ -94,7 +94,7 @@ function inferIntentionFromKeywords(text: string): string {
 
   // Pergunta sobre LISTAGEM de disciplinas de um período/semestre — é CURSO, não DISCIPLINA
   if (/(?:disciplinas?|mat[eé]rias?|grade)\s+(?:do|da|no|na|de)?\s*(?:\d+[oaºª]?\s*)?per[íi]odo/i.test(text)) return "CURSO";
-  if (/(?:\d+[oaºª]?\s*)?(?:per[íi]odo|semestre)\s+(?:de\s+)?(?:sistemas|administra|computa|ci[eê]nc)/i.test(text)) return "CURSO";
+  if (/(?:\d+[oaºª]?\s*)?(?:per[íi]odo|semestre)\s+(?:de\s+)?(?:sistemas|administra|computa|pedagogia|engenharia|metal[uú]rg|ci[eê]nc)/i.test(text)) return "CURSO";
 
   // Estrutura geral do curso
   if (/matriz|grade\s+curricular|curr[ií]cula|ppc|dura[cç][aã]o\s+do\s+curso/i.test(t)) return "CURSO";
@@ -346,8 +346,8 @@ const COURSE_PROFILES: CourseProfile[] = [
   },
   {
     id: "PED",
-    queryRegex: /\b(?:pedagogia|oblped|ppcped)\b/i,
-    docMatchRegex: /\b(?:ppcped|oblped|licenciatura\s+em\s+pedagogia|curso\s+de\s+pedagogia)\b/i,
+    queryRegex: /\b(?:pedagogia|obl[e]?peda?|ppcped[a-z]*)\b/i,
+    docMatchRegex: /\b(?:ppcped[a-z]*|obl[e]?peda?|licenciatura\s+em\s+pedagogia|curso\s+de\s+pedagogia)\b/i,
     ftsClause: "(oblped:* | ppcped:* | pedagogia)",
   },
   {
@@ -409,7 +409,7 @@ function formatFTSQuery(query: string, intent?: string): string {
   };
 
   // Se houver um código de disciplina (ex: OBBGSIN.034 ou OBBGADM.001), extrai como termo FTS prioritário
-  const codeMatch = query.match(/(OBBGSIN|OBBGADM|OBBGEMT|OBLCOMP|OBLPED)\.?(\d{3})/i);
+  const codeMatch = query.match(/(OBBGSIN|OBBGADM|OBBGEMT|OBLCOMP|OBLE?PEDA?)\.?(\d{3})/i);
   let codeFTS = "";
   if (codeMatch) {
     codeFTS = `(${codeMatch[1].toLowerCase()}:* & (${codeMatch[2]} | ${codeMatch[1].toLowerCase()}.${codeMatch[2]}))`;
@@ -559,8 +559,9 @@ async function hybridSearch(
   const effectiveIntent = (!intention || intention === "OUTRAS") ? inferIntentionFromKeywords(fullSearchText) : intention;
   const isEmentaQuery = effectiveIntent === "DISCIPLINA_EMENTA" || effectiveIntent === "DISCIPLINA" || effectiveIntent === "CONTEUDO";
   const isCursoQuery = effectiveIntent === "CURSO" || effectiveIntent === "ESTRUTURA_CURSOS";
+  const isAskingEquivalenceOrAcea = /equivalen|acea|201[789]|2020/i.test(fullSearchText);
 
-  const codeMatch = fullSearchText.match(/(OBBGSIN|OBBGADM|OBBGEMT|OBLCOMP|OBLPED)\.?(\d{3})/i);
+  const codeMatch = fullSearchText.match(/(OBBGSIN|OBBGADM|OBBGEMT|OBLCOMP|OBLE?PEDA?)\.?(\d{3})/i);
   const targetCode = codeMatch ? `${codeMatch[1]}.${codeMatch[2]}`.toLowerCase() : null;
 
   const targetCourse = COURSE_PROFILES.find((c) => c.queryRegex.test(fullSearchText));
@@ -599,12 +600,23 @@ async function hybridSearch(
     const docFullText = `${doc.source} ${doc.sectionContext || ""} ${doc.content}`;
 
     // 1. Afinidade por Curso (evita colisão entre múltiplos PPCs no banco)
+    const matchesTargetCourse = Boolean(targetCourse && targetCourse.docMatchRegex.test(docFullText));
+    const belongsToOtherCourse = Boolean(
+      targetCourse && !matchesTargetCourse && otherCourses.some((oc) => oc.docMatchRegex.test(docFullText))
+    );
+
     if (targetCourse) {
-      if (targetCourse.docMatchRegex.test(docFullText)) {
+      if (matchesTargetCourse) {
         doc.similarity += 0.14;
-      } else if (otherCourses.some((oc) => oc.docMatchRegex.test(docFullText))) {
+      } else if (belongsToOtherCourse) {
         doc.similarity -= 0.15;
       }
+    }
+
+    // Se o documento pertence comprovadamente a OUTRO curso diferente do perguntado,
+    // não aplica bonificações de período, matriz ou ementa para evitar contaminação cruzada entre PPCs.
+    if (belongsToOtherCourse) {
+      continue;
     }
 
     // 2. Se a busca tem um código específico (ex: OBBGSIN.034)
@@ -633,9 +645,16 @@ async function hybridSearch(
     const hasAnyTabularRows =
       /(?:^|\n|\s)(?:[1-9]|10)\s+(?:(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}|Optativa\s+[IVX\d]+)\b/i.test(doc.content);
 
+    const isSecondaryOrHistoricalTable =
+      !isAskingEquivalenceOrAcea &&
+      /DISCIPLINAS\s+EQUIVALENTES|DISC\.?\s*EQUIVALENTE|N[AÃ]O\s+PASS[IÍ]VEIS\s+DE\s+ACEA|Matrizes\s+Praticadas|Pedagogia\s*20(?:17|18|19|20)/i.test(
+        docFullText
+      );
+
     const isMatrixTableChunk =
       !isEmentaCard &&
-      (/PER[IÍ]ODO\s+COD\.?\s+DISCIPLINA|Carga\s+Hor[aá]ria\s+Total\s+do\s+Semestre|DISCIPLINAS\s+OBRIGAT[OÓ]RIAS/i.test(
+      !isSecondaryOrHistoricalTable &&
+      (/PER[IÍ]\s*ODO\s+C[OÓ]D\.?\s+DISCIPLINA|Carga\s+Hor[aá]ria\s+Total\s+do\s+Semestre|CH\s+total\s+semestre|DISCIPLINAS\s+OBRIGAT[OÓ]RIAS/i.test(
         docFullText
       ) ||
         distinctCodes.size >= 3 ||
@@ -646,8 +665,11 @@ async function hybridSearch(
     const matchesTargetPeriod = tabularTargetMatches > 0 || matchesExplicitPeriod;
 
     if (targetPeriod) {
-      if (isMatrixTableChunk && matchesTargetPeriod) {
-        // Chunk da Tabela da Matriz Curricular que contém as disciplinas do período perguntado (ex: Página 33 do PPCBSI)
+      if (isSecondaryOrHistoricalTable) {
+        // Desprioriza tabelas de equivalência curricular, ACEA ou matrizes antigas quando não solicitadas
+        doc.similarity -= 0.10;
+      } else if (isMatrixTableChunk && matchesTargetPeriod) {
+        // Chunk da Tabela da Matriz Curricular que contém as disciplinas do período perguntado (ex: Página 33 do PPCBSI ou Página 30 do PPCPedagogia)
         doc.similarity += 0.42;
       } else if (isMatrixTableChunk && !matchesTargetPeriod && hasAnyTabularRows) {
         // Parte da tabela da Matriz Curricular de OUTROS períodos (ex: Páginas 31-32 com períodos 1 a 6)
@@ -662,6 +684,8 @@ async function hybridSearch(
         // Chunk explícito de outro período diferente do perguntado
         doc.similarity -= 0.06;
       }
+    } else if (isCursoQuery && isSecondaryOrHistoricalTable) {
+      doc.similarity -= 0.10;
     } else if (isCursoQuery && isMatrixTableChunk) {
       // Pergunta geral sobre matriz/grade curricular sem período específico
       doc.similarity += 0.25;

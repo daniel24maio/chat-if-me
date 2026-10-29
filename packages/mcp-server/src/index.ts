@@ -218,8 +218,8 @@ const COURSE_PROFILES: CourseProfile[] = [
   },
   {
     id: "PED",
-    queryRegex: /\b(?:pedagogia|oblped|ppcped)\b/i,
-    docMatchRegex: /\b(?:ppcped|oblped|licenciatura\s+em\s+pedagogia|curso\s+de\s+pedagogia)\b/i,
+    queryRegex: /\b(?:pedagogia|obl[e]?peda?|ppcped[a-z]*)\b/i,
+    docMatchRegex: /\b(?:ppcped[a-z]*|obl[e]?peda?|licenciatura\s+em\s+pedagogia|curso\s+de\s+pedagogia)\b/i,
     ftsClause: "(oblped:* | ppcped:* | pedagogia)",
   },
   {
@@ -281,7 +281,7 @@ function formatFTSQuery(query: string, intent?: string, fullContextText?: string
     "10": "(decimo | décimo | 10 | 10º)",
   };
 
-  const codeMatch = detectionText.match(/(OBBGSIN|OBBGADM|OBBGEMT|OBLCOMP|OBLPED)\.?(\d{3})/i);
+  const codeMatch = detectionText.match(/(OBBGSIN|OBBGADM|OBBGEMT|OBLCOMP|OBLE?PEDA?)\.?(\d{3})/i);
   let codeFTS = "";
   if (codeMatch) {
     codeFTS = `(${codeMatch[1].toLowerCase()}:* & (${codeMatch[2]} | ${codeMatch[1].toLowerCase()}.${codeMatch[2]}))`;
@@ -360,8 +360,9 @@ function applyRerankingBoosts(
 ): void {
   const isEmentaQuery = intent === "DISCIPLINA_EMENTA" || intent === "DISCIPLINA" || intent === "CONTEUDO";
   const isCursoQuery = intent === "CURSO" || intent === "ESTRUTURA_CURSOS";
+  const isAskingEquivalenceOrAcea = /equivalen|acea|201[789]|2020/i.test(fullSearchText);
 
-  const codeMatch = fullSearchText.match(/(OBBGSIN|OBBGADM|OBBGEMT|OBLCOMP|OBLPED)\.?(\d{3})/i);
+  const codeMatch = fullSearchText.match(/(OBBGSIN|OBBGADM|OBBGEMT|OBLCOMP|OBLE?PEDA?)\.?(\d{3})/i);
   const targetCode = codeMatch ? `${codeMatch[1]}.${codeMatch[2]}`.toLowerCase() : null;
 
   const targetCourse = COURSE_PROFILES.find((c) => c.queryRegex.test(fullSearchText));
@@ -400,12 +401,23 @@ function applyRerankingBoosts(
     const docFullText = `${doc.source} ${doc.sectionContext || ""} ${doc.content}`;
 
     // 1. Afinidade por Curso (evita colisão entre múltiplos PPCs no banco)
+    const matchesTargetCourse = Boolean(targetCourse && targetCourse.docMatchRegex.test(docFullText));
+    const belongsToOtherCourse = Boolean(
+      targetCourse && !matchesTargetCourse && otherCourses.some((oc) => oc.docMatchRegex.test(docFullText))
+    );
+
     if (targetCourse) {
-      if (targetCourse.docMatchRegex.test(docFullText)) {
+      if (matchesTargetCourse) {
         doc.similarity += 0.14;
-      } else if (otherCourses.some((oc) => oc.docMatchRegex.test(docFullText))) {
+      } else if (belongsToOtherCourse) {
         doc.similarity -= 0.15;
       }
+    }
+
+    // Se o documento pertence comprovadamente a OUTRO curso diferente do perguntado,
+    // não aplica bonificações de período, matriz ou ementa para evitar contaminação cruzada entre PPCs.
+    if (belongsToOtherCourse) {
+      continue;
     }
 
     // 2. Código específico de disciplina (ex: OBBGSIN.034)
@@ -433,9 +445,16 @@ function applyRerankingBoosts(
     const hasAnyTabularRows =
       /(?:^|\n|\s)(?:[1-9]|10)\s+(?:(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}|Optativa\s+[IVX\d]+)\b/i.test(doc.content);
 
+    const isSecondaryOrHistoricalTable =
+      !isAskingEquivalenceOrAcea &&
+      /DISCIPLINAS\s+EQUIVALENTES|DISC\.?\s*EQUIVALENTE|N[AÃ]O\s+PASS[IÍ]VEIS\s+DE\s+ACEA|Matrizes\s+Praticadas|Pedagogia\s*20(?:17|18|19|20)/i.test(
+        docFullText
+      );
+
     const isMatrixTableChunk =
       !isEmentaCard &&
-      (/PER[IÍ]ODO\s+COD\.?\s+DISCIPLINA|Carga\s+Hor[aá]ria\s+Total\s+do\s+Semestre|DISCIPLINAS\s+OBRIGAT[OÓ]RIAS/i.test(
+      !isSecondaryOrHistoricalTable &&
+      (/PER[IÍ]\s*ODO\s+C[OÓ]D\.?\s+DISCIPLINA|Carga\s+Hor[aá]ria\s+Total\s+do\s+Semestre|CH\s+total\s+semestre|DISCIPLINAS\s+OBRIGAT[OÓ]RIAS/i.test(
         docFullText
       ) ||
         distinctCodes.size >= 3 ||
@@ -446,8 +465,11 @@ function applyRerankingBoosts(
     const matchesTargetPeriod = tabularTargetMatches > 0 || matchesExplicitPeriod;
 
     if (targetPeriod) {
-      if (isMatrixTableChunk && matchesTargetPeriod) {
-        // Chunk da Tabela da Matriz Curricular que contém as disciplinas do período perguntado (ex: Página 33 do PPCBSI)
+      if (isSecondaryOrHistoricalTable) {
+        // Desprioriza tabelas de equivalência curricular, ACEA ou matrizes antigas quando não solicitadas
+        doc.similarity -= 0.10;
+      } else if (isMatrixTableChunk && matchesTargetPeriod) {
+        // Chunk da Tabela da Matriz Curricular que contém as disciplinas do período perguntado (ex: Página 33 do PPCBSI ou Página 30 do PPCPedagogia)
         doc.similarity += 0.42;
       } else if (isMatrixTableChunk && !matchesTargetPeriod && hasAnyTabularRows) {
         // Parte da tabela da Matriz Curricular de OUTROS períodos (ex: Páginas 31-32 com períodos 1 a 6)
@@ -462,6 +484,8 @@ function applyRerankingBoosts(
         // Chunk explícito de outro período diferente do perguntado
         doc.similarity -= 0.06;
       }
+    } else if (isCursoQuery && isSecondaryOrHistoricalTable) {
+      doc.similarity -= 0.10;
     } else if (isCursoQuery && isMatrixTableChunk) {
       // Pergunta geral sobre matriz/grade curricular sem período específico
       doc.similarity += 0.25;

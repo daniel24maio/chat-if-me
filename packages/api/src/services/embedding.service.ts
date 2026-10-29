@@ -301,14 +301,19 @@ async function syllabusChunking(text: string, filename: string, sourceUrl?: stri
     const distinctCourseCodes = new Set(
       (partTrimmed.match(/\b(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}\b/gi) || []).map((c) => c.toUpperCase())
     );
+    const isEquivalenceOrAcea =
+      /DISCIPLINAS\s+EQUIVALENTES|DISC\.?\s*EQUIVALENTE|N[AÃ]O\s+PASS[IÍ]VEIS\s+DE\s+ACEA|Matrizes\s+Praticadas/i.test(
+        partTrimmed
+      );
     const isMatrixOrPeriodList =
       !hasExplicitSyllabusFields &&
+      !isEquivalenceOrAcea &&
       (Boolean(periodMatch) ||
-        /PER[IÍ]ODO\s+COD\.?\s+DISCIPLINA|Matriz\s+Curricular/i.test(partTrimmed) ||
+        /PER[IÍ]ODO\s+C[OÓ]D\.?\s+DISCIPLINA|CH\s+total\s+semestre|Matriz\s+Curricular/i.test(partTrimmed) ||
         distinctCourseCodes.size >= 2);
 
-    if (isMatrixOrPeriodList) {
-      // Se é tabela de matriz curricular ou listagem de período, não contamina com disciplina individual
+    if (isMatrixOrPeriodList || isEquivalenceOrAcea) {
+      // Se é tabela de matriz curricular ou tabela de equivalências, não contamina com disciplina individual
       currentDiscipline = "";
     } else {
       // Busca código/nome de disciplina para fichas de ementa
@@ -329,9 +334,11 @@ async function syllabusChunking(text: string, filename: string, sourceUrl?: stri
       }
     }
 
-    // Determina contexto: listagem de período/matriz > disciplina específica > fallback Ementário
+    // Determina contexto: listagem de período/matriz > equivalências > disciplina específica > fallback Ementário
     let context: string;
-    if (isMatrixOrPeriodList) {
+    if (isEquivalenceOrAcea) {
+      context = "Tabela de Equivalências / ACEA";
+    } else if (isMatrixOrPeriodList) {
       const explicitPeriods = Array.from(
         partTrimmed.matchAll(/\b(\d{1,2})[oOºª]?\s*Per[íi]odo\b/gi)
       ).map((m) => Number(m[1]));
@@ -418,6 +425,10 @@ async function normativeChunking(text: string, filename: string, sourceUrl?: str
     lastPage = nextLastPage;
     if (partTrimmed.length === 0) continue;
 
+    const isEquivalenceOrAcea =
+      /DISCIPLINAS\s+EQUIVALENTES|DISC\.?\s*EQUIVALENTE|N[AÃ]O\s+PASS[IÍ]VEIS\s+DE\s+ACEA|Matrizes\s+Praticadas/i.test(
+        partTrimmed
+      );
     const hierarchyMatch = partTrimmed.match(/^(?:CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o|Art\.\s+\d+º?)\s+[IVXLCDM\d\w\s]+.*?(?:\n|$)/i);
     const tabularPeriods = Array.from(
       new Set(
@@ -429,7 +440,9 @@ async function normativeChunking(text: string, filename: string, sourceUrl?: str
       )
     ).sort((a, b) => a - b);
 
-    if (tabularPeriods.length > 0) {
+    if (isEquivalenceOrAcea) {
+      currentContext = "Tabela de Equivalências / ACEA";
+    } else if (tabularPeriods.length > 0) {
       currentContext = `Matriz Curricular — ${tabularPeriods.map((n) => `${n}º Período`).join(", ")}`;
     } else if (hierarchyMatch) {
       currentContext = hierarchyMatch[0].trim();

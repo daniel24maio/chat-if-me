@@ -63,7 +63,12 @@ function cleanOCR(text: string): string {
  * Se começa com maiúscula, mantém o hífen (pode ser nome próprio composto).
  */
 function joinHyphenation(text: string): string {
-  return text.replace(/(\w)-\n([a-záàâãéêíóôõúüç])/gi, (_, antes, depois) => {
+  // Normaliza cabeçalho "PERÍ\nODO" quebrado em coluna estreita de tabelas de PPC (ex: Pedagogia)
+  let normalized = text
+    .replace(/\bPER([IÍ])\s*\n\s*ODO\b/gi, "PER$1ODO")
+    .replace(/\b(PER[IÍ]ODO)\s*\n\s*(C[OÓ]D\.?\s+DISCIPLINA\b)/gi, "$1 $2");
+
+  return normalized.replace(/(\w)-\n([a-záàâãéêíóôõúüç])/gi, (_, antes, depois) => {
     // Prefixos que devem manter o hífen (pré-, pós-, semi-, anti-, etc.)
     const prefixes = /(?:pr[eé]|p[oó]s|semi|anti|auto|contra|extra|infra|inter|intra|macro|micro|mini|multi|neo|proto|pseudo|sobre|sub|super|supra|ultra)$/i;
     if (prefixes.test(antes)) {
@@ -148,14 +153,41 @@ function removeHeadersFooters(text: string): string {
  * para evitar falsos positivos em frases como "conforme Anexo I do regulamento".
  */
 function pruneAppendices(text: string): string {
-  // Busca ANEXO ou APÊNDICE no início de uma linha, seguido de número romano, letra ou dígito
-  const match = text.match(
-    /^[\t ]*(?:ANEXO|AP[EÊ]NDICE)\s+[IVXLCDM\dA-Z]+/im
-  );
+  let workingText = text;
 
-  if (match && match.index !== undefined) {
-    const prunedText = text.slice(0, match.index).trim();
-    const discarded = text.length - prunedText.length;
+  // 1. Trunca blocos finais de matrizes antigas/históricas (ex: "Matrizes Praticadas - Anos 2017..." em Pedagogia)
+  const oldMatricesMatch = workingText.match(
+    /^[\t ]*Matrizes\s+Praticadas\s*-\s*Anos\s+201\d/im
+  );
+  if (oldMatricesMatch && oldMatricesMatch.index !== undefined) {
+    const pruned = workingText.slice(0, oldMatricesMatch.index).trim();
+    console.log(
+      `✂️  [Sanitização] Matrizes históricas detectadas ("${oldMatricesMatch[0].trim()}"). ` +
+      `Descartados ${workingText.length - pruned.length} chars.`
+    );
+    workingText = pruned;
+  }
+
+  // 2. Busca ANEXO ou APÊNDICE no início de uma linha, seguido de número romano, letra ou dígito.
+  // Se ainda houver um REGULAMENTO substantivo (TCC, Estágio, Atividades Complementares) após o ANEXO,
+  // ignora esse anexo intermediário e verifica o próximo (preservando regulamentos embutidos no PPC).
+  const appendixRegex = /^[\t ]*(?:ANEXO|AP[EÊ]NDICE)\s+[IVXLCDM\dA-Z]+/gim;
+  let match: RegExpExecArray | null;
+
+  while ((match = appendixRegex.exec(workingText)) !== null) {
+    if (match.index === undefined) continue;
+    const remainingText = workingText.slice(match.index + match[0].length);
+    const hasRegulationAfter =
+      /(?:^|\n)[\t ]*REGULAMENTO\s+(?:DO|DE|PARA|DAS)\s+(?:TRABALHO\s+DE\s+CONCLUS[AÃ]O|EST[AÁ]GIO|ATIVIDADES)/i.test(
+        remainingText
+      );
+
+    if (hasRegulationAfter) {
+      continue;
+    }
+
+    const prunedText = workingText.slice(0, match.index).trim();
+    const discarded = workingText.length - prunedText.length;
     console.log(
       `✂️  [Sanitização] Anexo detectado ("${match[0].trim()}"). ` +
       `Descartados ${discarded} chars de formulários/anexos.`
@@ -163,7 +195,7 @@ function pruneAppendices(text: string): string {
     return prunedText;
   }
 
-  return text;
+  return workingText;
 }
 
 // ---------------------------------------------------------------------------
@@ -202,11 +234,11 @@ function prepareNormativeChunking(text: string): string {
     /(?<!\n\n)(?=^[\t ]*DOS?\s+DIREITOS?\s)/gm,                              // DOS DIREITOS ...
     /(?<!\n\n)(?=^[\t ]*DOS?\s+DEVERES?\s)/gm,                               // DOS DEVERES ...
     /(?<!\n\n)(?=^[\t ]*\d{1,2}[oOºª]?\s*Per[íi]odo\b)/gim,                 // 1º Período ... 10º Período
-    /(?<!\n\n)(?=^[\t ]*PER[IÍ]ODO\s+COD\.?\s+DISCIPLINA\b)/gim,            // Cabeçalho de período na Matriz Curricular
+    /(?<!\n\n)(?=^[\t ]*PER[IÍ]ODO\s+C[OÓ]D\.?\s+DISCIPLINA\b)/gim,          // Cabeçalho de período na Matriz Curricular
     /(?<!\n\n)(?=^[\t ]*C[oó]digo:\s)/gim,                                   // Código: OBBG...
     /(?<!\n\n)(?=^[\t ]*Nome da disciplina:\s)/gim,                          // Nome da disciplina: ...
     /(?<!\n\n)(?=^[\t ]*Matriz Curricular\b)/gim,                            // Matriz Curricular
-    /(?<!\n\n)(?=^[\t ]*DISCIPLINAS\s+(?:OBRIGAT[OÓ]RIAS|OPTATIVAS)\b)/gim, // Subtítulos da Matriz
+    /(?<!\n\n)(?=^[\t ]*DISCIPLINAS\s+(?:OBRIGAT[OÓ]RIAS|OPTATIVAS|EQUIVALENTES|N[AÃ]O\s+PASS[IÍ]VEIS)\b)/gim, // Subtítulos da Matriz
     /(?<!\n\n)(?=^[\t ]*\[\[\s*PAG_\d+\s*\]\])/gim,                         // Marcadores de página
   ];
 
@@ -232,13 +264,13 @@ function prepareNormativeChunking(text: string): string {
       continue;
     }
 
-    // Preserva quebra de linha antes de linhas tabulares de disciplinas (ex: "7 OBBGSIN.040 ...", "7 Optativa III", "Carga Horária Total")
+    // Preserva quebra de linha antes de linhas tabulares de disciplinas (ex: "7 OBBGSIN.040 ...", "7 OBLPEDA.094 ...", "Carga Horária Total", "CH total semestre")
     const isTabularRowOrMarker =
-      /^[\t ]*(?:\d{1,2}\s+(?:(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}|Optativa\s+[IVX\d]+)|Carga\s+Hor[aá]ria\s+Total|PER[IÍ]ODO\s+COD\.?\s+DISCIPLINA|Ementa:|Objetivo|Bibliografia|\[\[\s*PAG_\d+)/i.test(
+      /^[\t ]*(?:\d{1,2}\s+(?:(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}|Optativa\s+[IVX\d]+)|Carga\s+Hor[aá]ria\s+Total|CH\s+total\s+semestre|PER[IÍ]ODO\s+C[OÓ]D\.?\s+DISCIPLINA|Ementa:|Objetivo|Bibliografia|\[\[\s*PAG_\d+)/i.test(
         current
       );
     const prevWasTabularRow =
-      /^[\t ]*(?:\d{1,2}\s+(?:(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}|Optativa\s+[IVX\d]+)|Carga\s+Hor[aá]ria\s+Total|PER[IÍ]ODO\s+COD\.?\s+DISCIPLINA)/i.test(
+      /^[\t ]*(?:\d{1,2}\s+(?:(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}|Optativa\s+[IVX\d]+)|Carga\s+Hor[aá]ria\s+Total|CH\s+total\s+semestre|PER[IÍ]ODO\s+C[OÓ]D\.?\s+DISCIPLINA)/i.test(
         prev
       );
 
