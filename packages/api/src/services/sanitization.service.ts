@@ -155,27 +155,43 @@ function removeHeadersFooters(text: string): string {
 function pruneAppendices(text: string): string {
   let workingText = text;
 
-  // 1. Trunca blocos finais de matrizes antigas/históricas (ex: "Matrizes Praticadas - Anos 2017..." em Pedagogia)
-  const oldMatricesMatch = workingText.match(
-    /^[\t ]*Matrizes\s+Praticadas\s*-\s*Anos\s+201\d/im
-  );
-  if (oldMatricesMatch && oldMatricesMatch.index !== undefined) {
-    const pruned = workingText.slice(0, oldMatricesMatch.index).trim();
+  const isTableOfContentsMatch = (fullText: string, matchIndex: number): boolean => {
+    const lineEnd = fullText.indexOf('\n', matchIndex);
+    const fullLine = fullText.slice(matchIndex, lineEnd === -1 ? fullText.length : lineEnd);
+    // Linha de sumário com pontilhados (ex: "Matrizes Praticadas .... 198")
+    if (/\.{2,}/.test(fullLine)) return true;
+    // Em documentos extensos (ex: PPCs > 30k chars), entradas nos primeiros 25% são Sumário/Apresentação
+    if (fullText.length > 30000 && matchIndex < fullText.length * 0.25) return true;
+    return false;
+  };
+
+  // 1. Trunca blocos finais de matrizes antigas/históricas (ex: "Matrizes Curriculares- Anos 2017..." em Pedagogia)
+  const oldMatricesRegex =
+    /^[\t ]*Matrizes\s+(?:Curriculares|Praticadas)\s*-\s*Anos\s+201\d/gim;
+  let matrixMatch: RegExpExecArray | null;
+  while ((matrixMatch = oldMatricesRegex.exec(workingText)) !== null) {
+    if (matrixMatch.index === undefined) continue;
+    if (isTableOfContentsMatch(workingText, matrixMatch.index)) continue;
+
+    const pruned = workingText.slice(0, matrixMatch.index).trim();
     console.log(
-      `✂️  [Sanitização] Matrizes históricas detectadas ("${oldMatricesMatch[0].trim()}"). ` +
+      `✂️  [Sanitização] Matrizes históricas detectadas ("${matrixMatch[0].trim()}"). ` +
       `Descartados ${workingText.length - pruned.length} chars.`
     );
     workingText = pruned;
+    break;
   }
 
-  // 2. Busca ANEXO ou APÊNDICE no início de uma linha, seguido de número romano, letra ou dígito.
+  // 2. Busca ANEXO ou APÊNDICE (com ou sem parênteses, ex: "ANEXO I" ou "(ANEXO I)") no início de uma linha.
   // Se ainda houver um REGULAMENTO substantivo (TCC, Estágio, Atividades Complementares) após o ANEXO,
   // ignora esse anexo intermediário e verifica o próximo (preservando regulamentos embutidos no PPC).
-  const appendixRegex = /^[\t ]*(?:ANEXO|AP[EÊ]NDICE)\s+[IVXLCDM\dA-Z]+/gim;
+  const appendixRegex = /^[\t ]*\(?(?:ANEXO|AP[EÊ]NDICE)\s+[IVXLCDM\dA-Z]+\)?/gim;
   let match: RegExpExecArray | null;
 
   while ((match = appendixRegex.exec(workingText)) !== null) {
     if (match.index === undefined) continue;
+    if (isTableOfContentsMatch(workingText, match.index)) continue;
+
     const remainingText = workingText.slice(match.index + match[0].length);
     const hasRegulationAfter =
       /(?:^|\n)[\t ]*REGULAMENTO\s+(?:DO|DE|PARA|DAS)\s+(?:TRABALHO\s+DE\s+CONCLUS[AÃ]O|EST[AÁ]GIO|ATIVIDADES)/i.test(

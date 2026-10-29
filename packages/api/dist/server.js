@@ -28165,20 +28165,35 @@ function removeHeadersFooters(text) {
 }
 function pruneAppendices(text) {
   let workingText = text;
-  const oldMatricesMatch = workingText.match(
-    /^[\t ]*Matrizes\s+Praticadas\s*-\s*Anos\s+201\d/im
-  );
-  if (oldMatricesMatch && oldMatricesMatch.index !== void 0) {
-    const pruned = workingText.slice(0, oldMatricesMatch.index).trim();
+  const isTableOfContentsMatch = (fullText, matchIndex) => {
+    const lineEnd = fullText.indexOf("\n", matchIndex);
+    const fullLine = fullText.slice(matchIndex, lineEnd === -1 ? fullText.length : lineEnd);
+    if (/\.{2,}/.test(fullLine))
+      return true;
+    if (fullText.length > 3e4 && matchIndex < fullText.length * 0.25)
+      return true;
+    return false;
+  };
+  const oldMatricesRegex = /^[\t ]*Matrizes\s+(?:Curriculares|Praticadas)\s*-\s*Anos\s+201\d/gim;
+  let matrixMatch;
+  while ((matrixMatch = oldMatricesRegex.exec(workingText)) !== null) {
+    if (matrixMatch.index === void 0)
+      continue;
+    if (isTableOfContentsMatch(workingText, matrixMatch.index))
+      continue;
+    const pruned = workingText.slice(0, matrixMatch.index).trim();
     console.log(
-      `\u2702\uFE0F  [Sanitiza\xE7\xE3o] Matrizes hist\xF3ricas detectadas ("${oldMatricesMatch[0].trim()}"). Descartados ${workingText.length - pruned.length} chars.`
+      `\u2702\uFE0F  [Sanitiza\xE7\xE3o] Matrizes hist\xF3ricas detectadas ("${matrixMatch[0].trim()}"). Descartados ${workingText.length - pruned.length} chars.`
     );
     workingText = pruned;
+    break;
   }
-  const appendixRegex = /^[\t ]*(?:ANEXO|AP[EÊ]NDICE)\s+[IVXLCDM\dA-Z]+/gim;
+  const appendixRegex = /^[\t ]*\(?(?:ANEXO|AP[EÊ]NDICE)\s+[IVXLCDM\dA-Z]+\)?/gim;
   let match;
   while ((match = appendixRegex.exec(workingText)) !== null) {
     if (match.index === void 0)
+      continue;
+    if (isTableOfContentsMatch(workingText, match.index))
       continue;
     const remainingText = workingText.slice(match.index + match[0].length);
     const hasRegulationAfter = /(?:^|\n)[\t ]*REGULAMENTO\s+(?:DO|DE|PARA|DAS)\s+(?:TRABALHO\s+DE\s+CONCLUS[AÃ]O|EST[AÁ]GIO|ATIVIDADES)/i.test(
