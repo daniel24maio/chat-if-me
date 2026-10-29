@@ -260,6 +260,8 @@ async function syllabusChunking(text: string, filename: string, sourceUrl?: stri
       "\nDISCIPLINAS OBRIGATÓRIAS",
       "\nDISCIPLINAS OPTATIVAS",
       "\nMatriz Curricular",
+      "\n\nPERÍODO COD. DISCIPLINA",
+      "\nPERÍODO COD. DISCIPLINA",
       "\n1º Período",
       "\n2º Período",
       "\n3º Período",
@@ -330,13 +332,21 @@ async function syllabusChunking(text: string, filename: string, sourceUrl?: stri
     // Determina contexto: listagem de período/matriz > disciplina específica > fallback Ementário
     let context: string;
     if (isMatrixOrPeriodList) {
-      const allPeriodsInChunk = Array.from(
-        new Set(
-          Array.from(partTrimmed.matchAll(/\b(\d{1,2}[oOºª]?\s*Per[íi]odo)\b/gi)).map((m) => m[1].trim())
-        )
-      );
-      if (allPeriodsInChunk.length > 0) {
-        context = `Grade Curricular — ${allPeriodsInChunk.join(", ")}`;
+      const explicitPeriods = Array.from(
+        partTrimmed.matchAll(/\b(\d{1,2})[oOºª]?\s*Per[íi]odo\b/gi)
+      ).map((m) => Number(m[1]));
+      const tabularPeriods = Array.from(
+        partTrimmed.matchAll(/(?:^|\n|\s)(\d{1,2})\s+(?:(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}|Optativa\s+[IVX\d]+)\b/gi)
+      ).map((m) => Number(m[1]));
+
+      const allPeriodNums = Array.from(
+        new Set([...explicitPeriods, ...tabularPeriods].filter((n) => n >= 1 && n <= 12))
+      ).sort((a, b) => a - b);
+
+      if (allPeriodNums.length > 0) {
+        const formattedPeriods = allPeriodNums.map((n) => `${n}º Período`);
+        currentPeriod = formattedPeriods[formattedPeriods.length - 1];
+        context = `Matriz Curricular — ${formattedPeriods.join(", ")}`;
       } else if (currentPeriod) {
         context = `Grade Curricular — ${currentPeriod}`;
       } else {
@@ -388,6 +398,8 @@ async function normativeChunking(text: string, filename: string, sourceUrl?: str
       "\nArt. ",
       "\nMatriz Curricular",
       "\nDISCIPLINAS OBRIGATÓRIAS",
+      "\n\nPERÍODO COD. DISCIPLINA",
+      "\nPERÍODO COD. DISCIPLINA",
       "\nPERÍODO ",
       "\n\n",
       "\n",
@@ -407,7 +419,19 @@ async function normativeChunking(text: string, filename: string, sourceUrl?: str
     if (partTrimmed.length === 0) continue;
 
     const hierarchyMatch = partTrimmed.match(/^(?:CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o|Art\.\s+\d+º?)\s+[IVXLCDM\d\w\s]+.*?(?:\n|$)/i);
-    if (hierarchyMatch) {
+    const tabularPeriods = Array.from(
+      new Set(
+        Array.from(
+          partTrimmed.matchAll(/(?:^|\n|\s)(\d{1,2})\s+(?:(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}|Optativa\s+[IVX\d]+)\b/gi)
+        )
+          .map((m) => Number(m[1]))
+          .filter((n) => n >= 1 && n <= 12)
+      )
+    ).sort((a, b) => a - b);
+
+    if (tabularPeriods.length > 0) {
+      currentContext = `Matriz Curricular — ${tabularPeriods.map((n) => `${n}º Período`).join(", ")}`;
+    } else if (hierarchyMatch) {
       currentContext = hierarchyMatch[0].trim();
     }
 

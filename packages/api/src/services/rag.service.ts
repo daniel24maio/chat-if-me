@@ -216,7 +216,7 @@ async function generateEmbedding(text: string): Promise<number[]> {
  */
 const RRF_K = 60;
 const RRF_ALPHA = 0.5;
-const CANDIDATE_POOL_LIMIT = 30;
+const CANDIDATE_POOL_LIMIT = 50;
 
 /**
  * Extrai metadados complementares (página, seção e URL) do chunk caso não estejam
@@ -330,31 +330,31 @@ const COURSE_PROFILES: CourseProfile[] = [
     id: "BSI",
     queryRegex: /\b(?:sistemas?\s+de\s+informa[cç][aã]o|bsi|ppcbsi|obbgsin)\b/i,
     docMatchRegex: /\b(?:ppcbsi|obbgsin|sistemas?\s+de\s+informa[cç][aã]o)\b/i,
-    ftsClause: "(obbgsin | ppcbsi | (sistemas & informacao))",
+    ftsClause: "(obbgsin:* | ppcbsi:* | (sistemas & informacao))",
   },
   {
     id: "ADM",
     queryRegex: /\b(?:administra[cç][aã]o|obbgadm|ppcadm)\b/i,
     docMatchRegex: /\b(?:ppcadm|obbgadm|bacharelado\s+em\s+administra[cç][aã]o|curso\s+de\s+administra[cç][aã]o)\b/i,
-    ftsClause: "(obbgadm | ppcadm | administracao)",
+    ftsClause: "(obbgadm:* | ppcadm:* | administracao)",
   },
   {
     id: "EMT",
     queryRegex: /\b(?:engenharia\s+metal[uú]rgica|metal[uú]rgica|metalurgia|obbgemt|ppcemt)\b/i,
     docMatchRegex: /\b(?:ppcemt|obbgemt|engenharia\s+metal[uú]rgica)\b/i,
-    ftsClause: "(obbgemt | ppcemt | metalurgica)",
+    ftsClause: "(obbgemt:* | ppcemt:* | metalurgica)",
   },
   {
     id: "PED",
     queryRegex: /\b(?:pedagogia|oblped|ppcped)\b/i,
     docMatchRegex: /\b(?:ppcped|oblped|licenciatura\s+em\s+pedagogia|curso\s+de\s+pedagogia)\b/i,
-    ftsClause: "(oblped | ppcped | pedagogia)",
+    ftsClause: "(oblped:* | ppcped:* | pedagogia)",
   },
   {
     id: "COMP",
     queryRegex: /\b(?:licenciatura\s+em\s+computa[cç][aã]o|computa[cç][aã]o|oblcomp|ppccomp)\b/i,
     docMatchRegex: /\b(?:ppccomp|oblcomp|licenciatura\s+em\s+computa[cç][aã]o)\b/i,
-    ftsClause: "(oblcomp | ppccomp | computacao)",
+    ftsClause: "(oblcomp:* | ppccomp:* | computacao)",
   },
 ];
 
@@ -412,14 +412,18 @@ function formatFTSQuery(query: string, intent?: string): string {
   const codeMatch = query.match(/(OBBGSIN|OBBGADM|OBBGEMT|OBLCOMP|OBLPED)\.?(\d{3})/i);
   let codeFTS = "";
   if (codeMatch) {
-    codeFTS = `(${codeMatch[1].toLowerCase()} & ${codeMatch[2]})`;
+    codeFTS = `(${codeMatch[1].toLowerCase()}:* & (${codeMatch[2]} | ${codeMatch[1].toLowerCase()}.${codeMatch[2]}))`;
   }
 
   const queryLimpa = query.replace(/[^\p{L}\p{N}\s]/gu, " ").toLowerCase().trim();
   if (!queryLimpa) return codeFTS || "dummy_fallback_query";
 
   const rawTerms = queryLimpa.split(/\s+/).filter((w) => w.length >= 1 && (w.length >= 2 || /^\d$/.test(w)) && !stopWords.has(w));
-  const terms = rawTerms.map((w) => ordinalMap[w] || w);
+  const terms = rawTerms.map((w) => {
+    if (ordinalMap[w]) return ordinalMap[w];
+    if (/^(?:obbg|obl|ppc)[a-z0-9]+$/i.test(w)) return `${w}:*`;
+    return w;
+  });
   let mainFTS = terms.length > 0 ? terms.join(" & ") : "";
 
   const targetPeriod = detectTargetPeriod(query);
@@ -429,8 +433,14 @@ function formatFTSQuery(query: string, intent?: string): string {
   const focusedClauses: string[] = [];
   if (codeFTS) focusedClauses.push(codeFTS);
   if (mainFTS) focusedClauses.push(`(${mainFTS})`);
-  if (periodOrdinalClause && targetCourse) {
+  if (targetPeriod && targetCourse) {
+    focusedClauses.push(`(${targetPeriod} & ${targetCourse.ftsClause} & (semestre | optativa | pre | ch | periodo))`);
     focusedClauses.push(`(${periodOrdinalClause} & periodo & ${targetCourse.ftsClause})`);
+  }
+  if (targetPeriod) {
+    focusedClauses.push(
+      `(${targetPeriod} & (obbgsin:* | obbgadm:* | obbgemt:* | oblcomp:* | oblped:* | optativa) & (semestre | periodo | ch))`
+    );
   }
   if (periodOrdinalClause) {
     focusedClauses.push(`(${periodOrdinalClause} & periodo)`);
@@ -507,7 +517,7 @@ async function hybridSearch(
            ROW_NUMBER() OVER (ORDER BY embedding <=> $1::vector) AS rank
          FROM documents
          ORDER BY embedding <=> $1::vector
-         LIMIT 50
+         LIMIT 80
        ),
        lexical AS (
          SELECT id, content AS content,
@@ -522,7 +532,7 @@ async function hybridSearch(
          FROM documents
          WHERE content_tsv @@ to_tsquery('portuguese_unaccent', $2::text)
          ORDER BY ts_score DESC
-         LIMIT 50
+         LIMIT 80
        )
      SELECT
        COALESCE(s.id, l.id) AS id,
@@ -577,6 +587,12 @@ async function hybridSearch(
         "i"
       )
     : null;
+  const tabularTargetPeriodRegex = targetPeriod
+    ? new RegExp(
+        `(?:^|\\n|\\s)${targetPeriod}\\s+(?:(?:OBBG|OBL)[A-Z]{2,6}\\.\\d{3}|Optativa\\s+[IVX\\d]+)\\b`,
+        "gi"
+      )
+    : null;
 
   for (const doc of documents) {
     const contentLower = doc.content.toLowerCase();
@@ -603,35 +619,66 @@ async function hybridSearch(
       doc.similarity += 0.10;
     }
 
-    // 3. Período específico solicitado (ex: 7º Período) + presença de disciplinas/códigos
-    const hasCourseCodes = /\b(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}\b/i.test(doc.content);
-    if (targetPeriodRegex) {
-      if (targetPeriodRegex.test(docFullText)) {
-        if (hasCourseCodes || /PER[IÍ]ODO\s+COD\.?\s+DISCIPLINA|Grade\s+Curricular|Tabela\/Matriz/i.test(docFullText)) {
-          doc.similarity += 0.24;
-        } else {
-          doc.similarity += 0.03;
-        }
+    // 3. Classificação estrutural do chunk: Tabela de Matriz Curricular vs. Ficha Individual de Ementário
+    const distinctCodes = new Set(
+      (doc.content.match(/\b(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}\b/gi) || []).map((c) => c.toUpperCase())
+    );
+    const hasCourseCodes = distinctCodes.size > 0;
+    const isEmentaCard =
+      /\bEmenta:\s/i.test(doc.content) || /\bBibliografia\s+b[aá]sica:/i.test(doc.content);
+
+    const tabularTargetMatches = tabularTargetPeriodRegex
+      ? (doc.content.match(tabularTargetPeriodRegex) || []).length
+      : 0;
+    const hasAnyTabularRows =
+      /(?:^|\n|\s)(?:[1-9]|10)\s+(?:(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}|Optativa\s+[IVX\d]+)\b/i.test(doc.content);
+
+    const isMatrixTableChunk =
+      !isEmentaCard &&
+      (/PER[IÍ]ODO\s+COD\.?\s+DISCIPLINA|Carga\s+Hor[aá]ria\s+Total\s+do\s+Semestre|DISCIPLINAS\s+OBRIGAT[OÓ]RIAS/i.test(
+        docFullText
+      ) ||
+        distinctCodes.size >= 3 ||
+        tabularTargetMatches >= 2 ||
+        hasAnyTabularRows);
+
+    const matchesExplicitPeriod = Boolean(targetPeriodRegex && targetPeriodRegex.test(docFullText));
+    const matchesTargetPeriod = tabularTargetMatches > 0 || matchesExplicitPeriod;
+
+    if (targetPeriod) {
+      if (isMatrixTableChunk && matchesTargetPeriod) {
+        // Chunk da Tabela da Matriz Curricular que contém as disciplinas do período perguntado (ex: Página 33 do PPCBSI)
+        doc.similarity += 0.42;
+      } else if (isMatrixTableChunk && !matchesTargetPeriod && hasAnyTabularRows) {
+        // Parte da tabela da Matriz Curricular de OUTROS períodos (ex: Páginas 31-32 com períodos 1 a 6)
+        doc.similarity -= 0.12;
+      } else if (isEmentaCard && matchesTargetPeriod) {
+        // Ficha individual de ementa de uma disciplina do período perguntado (entra como complemento após a Matriz)
+        doc.similarity += isCursoQuery ? 0.08 : 0.20;
+      } else if (matchesTargetPeriod) {
+        // Menção textual/narrativa ao período (ex: Página 25 sobre TCC)
+        doc.similarity += hasCourseCodes ? 0.15 : 0.02;
       } else if (isCursoQuery && /\b(?:[1-9]|10)\s*[oºª]\s*Per[íi]odo\b/i.test(docFullText)) {
+        // Chunk explícito de outro período diferente do perguntado
         doc.similarity -= 0.06;
       }
+    } else if (isCursoQuery && isMatrixTableChunk) {
+      // Pergunta geral sobre matriz/grade curricular sem período específico
+      doc.similarity += 0.25;
     }
 
-    // 4. Boost para chunks com Matriz Curricular quando pergunta é sobre estrutura/listagem de período
-    if (
-      isCursoQuery &&
-      /PER[IÍ]ODO\s+COD\.?\s+DISCIPLINA|\b(?:[1-9]|10)\s*[oºª]?\s*Per[íi]odo\b|Matriz\s+Curricular|Grade\s+Curricular/i.test(docFullText)
-    ) {
+    // 4. Boost para chunks de Tabela da Matriz Curricular quando pergunta é sobre estrutura/listagem de período
+    if (isCursoQuery && isMatrixTableChunk) {
       doc.similarity += 0.12;
     }
 
-    // 5. Se for busca de estrutura e o chunk for uma ficha detalhada de ementa sem o período alvo, penaliza
-    if (isCursoQuery && /\bEmenta:\s/i.test(doc.content) && !targetPeriodRegex?.test(docFullText)) {
+    // 5. Penalização para ficha individual de ementa de outros períodos quando se busca estrutura/grade
+    if (isCursoQuery && isEmentaCard && !matchesTargetPeriod) {
       doc.similarity -= 0.08;
     }
 
-    // 6. Se for busca de ementa e o trecho for apenas a tabela da Matriz Curricular, reduz prioridade (-0.15)
-    if (isEmentaQuery && /PERÍODO\s+COD\.\s+DISCIPLINA/i.test(doc.content)) {
+    // 6. Penalização para tabela de matriz quando se busca ementa específica
+    if (isEmentaQuery && isMatrixTableChunk) {
       doc.similarity -= 0.15;
     }
   }

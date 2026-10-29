@@ -2595,7 +2595,7 @@ async function generateEmbedding(text) {
 }
 var RRF_K = 60;
 var RRF_ALPHA = 0.5;
-var CANDIDATE_POOL_LIMIT = 30;
+var CANDIDATE_POOL_LIMIT = 50;
 function enrichChunkMetadata(row) {
   const content = row.content || "";
   const headerMatch = content.match(/^\[([^\]]+)\]/);
@@ -2679,31 +2679,31 @@ var COURSE_PROFILES = [
     id: "BSI",
     queryRegex: /\b(?:sistemas?\s+de\s+informa[cç][aã]o|bsi|ppcbsi|obbgsin)\b/i,
     docMatchRegex: /\b(?:ppcbsi|obbgsin|sistemas?\s+de\s+informa[cç][aã]o)\b/i,
-    ftsClause: "(obbgsin | ppcbsi | (sistemas & informacao))"
+    ftsClause: "(obbgsin:* | ppcbsi:* | (sistemas & informacao))"
   },
   {
     id: "ADM",
     queryRegex: /\b(?:administra[cç][aã]o|obbgadm|ppcadm)\b/i,
     docMatchRegex: /\b(?:ppcadm|obbgadm|bacharelado\s+em\s+administra[cç][aã]o|curso\s+de\s+administra[cç][aã]o)\b/i,
-    ftsClause: "(obbgadm | ppcadm | administracao)"
+    ftsClause: "(obbgadm:* | ppcadm:* | administracao)"
   },
   {
     id: "EMT",
     queryRegex: /\b(?:engenharia\s+metal[uú]rgica|metal[uú]rgica|metalurgia|obbgemt|ppcemt)\b/i,
     docMatchRegex: /\b(?:ppcemt|obbgemt|engenharia\s+metal[uú]rgica)\b/i,
-    ftsClause: "(obbgemt | ppcemt | metalurgica)"
+    ftsClause: "(obbgemt:* | ppcemt:* | metalurgica)"
   },
   {
     id: "PED",
     queryRegex: /\b(?:pedagogia|oblped|ppcped)\b/i,
     docMatchRegex: /\b(?:ppcped|oblped|licenciatura\s+em\s+pedagogia|curso\s+de\s+pedagogia)\b/i,
-    ftsClause: "(oblped | ppcped | pedagogia)"
+    ftsClause: "(oblped:* | ppcped:* | pedagogia)"
   },
   {
     id: "COMP",
     queryRegex: /\b(?:licenciatura\s+em\s+computa[cç][aã]o|computa[cç][aã]o|oblcomp|ppccomp)\b/i,
     docMatchRegex: /\b(?:ppccomp|oblcomp|licenciatura\s+em\s+computa[cç][aã]o)\b/i,
-    ftsClause: "(oblcomp | ppccomp | computacao)"
+    ftsClause: "(oblcomp:* | ppccomp:* | computacao)"
   }
 ];
 function formatFTSQuery(query, intent) {
@@ -2808,13 +2808,19 @@ function formatFTSQuery(query, intent) {
   const codeMatch = query.match(/(OBBGSIN|OBBGADM|OBBGEMT|OBLCOMP|OBLPED)\.?(\d{3})/i);
   let codeFTS = "";
   if (codeMatch) {
-    codeFTS = `(${codeMatch[1].toLowerCase()} & ${codeMatch[2]})`;
+    codeFTS = `(${codeMatch[1].toLowerCase()}:* & (${codeMatch[2]} | ${codeMatch[1].toLowerCase()}.${codeMatch[2]}))`;
   }
   const queryLimpa = query.replace(/[^\p{L}\p{N}\s]/gu, " ").toLowerCase().trim();
   if (!queryLimpa)
     return codeFTS || "dummy_fallback_query";
   const rawTerms = queryLimpa.split(/\s+/).filter((w) => w.length >= 1 && (w.length >= 2 || /^\d$/.test(w)) && !stopWords.has(w));
-  const terms = rawTerms.map((w) => ordinalMap[w] || w);
+  const terms = rawTerms.map((w) => {
+    if (ordinalMap[w])
+      return ordinalMap[w];
+    if (/^(?:obbg|obl|ppc)[a-z0-9]+$/i.test(w))
+      return `${w}:*`;
+    return w;
+  });
   let mainFTS = terms.length > 0 ? terms.join(" & ") : "";
   const targetPeriod = detectTargetPeriod(query);
   const targetCourse = COURSE_PROFILES.find((c) => c.queryRegex.test(query));
@@ -2824,8 +2830,14 @@ function formatFTSQuery(query, intent) {
     focusedClauses.push(codeFTS);
   if (mainFTS)
     focusedClauses.push(`(${mainFTS})`);
-  if (periodOrdinalClause && targetCourse) {
+  if (targetPeriod && targetCourse) {
+    focusedClauses.push(`(${targetPeriod} & ${targetCourse.ftsClause} & (semestre | optativa | pre | ch | periodo))`);
     focusedClauses.push(`(${periodOrdinalClause} & periodo & ${targetCourse.ftsClause})`);
+  }
+  if (targetPeriod) {
+    focusedClauses.push(
+      `(${targetPeriod} & (obbgsin:* | obbgadm:* | obbgemt:* | oblcomp:* | oblped:* | optativa) & (semestre | periodo | ch))`
+    );
   }
   if (periodOrdinalClause) {
     focusedClauses.push(`(${periodOrdinalClause} & periodo)`);
@@ -2876,7 +2888,7 @@ async function hybridSearch(embedding, queryText, limit = 5, intention, rawQuest
            ROW_NUMBER() OVER (ORDER BY embedding <=> $1::vector) AS rank
          FROM documents
          ORDER BY embedding <=> $1::vector
-         LIMIT 50
+         LIMIT 80
        ),
        lexical AS (
          SELECT id, content AS content,
@@ -2891,7 +2903,7 @@ async function hybridSearch(embedding, queryText, limit = 5, intention, rawQuest
          FROM documents
          WHERE content_tsv @@ to_tsquery('portuguese_unaccent', $2::text)
          ORDER BY ts_score DESC
-         LIMIT 50
+         LIMIT 80
        )
      SELECT
        COALESCE(s.id, l.id) AS id,
@@ -2936,6 +2948,10 @@ async function hybridSearch(embedding, queryText, limit = 5, intention, rawQuest
     `\\b(?:${targetPeriod}\\s*[o\xBA\xAA]?\\s*per[\xEDi]odo|${periodOrdWords[targetPeriod]}\\s+per[\xEDi]odo|per[\xEDi]odo\\s*[:\\-]?\\s*${targetPeriod}\\b)`,
     "i"
   ) : null;
+  const tabularTargetPeriodRegex = targetPeriod ? new RegExp(
+    `(?:^|\\n|\\s)${targetPeriod}\\s+(?:(?:OBBG|OBL)[A-Z]{2,6}\\.\\d{3}|Optativa\\s+[IVX\\d]+)\\b`,
+    "gi"
+  ) : null;
   for (const doc of documents) {
     const contentLower = doc.content.toLowerCase();
     const docFullText = `${doc.source} ${doc.sectionContext || ""} ${doc.content}`;
@@ -2954,25 +2970,40 @@ async function hybridSearch(embedding, queryText, limit = 5, intention, rawQuest
     } else if (isEmentaQuery && /ementa:/i.test(doc.content)) {
       doc.similarity += 0.1;
     }
-    const hasCourseCodes = /\b(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}\b/i.test(doc.content);
-    if (targetPeriodRegex) {
-      if (targetPeriodRegex.test(docFullText)) {
-        if (hasCourseCodes || /PER[IÍ]ODO\s+COD\.?\s+DISCIPLINA|Grade\s+Curricular|Tabela\/Matriz/i.test(docFullText)) {
-          doc.similarity += 0.24;
-        } else {
-          doc.similarity += 0.03;
-        }
+    const distinctCodes = new Set(
+      (doc.content.match(/\b(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}\b/gi) || []).map((c) => c.toUpperCase())
+    );
+    const hasCourseCodes = distinctCodes.size > 0;
+    const isEmentaCard = /\bEmenta:\s/i.test(doc.content) || /\bBibliografia\s+b[aá]sica:/i.test(doc.content);
+    const tabularTargetMatches = tabularTargetPeriodRegex ? (doc.content.match(tabularTargetPeriodRegex) || []).length : 0;
+    const hasAnyTabularRows = /(?:^|\n|\s)(?:[1-9]|10)\s+(?:(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}|Optativa\s+[IVX\d]+)\b/i.test(doc.content);
+    const isMatrixTableChunk = !isEmentaCard && (/PER[IÍ]ODO\s+COD\.?\s+DISCIPLINA|Carga\s+Hor[aá]ria\s+Total\s+do\s+Semestre|DISCIPLINAS\s+OBRIGAT[OÓ]RIAS/i.test(
+      docFullText
+    ) || distinctCodes.size >= 3 || tabularTargetMatches >= 2 || hasAnyTabularRows);
+    const matchesExplicitPeriod = Boolean(targetPeriodRegex && targetPeriodRegex.test(docFullText));
+    const matchesTargetPeriod = tabularTargetMatches > 0 || matchesExplicitPeriod;
+    if (targetPeriod) {
+      if (isMatrixTableChunk && matchesTargetPeriod) {
+        doc.similarity += 0.42;
+      } else if (isMatrixTableChunk && !matchesTargetPeriod && hasAnyTabularRows) {
+        doc.similarity -= 0.12;
+      } else if (isEmentaCard && matchesTargetPeriod) {
+        doc.similarity += isCursoQuery ? 0.08 : 0.2;
+      } else if (matchesTargetPeriod) {
+        doc.similarity += hasCourseCodes ? 0.15 : 0.02;
       } else if (isCursoQuery && /\b(?:[1-9]|10)\s*[oºª]\s*Per[íi]odo\b/i.test(docFullText)) {
         doc.similarity -= 0.06;
       }
+    } else if (isCursoQuery && isMatrixTableChunk) {
+      doc.similarity += 0.25;
     }
-    if (isCursoQuery && /PER[IÍ]ODO\s+COD\.?\s+DISCIPLINA|\b(?:[1-9]|10)\s*[oºª]?\s*Per[íi]odo\b|Matriz\s+Curricular|Grade\s+Curricular/i.test(docFullText)) {
+    if (isCursoQuery && isMatrixTableChunk) {
       doc.similarity += 0.12;
     }
-    if (isCursoQuery && /\bEmenta:\s/i.test(doc.content) && !targetPeriodRegex?.test(docFullText)) {
+    if (isCursoQuery && isEmentaCard && !matchesTargetPeriod) {
       doc.similarity -= 0.08;
     }
-    if (isEmentaQuery && /PERÍODO\s+COD\.\s+DISCIPLINA/i.test(doc.content)) {
+    if (isEmentaQuery && isMatrixTableChunk) {
       doc.similarity -= 0.15;
     }
   }
@@ -28132,14 +28163,6 @@ function pruneAppendices(text) {
 }
 function prepareNormativeChunking(text) {
   let resultText = text;
-  resultText = resultText.replace(/([^\n])\n(?!\n)([^\n])/g, (_, antes, depois) => {
-    if (/^(?:Art\.\s|CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o|RESOLU[CÇ]|\[\[\s*PAG_\d+|C[oó]digo:|Nome da disciplina:|Ementa:|Matriz Curricular|DISCIPLINAS\s+(?:OBRIGAT|OPTAT)|\d{1,2}[oOºª]?\s*Per[íi]odo|PER[IÍ]ODO\s)/i.test(depois + resultText.charAt(0))) {
-      return `${antes}
-
-${depois}`;
-    }
-    return `${antes} ${depois}`;
-  });
   const markers = [
     /(?<!\n\n)(?=^[\t ]*Art\.\s)/gm,
     // Art. 1º, Art. 2º, ...
@@ -28163,17 +28186,48 @@ ${depois}`;
     // DOS DEVERES ...
     /(?<!\n\n)(?=^[\t ]*\d{1,2}[oOºª]?\s*Per[íi]odo\b)/gim,
     // 1º Período ... 10º Período
+    /(?<!\n\n)(?=^[\t ]*PER[IÍ]ODO\s+COD\.?\s+DISCIPLINA\b)/gim,
+    // Cabeçalho de período na Matriz Curricular
     /(?<!\n\n)(?=^[\t ]*C[oó]digo:\s)/gim,
     // Código: OBBG...
     /(?<!\n\n)(?=^[\t ]*Nome da disciplina:\s)/gim,
     // Nome da disciplina: ...
-    /(?<!\n\n)(?=^[\t ]*Matriz Curricular\b)/gim
+    /(?<!\n\n)(?=^[\t ]*Matriz Curricular\b)/gim,
     // Matriz Curricular
+    /(?<!\n\n)(?=^[\t ]*DISCIPLINAS\s+(?:OBRIGAT[OÓ]RIAS|OPTATIVAS)\b)/gim,
+    // Subtítulos da Matriz
+    /(?<!\n\n)(?=^[\t ]*\[\[\s*PAG_\d+\s*\]\])/gim
+    // Marcadores de página
   ];
   for (const regex2 of markers) {
     resultText = resultText.replace(regex2, "\n\n");
   }
-  return resultText;
+  const lines = resultText.split("\n");
+  const mergedLines = [];
+  for (let i = 0; i < lines.length; i++) {
+    const current = lines[i];
+    if (mergedLines.length === 0) {
+      mergedLines.push(current);
+      continue;
+    }
+    const prev = mergedLines[mergedLines.length - 1];
+    if (current.trim() === "" || prev.trim() === "") {
+      mergedLines.push(current);
+      continue;
+    }
+    const isTabularRowOrMarker = /^[\t ]*(?:\d{1,2}\s+(?:(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}|Optativa\s+[IVX\d]+)|Carga\s+Hor[aá]ria\s+Total|PER[IÍ]ODO\s+COD\.?\s+DISCIPLINA|Ementa:|Objetivo|Bibliografia|\[\[\s*PAG_\d+)/i.test(
+      current
+    );
+    const prevWasTabularRow = /^[\t ]*(?:\d{1,2}\s+(?:(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}|Optativa\s+[IVX\d]+)|Carga\s+Hor[aá]ria\s+Total|PER[IÍ]ODO\s+COD\.?\s+DISCIPLINA)/i.test(
+      prev
+    );
+    if (isTabularRowOrMarker || prevWasTabularRow) {
+      mergedLines.push(current);
+    } else {
+      mergedLines[mergedLines.length - 1] = `${prev} ${current}`;
+    }
+  }
+  return mergedLines.join("\n");
 }
 var PATTERNS = {
   // Marcadores de página inseridos pela extração: "--- Página 5 ---"
@@ -28408,6 +28462,8 @@ async function syllabusChunking(text, filename, sourceUrl) {
       "\nDISCIPLINAS OBRIGAT\xD3RIAS",
       "\nDISCIPLINAS OPTATIVAS",
       "\nMatriz Curricular",
+      "\n\nPER\xCDODO COD. DISCIPLINA",
+      "\nPER\xCDODO COD. DISCIPLINA",
       "\n1\xBA Per\xEDodo",
       "\n2\xBA Per\xEDodo",
       "\n3\xBA Per\xEDodo",
@@ -28459,13 +28515,19 @@ async function syllabusChunking(text, filename, sourceUrl) {
     }
     let context;
     if (isMatrixOrPeriodList) {
-      const allPeriodsInChunk = Array.from(
-        new Set(
-          Array.from(partTrimmed.matchAll(/\b(\d{1,2}[oOºª]?\s*Per[íi]odo)\b/gi)).map((m) => m[1].trim())
-        )
-      );
-      if (allPeriodsInChunk.length > 0) {
-        context = `Grade Curricular \u2014 ${allPeriodsInChunk.join(", ")}`;
+      const explicitPeriods = Array.from(
+        partTrimmed.matchAll(/\b(\d{1,2})[oOºª]?\s*Per[íi]odo\b/gi)
+      ).map((m) => Number(m[1]));
+      const tabularPeriods = Array.from(
+        partTrimmed.matchAll(/(?:^|\n|\s)(\d{1,2})\s+(?:(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}|Optativa\s+[IVX\d]+)\b/gi)
+      ).map((m) => Number(m[1]));
+      const allPeriodNums = Array.from(
+        new Set([...explicitPeriods, ...tabularPeriods].filter((n2) => n2 >= 1 && n2 <= 12))
+      ).sort((a, b) => a - b);
+      if (allPeriodNums.length > 0) {
+        const formattedPeriods = allPeriodNums.map((n2) => `${n2}\xBA Per\xEDodo`);
+        currentPeriod = formattedPeriods[formattedPeriods.length - 1];
+        context = `Matriz Curricular \u2014 ${formattedPeriods.join(", ")}`;
       } else if (currentPeriod) {
         context = `Grade Curricular \u2014 ${currentPeriod}`;
       } else {
@@ -28509,6 +28571,8 @@ async function normativeChunking(text, filename, sourceUrl) {
       "\nArt. ",
       "\nMatriz Curricular",
       "\nDISCIPLINAS OBRIGAT\xD3RIAS",
+      "\n\nPER\xCDODO COD. DISCIPLINA",
+      "\nPER\xCDODO COD. DISCIPLINA",
       "\nPER\xCDODO ",
       "\n\n",
       "\n",
@@ -28526,7 +28590,16 @@ async function normativeChunking(text, filename, sourceUrl) {
     if (partTrimmed.length === 0)
       continue;
     const hierarchyMatch = partTrimmed.match(/^(?:CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o|Art\.\s+\d+º?)\s+[IVXLCDM\d\w\s]+.*?(?:\n|$)/i);
-    if (hierarchyMatch) {
+    const tabularPeriods = Array.from(
+      new Set(
+        Array.from(
+          partTrimmed.matchAll(/(?:^|\n|\s)(\d{1,2})\s+(?:(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}|Optativa\s+[IVX\d]+)\b/gi)
+        ).map((m) => Number(m[1])).filter((n2) => n2 >= 1 && n2 <= 12)
+      )
+    ).sort((a, b) => a - b);
+    if (tabularPeriods.length > 0) {
+      currentContext = `Matriz Curricular \u2014 ${tabularPeriods.map((n2) => `${n2}\xBA Per\xEDodo`).join(", ")}`;
+    } else if (hierarchyMatch) {
       currentContext = hierarchyMatch[0].trim();
     }
     const effectiveUrl = sourceUrl || extractUrlFromText(partTrimmed);

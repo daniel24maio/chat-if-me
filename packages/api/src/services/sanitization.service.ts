@@ -189,42 +189,67 @@ function pruneAppendices(text: string): string {
 function prepareNormativeChunking(text: string): string {
   let resultText = text;
 
-  // ── Passo A: Colapsar quebras simples em espaço ──
-  // Regra: se uma linha termina com letra/pontuação normal e a próxima
-  // começa com letra minúscula, número romano ou alínea, é continuação.
-  // Preserva quebras duplas (\n\n) que já existem.
-  resultText = resultText.replace(/([^\n])\n(?!\n)([^\n])/g, (_, antes, depois) => {
-    // Se a próxima linha começa com um marcador estrutural, NÃO colapsar
-    if (/^(?:Art\.\s|CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o|RESOLU[CÇ]|\[\[\s*PAG_\d+|C[oó]digo:|Nome da disciplina:|Ementa:|Matriz Curricular|DISCIPLINAS\s+(?:OBRIGAT|OPTAT)|\d{1,2}[oOºª]?\s*Per[íi]odo|PER[IÍ]ODO\s)/i.test(depois + resultText.charAt(0))) {
-      return `${antes}\n\n${depois}`;
-    }
-    return `${antes} ${depois}`;
-  });
-
-  // ── Passo B: Garantir \n\n antes de marcadores estruturais ──
-  // Lista de marcadores que indicam início de nova seção/artigo
+  // ── Passo A: Garantir \n\n antes de marcadores estruturais ANTES de colapsar quebras simples ──
   const markers = [
-    /(?<!\n\n)(?=^[\t ]*Art\.\s)/gm,                          // Art. 1º, Art. 2º, ...
-    /(?<!\n\n)(?=^[\t ]*CAP[IÍ]TULO\s)/gm,                    // CAPÍTULO I, II, ...
-    /(?<!\n\n)(?=^[\t ]*T[IÍ]TULO\s)/gm,                      // TÍTULO I, II, ...
-    /(?<!\n\n)(?=^[\t ]*Se[cç][aã]o\s)/gm,                    // Seção I, Seção II, ...
-    /(?<!\n\n)(?=^[\t ]*RESOLU[CÇ][AÃ]O\s)/gm,               // RESOLUÇÃO Nº ...
-    /(?<!\n\n)(?=^[\t ]*DAS?\s+DISPOSI[CÇ][OÕ]ES\s)/gm,      // DAS DISPOSIÇÕES ...
-    /(?<!\n\n)(?=^[\t ]*DO\s+REGIME\s)/gm,                    // DO REGIME ...
-    /(?<!\n\n)(?=^[\t ]*DA\s+ORGANIZA[CÇ][AÃ]O\s)/gm,        // DA ORGANIZAÇÃO ...
-    /(?<!\n\n)(?=^[\t ]*DOS?\s+DIREITOS?\s)/gm,               // DOS DIREITOS ...
-    /(?<!\n\n)(?=^[\t ]*DOS?\s+DEVERES?\s)/gm,                // DOS DEVERES ...
-    /(?<!\n\n)(?=^[\t ]*\d{1,2}[oOºª]?\s*Per[íi]odo\b)/gim,  // 1º Período ... 10º Período
-    /(?<!\n\n)(?=^[\t ]*C[oó]digo:\s)/gim,                    // Código: OBBG...
-    /(?<!\n\n)(?=^[\t ]*Nome da disciplina:\s)/gim,           // Nome da disciplina: ...
-    /(?<!\n\n)(?=^[\t ]*Matriz Curricular\b)/gim,             // Matriz Curricular
+    /(?<!\n\n)(?=^[\t ]*Art\.\s)/gm,                                         // Art. 1º, Art. 2º, ...
+    /(?<!\n\n)(?=^[\t ]*CAP[IÍ]TULO\s)/gm,                                   // CAPÍTULO I, II, ...
+    /(?<!\n\n)(?=^[\t ]*T[IÍ]TULO\s)/gm,                                     // TÍTULO I, II, ...
+    /(?<!\n\n)(?=^[\t ]*Se[cç][aã]o\s)/gm,                                   // Seção I, Seção II, ...
+    /(?<!\n\n)(?=^[\t ]*RESOLU[CÇ][AÃ]O\s)/gm,                              // RESOLUÇÃO Nº ...
+    /(?<!\n\n)(?=^[\t ]*DAS?\s+DISPOSI[CÇ][OÕ]ES\s)/gm,                     // DAS DISPOSIÇÕES ...
+    /(?<!\n\n)(?=^[\t ]*DO\s+REGIME\s)/gm,                                   // DO REGIME ...
+    /(?<!\n\n)(?=^[\t ]*DA\s+ORGANIZA[CÇ][AÃ]O\s)/gm,                       // DA ORGANIZAÇÃO ...
+    /(?<!\n\n)(?=^[\t ]*DOS?\s+DIREITOS?\s)/gm,                              // DOS DIREITOS ...
+    /(?<!\n\n)(?=^[\t ]*DOS?\s+DEVERES?\s)/gm,                               // DOS DEVERES ...
+    /(?<!\n\n)(?=^[\t ]*\d{1,2}[oOºª]?\s*Per[íi]odo\b)/gim,                 // 1º Período ... 10º Período
+    /(?<!\n\n)(?=^[\t ]*PER[IÍ]ODO\s+COD\.?\s+DISCIPLINA\b)/gim,            // Cabeçalho de período na Matriz Curricular
+    /(?<!\n\n)(?=^[\t ]*C[oó]digo:\s)/gim,                                   // Código: OBBG...
+    /(?<!\n\n)(?=^[\t ]*Nome da disciplina:\s)/gim,                          // Nome da disciplina: ...
+    /(?<!\n\n)(?=^[\t ]*Matriz Curricular\b)/gim,                            // Matriz Curricular
+    /(?<!\n\n)(?=^[\t ]*DISCIPLINAS\s+(?:OBRIGAT[OÓ]RIAS|OPTATIVAS)\b)/gim, // Subtítulos da Matriz
+    /(?<!\n\n)(?=^[\t ]*\[\[\s*PAG_\d+\s*\]\])/gim,                         // Marcadores de página
   ];
 
   for (const regex of markers) {
     resultText = resultText.replace(regex, "\n\n");
   }
 
-  return resultText;
+  // ── Passo B: Colapsar quebras simples em espaço (preservando linhas tabulares de disciplinas) ──
+  const lines = resultText.split("\n");
+  const mergedLines: string[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const current = lines[i];
+    if (mergedLines.length === 0) {
+      mergedLines.push(current);
+      continue;
+    }
+
+    const prev = mergedLines[mergedLines.length - 1];
+    // Se a linha atual ou anterior é vazia (parte de \n\n), preserva a quebra
+    if (current.trim() === "" || prev.trim() === "") {
+      mergedLines.push(current);
+      continue;
+    }
+
+    // Preserva quebra de linha antes de linhas tabulares de disciplinas (ex: "7 OBBGSIN.040 ...", "7 Optativa III", "Carga Horária Total")
+    const isTabularRowOrMarker =
+      /^[\t ]*(?:\d{1,2}\s+(?:(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}|Optativa\s+[IVX\d]+)|Carga\s+Hor[aá]ria\s+Total|PER[IÍ]ODO\s+COD\.?\s+DISCIPLINA|Ementa:|Objetivo|Bibliografia|\[\[\s*PAG_\d+)/i.test(
+        current
+      );
+    const prevWasTabularRow =
+      /^[\t ]*(?:\d{1,2}\s+(?:(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}|Optativa\s+[IVX\d]+)|Carga\s+Hor[aá]ria\s+Total|PER[IÍ]ODO\s+COD\.?\s+DISCIPLINA)/i.test(
+        prev
+      );
+
+    if (isTabularRowOrMarker || prevWasTabularRow) {
+      mergedLines.push(current);
+    } else {
+      mergedLines[mergedLines.length - 1] = `${prev} ${current}`;
+    }
+  }
+
+  return mergedLines.join("\n");
 }
 
 // ---------------------------------------------------------------------------
