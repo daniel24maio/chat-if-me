@@ -4,6 +4,7 @@ import xlsx from "xlsx";
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
 import { LiteParse } from "@llamaindex/liteparse";
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 import { pool } from "../config/database.js";
 import { generateOllamaEmbedding } from "../config/ollama.js";
@@ -25,6 +26,107 @@ const TABLE_MAX_ROWS_PER_CHUNK = 30;
 const BATCH_SIZE = 32;
 
 // ===========================================================================
+// CONFIGURAÇÃO E PRÉ-INICIALIZAÇÃO SEGURA DO TESSDATA (OCR LITEPARSE)
+// ===========================================================================
+
+const TESSDATA_GITHUB_BASE =
+  "https://github.com/tesseract-ocr/tessdata_fast/raw/main";
+
+let tessdataInitPromise: Promise<{ tessdataPath: string; ocrLanguage: string }> | null = null;
+
+/**
+ * Garante que os arquivos `por.traineddata` e `eng.traineddata` estejam disponíveis
+ * antes do LiteParse iniciar múltiplos workers paralelos de OCR (evitando a falha
+ * "Error opening data file /root/.tesseract-rs/tessdata/eng.traineddata" na 1ª página).
+ */
+async function ensureTessdataReady(): Promise<{ tessdataPath: string; ocrLanguage: string }> {
+  if (tessdataInitPromise) {
+    return tessdataInitPromise;
+  }
+
+  tessdataInitPromise = (async () => {
+    const defaultDir =
+      process.env.TESSDATA_PREFIX ||
+      path.join(os.homedir(), ".tesseract-rs", "tessdata");
+
+    await fs.promises.mkdir(defaultDir, { recursive: true });
+
+    // Diretórios candidatos do sistema (Linux Debian/Ubuntu/Alpine) para cópia local rápida
+    const systemDirs = [
+      "/usr/share/tesseract-ocr/5/tessdata",
+      "/usr/share/tesseract-ocr/4.00/tessdata",
+      "/usr/share/tessdata",
+    ];
+
+    const requiredLangs = ["por", "eng"];
+
+    for (const lang of requiredLangs) {
+      const targetFile = path.join(defaultDir, `${lang}.traineddata`);
+
+      try {
+        const stat = await fs.promises.stat(targetFile);
+        if (stat.size > 100_000) continue; // Arquivo já existe e é válido
+      } catch {
+        // Arquivo ainda não existe em defaultDir
+      }
+
+      // 1. Tenta copiar de instalação local do sistema (apt tesseract-ocr-por / eng)
+      let copiedFromSystem = false;
+      for (const sysDir of systemDirs) {
+        const sysFile = path.join(sysDir, `${lang}.traineddata`);
+        try {
+          const stat = await fs.promises.stat(sysFile);
+          if (stat.size > 100_000) {
+            await fs.promises.copyFile(sysFile, targetFile);
+            copiedFromSystem = true;
+            console.log(`✅ [OCR] Modelo "${lang}.traineddata" copiado de ${sysDir} para ${defaultDir}`);
+            break;
+          }
+        } catch {
+          // Continua procurando
+        }
+      }
+
+      if (copiedFromSystem) continue;
+
+      // 2. Fallback: baixa de forma atômica (.tmp → rename) antes do LiteParse iniciar
+      const url = `${TESSDATA_GITHUB_BASE}/${lang}.traineddata`;
+      const tempDownloadPath = `${targetFile}.tmp_${ process.pid }`;
+      try {
+        console.log(`⬇️  [OCR] Baixando modelo "${lang}.traineddata" para ${defaultDir}...`);
+        const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+        if (res.ok) {
+          const arrayBuffer = await res.arrayBuffer();
+          const buf = Buffer.from(arrayBuffer);
+          if (buf.length > 100_000) {
+            await fs.promises.writeFile(tempDownloadPath, buf);
+            await fs.promises.rename(tempDownloadPath, targetFile);
+            console.log(`✅ [OCR] Modelo "${lang}.traineddata" preparado com sucesso (${(buf.length / 1024 / 1024).toFixed(1)} MB)`);
+          }
+        }
+      } catch (err) {
+        console.warn(
+          `⚠️  [OCR] Não foi possível baixar "${lang}.traineddata" preventivamente:`,
+          err instanceof Error ? err.message : err
+        );
+        await fs.promises.unlink(tempDownloadPath).catch(() => {});
+      }
+    }
+
+    // Define TESSDATA_PREFIX no processo para o tesseract-rs nativo localizar os modelos
+    process.env.TESSDATA_PREFIX = defaultDir;
+
+    const hasPor = fs.existsSync(path.join(defaultDir, "por.traineddata"));
+    const hasEng = fs.existsSync(path.join(defaultDir, "eng.traineddata"));
+    const ocrLanguage = hasPor && hasEng ? "por+eng" : hasPor ? "por" : "eng";
+
+    return { tessdataPath: defaultDir, ocrLanguage };
+  })();
+
+  return tessdataInitPromise;
+}
+
+// ===========================================================================
 // ETAPA 1 — EXTRAÇÃO DE TEXTO (Multi-formato com LiteParse)
 // ===========================================================================
 
@@ -39,7 +141,11 @@ async function extractTextFromPDF(buffer: Buffer, filename: string): Promise<str
   await fs.promises.writeFile(tempPath, buffer);
 
   try {
-    const parser = new LiteParse();
+    const { tessdataPath, ocrLanguage } = await ensureTessdataReady();
+    const parser = new LiteParse({
+      tessdataPath,
+      ocrLanguage,
+    });
     const result = await parser.parse(tempPath);
 
     // Preserva a numeração de página retornada pelo LiteParse inserindo marcadores [[PAG_N]]

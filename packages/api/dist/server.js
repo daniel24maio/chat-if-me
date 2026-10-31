@@ -28110,6 +28110,7 @@ var RecursiveCharacterTextSplitter = class RecursiveCharacterTextSplitter2 exten
 // src/services/embedding.service.ts
 import { LiteParse } from "@llamaindex/liteparse";
 import * as fs from "fs";
+import * as os from "os";
 import * as path2 from "path";
 
 // src/services/sanitization.service.ts
@@ -28353,13 +28354,87 @@ var CHUNK_SIZE_GENERAL = 2200;
 var CHUNK_OVERLAP_GENERAL = 300;
 var TABLE_MAX_ROWS_PER_CHUNK = 30;
 var BATCH_SIZE = 32;
+var TESSDATA_GITHUB_BASE = "https://github.com/tesseract-ocr/tessdata_fast/raw/main";
+var tessdataInitPromise = null;
+async function ensureTessdataReady() {
+  if (tessdataInitPromise) {
+    return tessdataInitPromise;
+  }
+  tessdataInitPromise = (async () => {
+    const defaultDir = process.env.TESSDATA_PREFIX || path2.join(os.homedir(), ".tesseract-rs", "tessdata");
+    await fs.promises.mkdir(defaultDir, { recursive: true });
+    const systemDirs = [
+      "/usr/share/tesseract-ocr/5/tessdata",
+      "/usr/share/tesseract-ocr/4.00/tessdata",
+      "/usr/share/tessdata"
+    ];
+    const requiredLangs = ["por", "eng"];
+    for (const lang of requiredLangs) {
+      const targetFile = path2.join(defaultDir, `${lang}.traineddata`);
+      try {
+        const stat3 = await fs.promises.stat(targetFile);
+        if (stat3.size > 1e5)
+          continue;
+      } catch {
+      }
+      let copiedFromSystem = false;
+      for (const sysDir of systemDirs) {
+        const sysFile = path2.join(sysDir, `${lang}.traineddata`);
+        try {
+          const stat3 = await fs.promises.stat(sysFile);
+          if (stat3.size > 1e5) {
+            await fs.promises.copyFile(sysFile, targetFile);
+            copiedFromSystem = true;
+            console.log(`\u2705 [OCR] Modelo "${lang}.traineddata" copiado de ${sysDir} para ${defaultDir}`);
+            break;
+          }
+        } catch {
+        }
+      }
+      if (copiedFromSystem)
+        continue;
+      const url = `${TESSDATA_GITHUB_BASE}/${lang}.traineddata`;
+      const tempDownloadPath = `${targetFile}.tmp_${process.pid}`;
+      try {
+        console.log(`\u2B07\uFE0F  [OCR] Baixando modelo "${lang}.traineddata" para ${defaultDir}...`);
+        const res = await fetch(url, { signal: AbortSignal.timeout(3e4) });
+        if (res.ok) {
+          const arrayBuffer = await res.arrayBuffer();
+          const buf = Buffer.from(arrayBuffer);
+          if (buf.length > 1e5) {
+            await fs.promises.writeFile(tempDownloadPath, buf);
+            await fs.promises.rename(tempDownloadPath, targetFile);
+            console.log(`\u2705 [OCR] Modelo "${lang}.traineddata" preparado com sucesso (${(buf.length / 1024 / 1024).toFixed(1)} MB)`);
+          }
+        }
+      } catch (err) {
+        console.warn(
+          `\u26A0\uFE0F  [OCR] N\xE3o foi poss\xEDvel baixar "${lang}.traineddata" preventivamente:`,
+          err instanceof Error ? err.message : err
+        );
+        await fs.promises.unlink(tempDownloadPath).catch(() => {
+        });
+      }
+    }
+    process.env.TESSDATA_PREFIX = defaultDir;
+    const hasPor = fs.existsSync(path2.join(defaultDir, "por.traineddata"));
+    const hasEng = fs.existsSync(path2.join(defaultDir, "eng.traineddata"));
+    const ocrLanguage = hasPor && hasEng ? "por+eng" : hasPor ? "por" : "eng";
+    return { tessdataPath: defaultDir, ocrLanguage };
+  })();
+  return tessdataInitPromise;
+}
 async function extractTextFromPDF(buffer, filename) {
   console.log(`\u{1F4C4} [Extra\xE7\xE3o] Iniciando extra\xE7\xE3o avan\xE7ada com LiteParse em "${filename}"...`);
   const tempFilename = `temp_${Date.now()}_${filename.replace(/[^a-zA-Z0-9.]/g, "_")}`;
   const tempPath = path2.resolve(tempFilename);
   await fs.promises.writeFile(tempPath, buffer);
   try {
-    const parser = new LiteParse();
+    const { tessdataPath, ocrLanguage } = await ensureTessdataReady();
+    const parser = new LiteParse({
+      tessdataPath,
+      ocrLanguage
+    });
     const result = await parser.parse(tempPath);
     let finalText = "";
     if (result.pages && Array.isArray(result.pages) && result.pages.length > 0) {
