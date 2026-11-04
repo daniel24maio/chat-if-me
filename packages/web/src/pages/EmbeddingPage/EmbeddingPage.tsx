@@ -319,7 +319,7 @@ const EmbeddingPage: React.FC = () => {
                 <div key={item.id} className="file-item">
                   <span className="file-icon">📄</span>
                   <div className="file-info">
-                    <div className="file-name">{item.file.name}</div>
+                    <div className="file-name" title={item.file.name}>{item.file.name}</div>
                     <div className={`file-status ${statusClass(item.status)}`}>
                       {statusLabel(item.status)}
                       {item.message && ` — ${item.message}`}
@@ -351,7 +351,7 @@ const EmbeddingPage: React.FC = () => {
             documents.map((doc, i) => (
               <div key={i} className="doc-item">
                 <div className="doc-info">
-                  <span className="doc-name">📄 {doc.filename}</span>
+                  <span className="doc-name" title={doc.filename}>📄 {doc.filename}</span>
                   <span className="doc-chunks">{doc.totalChunks} chunks</span>
                   {doc.sourceUrl && (
                     <a
