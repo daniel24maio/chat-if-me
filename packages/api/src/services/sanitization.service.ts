@@ -116,6 +116,12 @@ const RE_CABECALHOS: RegExp[] = [
   // Rodapés tipo "Página X de Y" ou "X/Y"
   /P[aá]gina\s+\d+\s+de\s+\d+/gi,
   /^\s*\d{1,4}\s*\/\s*\d{1,4}\s*$/gm,
+
+  // Rodapés e carimbos eletrônicos do SEI (ex: "Resolução do Conselho Superior 1 (2605056) SEI 23208.000121/2026-78 / pg. 1")
+  /Resolu[cç][aã]o\s+do\s+Conselho\s+Superior[^\n]*SEI\s+[\d./-]+\s*\/\s*pg\.\s*\d+/gi,
+  /\bSEI\s+\d{5}\.\d{6}\/\d{4}-\d{2}\s*\/\s*pg\.\s*\d+/gi,
+  /Boletim\s+de\s+Servi[cç]o\s+Eletr[oô]nico\s+em\s*\n?\s*\d{2}\/\d{2}\/\d{4}/gi,
+  /A\s+autenticidade\s+do\s+documento\s+pode\s+ser\s+conferida\s+no\s+site[\s\S]*?c[oó]digo\s+CRC\s+[A-Z0-9]+\.?/gi,
 ];
 
 /**
@@ -194,7 +200,7 @@ function pruneAppendices(text: string): string {
 
     const remainingText = workingText.slice(match.index + match[0].length);
     const hasRegulationAfter =
-      /(?:^|\n)[\t ]*REGULAMENTO\s+(?:DO|DE|PARA|DAS)\s+(?:TRABALHO\s+DE\s+CONCLUS[AÃ]O|EST[AÁ]GIO|ATIVIDADES)/i.test(
+      /(?:^|\n)[\t ]*REGULAMENTO\s+(?:DO|DE|DOS|DAS|PARA|GERAL)\s+(?:ENSINO|CURSOS|TRABALHO\s+DE\s+CONCLUS[AÃ]O|EST[AÁ]GIO|ATIVIDADES|DISCIPLINAR|GRADUA[CÇ][AÃ]O)/i.test(
         remainingText
       );
 
@@ -262,7 +268,7 @@ function prepareNormativeChunking(text: string): string {
     resultText = resultText.replace(regex, "\n\n");
   }
 
-  // ── Passo B: Colapsar quebras simples em espaço (preservando linhas tabulares de disciplinas) ──
+  // ── Passo B: Colapsar quebras simples em espaço (preservando linhas tabulares e subitens normativos) ──
   const lines = resultText.split("\n");
   const mergedLines: string[] = [];
 
@@ -280,13 +286,13 @@ function prepareNormativeChunking(text: string): string {
       continue;
     }
 
-    // Preserva quebra de linha antes de linhas tabulares de disciplinas (ex: "7 OBBGSIN.040 ...", "7 OBLPEDA.094 ...", "Carga Horária Total", "CH total semestre")
+    // Preserva quebra de linha antes de linhas tabulares de disciplinas e antes de parágrafos/incisos/alíneas normativas
     const isTabularRowOrMarker =
-      /^[\t ]*(?:\d{1,2}\s+(?:(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}|Optativa\s+[IVX\d]+)|Carga\s+Hor[aá]ria\s+Total|CH\s+total\s+semestre|PER[IÍ]ODO\s+C[OÓ]D\.?\s+DISCIPLINA|Ementa:|Objetivo|Bibliografia|\[\[\s*PAG_\d+)/i.test(
+      /^[\t ]*(?:\d{1,2}\s+(?:(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}|Optativa\s+[IVX\d]+)|Carga\s+Hor[aá]ria\s+Total|CH\s+total\s+semestre|PER[IÍ]ODO\s+C[OÓ]D\.?\s+DISCIPLINA|Ementa:|Objetivo|Bibliografia|\[\[\s*PAG_\d+|§\s*\d+|Par[aá]grafo\s+[uú]nico\b|[IVXLCDM]{1,6}\s*[-–.]\s|[a-z]\)\s)/i.test(
         current
       );
     const prevWasTabularRow =
-      /^[\t ]*(?:\d{1,2}\s+(?:(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}|Optativa\s+[IVX\d]+)|Carga\s+Hor[aá]ria\s+Total|CH\s+total\s+semestre|PER[IÍ]ODO\s+C[OÓ]D\.?\s+DISCIPLINA)/i.test(
+      /^[\t ]*(?:\d{1,2}\s+(?:(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}|Optativa\s+[IVX\d]+)|Carga\s+Hor[aá]ria\s+Total|CH\s+total\s+semestre|PER[IÍ]ODO\s+C[OÓ]D\.?\s+DISCIPLINA|(?:CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o)\s+[IVXLCDM\d]+(?:-[a-zA-Z])?\s*$)/i.test(
         prev
       );
 
@@ -309,8 +315,8 @@ const PATTERNS = {
   // Marcadores de página inseridos pela extração: "--- Página 5 ---"
   pageMarker: /---\s*P[aá]gina\s+\d+\s*---/gi,
 
-  // Pilcrow (¶) e símbolos de parágrafo PDF
-  pilcrow: /[¶§]/g,
+  // Pilcrow (¶) de PDF (preserva o símbolo legal § de parágrafos normativos)
+  pilcrow: /¶/g,
 
   // Superíndices e subíndices numéricos unicode (notas de rodapé)
   superSubIndices: /[\u00B9\u00B2\u00B3\u2070-\u2079\u2080-\u2089]/g,

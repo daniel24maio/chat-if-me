@@ -132,9 +132,29 @@ const EmbeddingPage: React.FC = () => {
         body: formData,
       });
 
-      const data = await response.json();
+      const rawBody = await response.text();
+      let data: {
+        savedChunks?: number;
+        totalChunks?: number;
+        error?: string;
+        message?: string;
+      } = {};
 
-      if (response.ok) {
+      try {
+        data = rawBody ? JSON.parse(rawBody) : {};
+      } catch {
+        if (response.status === 504 || response.status === 524) {
+          data = {
+            error: `Tempo limite do gateway excedido (HTTP ${response.status}). O processamento OCR do PDF demorou mais que o limite do proxy.`,
+          };
+        } else {
+          data = {
+            error: `Resposta inválida do servidor (HTTP ${response.status}).`,
+          };
+        }
+      }
+
+      if (response.ok && (data.savedChunks ?? 0) > 0) {
         updateFile(item.id, {
           status: 'completed',
           progress: 100,
@@ -147,7 +167,10 @@ const EmbeddingPage: React.FC = () => {
         updateFile(item.id, {
           status: 'error',
           progress: 100,
-          message: data.error || 'Erro desconhecido',
+          message:
+            data.error ||
+            data.message ||
+            'Nenhum chunk foi gerado a partir deste documento.',
         });
       }
     } catch (error) {

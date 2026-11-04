@@ -117,8 +117,9 @@ async function ensureTessdataReady(): Promise<{ tessdataPath: string; ocrLanguag
     process.env.TESSDATA_PREFIX = defaultDir;
 
     const hasPor = fs.existsSync(path.join(defaultDir, "por.traineddata"));
-    const hasEng = fs.existsSync(path.join(defaultDir, "eng.traineddata"));
-    const ocrLanguage = hasPor && hasEng ? "por+eng" : hasPor ? "por" : "eng";
+    // IMPORTANTE: O LiteParse busca literalmente o arquivo `<ocrLanguage>.traineddata`.
+    // Não concatenar "por+eng", pois o LiteParse tentaria baixar "por+eng.traineddata" (HTTP 404).
+    const ocrLanguage = hasPor ? "por" : "eng";
 
     return { tessdataPath: defaultDir, ocrLanguage };
   })();
@@ -523,6 +524,9 @@ async function normativeChunking(text: string, filename: string, sourceUrl?: str
   });
 
   const parts = await splitter.splitText(text);
+  let currentTitle = "";
+  let currentChapter = "";
+  let currentSection = "";
   let currentContext = "";
   let lastPage = "";
 
@@ -535,7 +539,6 @@ async function normativeChunking(text: string, filename: string, sourceUrl?: str
       /DISCIPLINAS\s+EQUIVALENTES|DISC\.?\s*EQUIVALENTE|N[AÃ]O\s+PASS[IÍ]VEIS\s+DE\s+ACEA|Matrizes\s+Praticadas/i.test(
         partTrimmed
       );
-    const hierarchyMatch = partTrimmed.match(/^(?:CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o|Art\.\s+\d+º?)\s+[IVXLCDM\d\w\s]+.*?(?:\n|$)/i);
     const tabularPeriods = Array.from(
       new Set(
         Array.from(
@@ -546,12 +549,78 @@ async function normativeChunking(text: string, filename: string, sourceUrl?: str
       )
     ).sort((a, b) => a - b);
 
+    // Rastreia TÍTULO, CAPÍTULO e Seção para manter contexto hierárquico nos artigos subsequentes
+    const titleMatches = Array.from(
+      partTrimmed.matchAll(/(?:^|\n)[\t ]*(T[IÍ]TULO\s+[IVXLCDM\d]+)(?:[\t ]*[-–—]?\s*([^\n]+)|\n+([^\n]+))?/gi)
+    );
+    for (const tm of titleMatches) {
+      const heading = tm[1].trim();
+      const desc = (tm[2] || tm[3] || "").trim();
+      const cleanDesc = /^(?:CAP[IÍ]TULO|Se[cç][aã]o|Art\.)/i.test(desc) ? "" : desc;
+      currentTitle = cleanDesc ? `${heading} - ${cleanDesc}` : heading;
+      currentChapter = "";
+      currentSection = "";
+    }
+
+    const chapterMatches = Array.from(
+      partTrimmed.matchAll(/(?:^|\n)[\t ]*(CAP[IÍ]TULO\s+[IVXLCDM\d]+)(?:[\t ]*[-–—]?\s*([^\n]+)|\n+([^\n]+))?/gi)
+    );
+    for (const cm of chapterMatches) {
+      const heading = cm[1].trim();
+      const desc = (cm[2] || cm[3] || "").trim();
+      const cleanDesc = /^(?:T[IÍ]TULO|Se[cç][aã]o|Art\.)/i.test(desc) ? "" : desc;
+      currentChapter = cleanDesc ? `${heading} - ${cleanDesc}` : heading;
+      currentSection = "";
+    }
+
+    const sectionMatches = Array.from(
+      partTrimmed.matchAll(/(?:^|\n)[\t ]*(Se[cç][aã]o\s+[IVXLCDM\d]+(?:-[a-zA-Z])?)(?:[\t ]*[-–—]?\s*([^\n]+)|\n+([^\n]+))?/gi)
+    );
+    const chunkSections: string[] = [];
+    for (const sm of sectionMatches) {
+      const heading = sm[1].trim();
+      const desc = (sm[2] || sm[3] || "").trim();
+      const cleanDesc = /^(?:CAP[IÍ]TULO|T[IÍ]TULO|Art\.)/i.test(desc) ? "" : desc;
+      const formattedSec = cleanDesc ? `${heading} - ${cleanDesc}` : heading;
+      currentSection = formattedSec;
+      if (!chunkSections.includes(formattedSec)) {
+        chunkSections.push(formattedSec);
+      }
+    }
+
+    const articleNums = Array.from(
+      new Set(
+        Array.from(partTrimmed.matchAll(/(?:^|\n)[\t ]*Art\.\s*(\d+)/gi))
+          .map((m) => Number(m[1]))
+          .filter((n) => !Number.isNaN(n) && n > 0)
+      )
+    );
+    let articleLabel = "";
+    if (articleNums.length === 1) {
+      articleLabel = `Art. ${articleNums[0]}`;
+    } else if (articleNums.length > 1) {
+      articleLabel = `Arts. ${articleNums[0]}–${articleNums[articleNums.length - 1]}`;
+    }
+
     if (isEquivalenceOrAcea) {
       currentContext = "Tabela de Equivalências / ACEA";
     } else if (tabularPeriods.length > 0) {
       currentContext = `Matriz Curricular — ${tabularPeriods.map((n) => `${n}º Período`).join(", ")}`;
-    } else if (hierarchyMatch) {
-      currentContext = hierarchyMatch[0].trim();
+    } else {
+      const hierarchyParts = [
+        currentChapter || currentTitle,
+        chunkSections.length > 0 ? chunkSections.join(" / ") : currentSection,
+        articleLabel,
+      ].filter((p) => p && p.length > 0);
+
+      if (hierarchyParts.length > 0) {
+        currentContext = hierarchyParts.join(" — ");
+      } else {
+        const fallbackMatch = partTrimmed.match(/^(?:RESOLU[CÇ][AÃ]O|PORTARIA|REGULAMENTO)[^\n]*/i);
+        if (fallbackMatch) {
+          currentContext = fallbackMatch[0].trim();
+        }
+      }
     }
 
     const effectiveUrl = sourceUrl || extractUrlFromText(partTrimmed);
@@ -844,14 +913,27 @@ export async function processDocument(
 
   const start = Date.now();
   const rawText = await extractText(buffer, filename, mimetype);
+  const rawTextWithoutPageTags = rawText.replace(/\[\[\s*PAG_\d+\s*\]\]/gi, "").trim();
 
-  if (rawText.trim().length === 0) {
+  if (rawTextWithoutPageTags.length === 0) {
+    console.warn(`⚠️  [Ingestão] "${filename}" não retornou texto extraível (OCR vazio ou documento em branco).`);
     return { message: "O arquivo não contém texto extraível.", file: filename, totalChunks: 0, savedChunks: 0 };
   }
 
   const text = sanitizeText(rawText);
+  const sanitizedWithoutPageTags = text.replace(/\[\[\s*PAG_\d+\s*\]\]/gi, "").trim();
+
+  if (sanitizedWithoutPageTags.length === 0) {
+    console.warn(`⚠️  [Ingestão] "${filename}" ficou vazio após a sanitização.`);
+    return { message: "O arquivo não contém texto útil após a sanitização.", file: filename, totalChunks: 0, savedChunks: 0 };
+  }
 
   const chunks = await splitIntoChunks(text, filename, sourceUrl);
+
+  if (chunks.length === 0) {
+    console.warn(`⚠️  [Ingestão] "${filename}" gerou 0 chunks.`);
+    return { message: "Nenhum trecho válido pôde ser gerado a partir do documento.", file: filename, totalChunks: 0, savedChunks: 0 };
+  }
 
   const savedChunks = await vectorizeAndSave(chunks);
   const duration = ((Date.now() - start) / 1000).toFixed(1);

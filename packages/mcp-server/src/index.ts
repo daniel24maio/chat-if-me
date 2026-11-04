@@ -230,6 +230,140 @@ const COURSE_PROFILES: CourseProfile[] = [
   },
 ];
 
+interface NormativeTopicRule {
+  id: string;
+  queryRegex: RegExp;
+  chunkMatchRegex: RegExp;
+  ftsClause: string;
+}
+
+/**
+ * Regras de cobertura para assuntos normativos do Regulamento de Ensino do IFMG
+ * (Resolução nº 01/2026 — Arts. 1º a 189).
+ */
+const NORMATIVE_TOPIC_RULES: NormativeTopicRule[] = [
+  {
+    id: "TRANSFERENCIA_REINGRESSO_PORTADOR",
+    queryRegex:
+      /\b(?:transfer[eê]ncia\s+(?:interna|externa|de\s+of[ií]cio)|transferir\s+de\s+curso|portador\s+de\s+diploma|reingresso|conv[eê]nio|interc[aâ]mbio)\b/i,
+    chunkMatchRegex:
+      /\b(?:Transfer[eê]ncia\s+(?:Interna|Externa|de\s+Of[ií]cio)|Portador\s+de\s+Diploma|Do\s+Reingresso|Art\.\s*(?:4[2-9]|5[0-7])\b)/i,
+    ftsClause: "(transferencia | reingresso | (portador & diploma) | intercambi:*)",
+  },
+  {
+    id: "RENOVACAO_AJUSTE_SUGESTAO_MATRICULA",
+    queryRegex:
+      /\b(?:renova[cç][aã]o\s+(?:de\s+matr[íi]cula|extempor[aâ]nea)|matr[íi]cula\s+extempor[aâ]nea|sugest[aã]o\s+de\s+matr[íi]cula|ajuste\s+de\s+matr[íi]cula|duplicidade\s+de\s+matr[íi]cula|matr[íi]culas?\s+simult[aâ]neas?|ordem\s+de\s+prioridade.*matr[íi]cula)\b/i,
+    chunkMatchRegex:
+      /\b(?:Renova[cç][aã]o\s+da\s+Matr[íi]cula|sugest[aã]o\s+de\s+matr[íi]cula|Ajuste\s+de\s+matr[íi]cula|renova[cç][aã]o\s+extempor[aâ]nea|duplicidade\s+de\s+matr[íi]cula|Art\.\s*(?:5[89]|6[0-9]|7[0-7])\b)/i,
+    ftsClause: "(renovacao | extemporanea | sugestao | ajuste | duplicidade | simultanea:*)",
+  },
+  {
+    id: "DISCIPLINA_ISOLADA_ELETIVA",
+    queryRegex:
+      /\b(?:disciplinas?\s+isoladas?|estudante\s+especial|disciplinas?\s+eletivas?|mat[eé]rias?\s+(?:isoladas?|eletivas?)|puxar\s+mat[eé]ria\s+de\s+outro\s+curso)\b/i,
+    chunkMatchRegex:
+      /\b(?:Disciplina\s+Isolada|estudante\s+especial|Disciplina\s+Eletiva|Art\.\s*(?:7[89]|8[0-7])\b)/i,
+    ftsClause: "((disciplina & (isolada | eletiva)) | (estudante & especial))",
+  },
+  {
+    id: "TRANCAMENTO_REINTEGRACAO_CANCELAMENTO",
+    queryRegex:
+      /\b(?:trancamento|trancar\s+(?:a\s+)?(?:matr[íi]cula|curso|disciplina|mat[eé]ria|faculdade)|destrancar|reintegra[cç][aã]o\s+de\s+matr[íi]cula|cancelamento\s+de\s+matr[íi]cula|desligamento|abandono\s+de\s+curso|jubilamento|jubilar)\b/i,
+    chunkMatchRegex:
+      /\b(?:Trancamento\s+de\s+Matr[íi]cula|Reintegra[cç][aã]o\s+de\s+Matr[íi]cula|Cancelamento\s+da\s+Matr[íi]cula|abandono\s+de\s+curso|Art\.\s*(?:7[56]|8[89]|9[0-6])\b)/i,
+    ftsClause: "(trancamento | trancar | reintegracao | cancelamento | desligamento | abandono)",
+  },
+  {
+    id: "FREQUENCIA_ABONO_JUSTIFICATIVA",
+    queryRegex:
+      /\b(?:abono\s+de\s+faltas?|abonar\s+faltas?|justificativa\s+de\s+faltas?|justificar\s+faltas?|frequ[eê]ncia\s+m[íi]nima|limite\s+de\s+faltas?|75%\s*de\s*frequ[eê]ncia|25%\s*de\s*faltas?)\b/i,
+    chunkMatchRegex:
+      /\b(?:Regime\s+de\s+Frequ[eê]ncia|Registro\s+da\s+Frequ[eê]ncia|Abono\s+e\s+da\s+Justificativa\s+de\s+Faltas|75%\s*\(setenta\s+e\s+cinco|Art\.\s*(?:9[89]|10[0-4])\b)/i,
+    ftsClause: "(frequencia | abono | justificativa | faltas | 75)",
+  },
+  {
+    id: "REGIME_ESPECIAL_DOMICILIAR_RELIGIOSO",
+    queryRegex:
+      /\b(?:regime\s+especial\s+de\s+estudos|exerc[ií]cios?\s+domiciliares?|estudante\s+gestante|licen[cç]a\s+maternidade|lactante|afastamento\s+(?:m[eé]dico|sa[uú]de)|cren[cç]a\s+religiosa|guarda\s+religiosa|motivo\s+religioso|presta[cç][aã]o\s+alternativa)\b/i,
+    chunkMatchRegex:
+      /\b(?:Regime\s+Especial\s+de\s+Estudos|exerc[ií]cios\s+domiciliares|gestante|lactantes?|Cren[cç]a\s+Religiosa|guarda\s+religiosa|Art\.\s*(?:10[5-9]|11[0-5])\b)/i,
+    ftsClause: "((regime & especial) | domiciliares | gestante | lactante | religiosa | guarda)",
+  },
+  {
+    id: "AVALIACAO_RECUPERACAO_EXAME_FINAL_SEGUNDA_CHAMADA",
+    queryRegex:
+      /\b(?:segunda\s+chamada|perdi\s+uma\s+prova|revis[aã]o\s+de\s+(?:avalia[cç][aã]o|prova|nota|frequ[eê]ncia)|lan[cç]amento\s+de\s+notas|recupera[cç][aã]o|exame\s+final|prova\s+final|m[eé]dia\s+de\s+aprova[cç][aã]o|60%\s*de\s*aproveitamento|40%\s*do\s*total|100\s*pontos|crit[eé]rios?\s+de\s+(?:aprova[cç][aã]o|reprova[cç][aã]o))\b/i,
+    chunkMatchRegex:
+      /\b(?:VERIFICA[CÇ][AÃ]O\s+DO\s+DESEMPENHO|segunda\s+chamada|revis[oõ]es\s+de\s+avalia[cç][oõ]es|Da\s+Aprova[cç][aã]o|Da\s+Recupera[cç][aã]o|Exames?\s+Finais?|Da\s+Reprova[cç][aã]o|Art\.\s*(?:11[6-9]|12[0-9]|13[5-8])\b)/i,
+    ftsClause: "(avaliacao | recuperacao | (exame & final) | (segunda & chamada) | revisao | aprovacao | reprovacao)",
+  },
+  {
+    id: "COEFICIENTE_RENDIMENTO_CR",
+    queryRegex:
+      /\b(?:coeficiente\s+de\s+rendimento|c[aá]lculo\s+do\s+cr\b|como\s+(?:calcula|funciona)\s+o\s+cr\b|\bcr\s+global\b|\bcr\s+semestral\b)\b/i,
+    chunkMatchRegex:
+      /\b(?:Coeficiente\s+de\s+Rendimento|Art\.\s*122\b)/i,
+    ftsClause: "(coeficiente & rendimento)",
+  },
+  {
+    id: "PROGRESSAO_PARCIAL_ESTUDOS_ORIENTADOS",
+    queryRegex:
+      /\b(?:progress[aã]o\s+parcial|depend[eê]ncia|estudos?\s+orientados?|reavalia[cç][aã]o\s+em\s+etapas?\s+posteriores?)\b/i,
+    chunkMatchRegex:
+      /\b(?:Progress[aã]o\s+Parcial|Estudos?\s+Orientados?|reavalia[cç][aã]o\s+em\s+etapas\s+posteriores|Art\.\s*13[0-5]\b)/i,
+    ftsClause: "((progressao & parcial) | (estudo:* & orientado:*) | dependencia | reavaliacao)",
+  },
+  {
+    id: "APROVEITAMENTO_DISPENSA_CERTIFICACAO_EQUIVALENCIA",
+    queryRegex:
+      /\b(?:aproveitamento\s+de\s+(?:estudos|disciplinas?)|dispensa\s+de\s+(?:disciplinas?|mat[eé]rias?)|aproveitar\s+(?:disciplinas?|mat[eé]rias?)|certifica[cç][aã]o\s+de\s+conhecimento|equival[eê]ncia\s+de\s+disciplinas?)\b/i,
+    chunkMatchRegex:
+      /\b(?:Certifica[cç][aã]o\s+de\s+Conhecimento|Aproveitamento\s+de\s+Estudos|Equival[eê]ncia\s+de\s+Disciplinas|40%\s*\(quarenta\s+por\s+cento\)|75%\s*\(setenta\s+e\s+cinco|Art\.\s*(?:139|14[0-9]|15[0-6])\b)/i,
+    ftsClause: "((aproveitamento & estudos) | dispensa | (certificacao & conhecimento) | (equivalencia & disciplinas))",
+  },
+  {
+    id: "DIPLOMA_HISTORICO_ENADE_TERMINALIDADE",
+    queryRegex:
+      /\b(?:expedi[cç][aã]o\s+de\s+(?:diplomas?|certificados?|documentos?)|prazo.*(?:diploma|hist[oó]rico)|emiss[aã]o\s+de\s+diploma|revalida[cç][aã]o\s+de\s+diplomas?|terminalidade\s+espec[íi]fica|napnee|plano\s+educacional\s+individualizado|\bpei\b)\b/i,
+    chunkMatchRegex:
+      /\b(?:EXPEDI[CÇ][AÃ]O\s+DIPLOMAS|REVALIDA[CÇ][AÃ]O\s+DE\s+DIPLOMAS|Terminalidade\s+Espec[ií]fica|NAPNEE|Plano\s+Educacional\s+Individualizado|Art\.\s*(?:15[7-9]|21|25|29|33|37|38|39)\b)/i,
+    ftsClause: "(diploma:* | certificado:* | historico | revalidacao | terminalidade | napnee)",
+  },
+  {
+    id: "GESTAO_COLEGIADO_NDE_CONSELHO_CRA",
+    queryRegex:
+      /\b(?:colegiado\s+de\s+curso|n[uú]cleo\s+docente\s+estruturante|\bnde\b|conselho\s+de\s+classe|conselho\s+pedag[oó]gico|coordena[cç][aã]o\s+de\s+curso|compete\s+ao\s+coordenador|controle\s+e\s+registro\s+acad[eê]mico|di[aá]rio\s+de\s+classe)\b/i,
+    chunkMatchRegex:
+      /\b(?:Coordena[cç][oõ]es\s+de\s+Curso|Colegiados?\s+de\s+Curso|N[uú]cleos?\s+Docentes?\s+Estruturantes?|\bNDE\b|Conselhos?\s+Pedag[oó]gicos?|Conselho\s+de\s+Classe|Controle\s+e\s+Registro\s+Acad[eê]mico|Art\.\s*(?:16[1-9]|17[0-9]|18[0-7])\b)/i,
+    ftsClause: "(colegiado | nde | (nucleo & docente & estruturante) | (conselho & classe) | (registro & academico))",
+  },
+  {
+    id: "ESTRUTURA_REGIME_HORA_AULA_CURSOS_TECNICOS",
+    queryRegex:
+      /\b(?:regime\s+seriado|matr[íi]cula\s+por\s+componente|dura[cç][aã]o\s+da\s+hora[- ]aula|50\s*minutos|200\s*dias\s*letivos|t[eé]cnico\s+(?:integrado|subsequente|concomitante)|modalidade\s+eja|cursos?\s+t[eé]cnicos?|t[eé]cnicos?\s+em\s+(?:administra[cç][aã]o|metalurgia|inform[aá]tica)|ensino\s+m[eé]dio\s+integrado|educa[cç][aã]o\s+profissional\s+t[eé]cnica)\b/i,
+    chunkMatchRegex:
+      /\b(?:DO\s+REGIME\s+ACAD[EÊ]MICO|DO\s+CALEND[AÁ]RIO\s+ACAD[EÊ]MICO|DOS\s+CURSOS\s+T[EÉ]CNICOS|Dos\s+Cursos\s+T[eé]cnicos\s+(?:Integrados|Subsequentes|Concomitantes|na\s+Modalidade)|DA\s+JORNADA\s+ACAD[EÊ]MICA|hora-aula\s+de\s+50|regime\s+seriado|30\s*\(trinta\)\s*pontos|duas\s+recupera[cç][oõ]es\s+parciais|Conselho\s+de\s+Classe|Art\.\s*(?:1[0-9]|2[0-9]|3[0-3]|4[01]|62|68|88|102|118|123|127|13[0-4]|136|158|182)\b)/i,
+    ftsClause: "((regime & seriado) | subsequente | concomitante | (dias & letivos) | jornada | tecnico:* | integrado:*)",
+  },
+];
+
+/**
+ * Detecta se a consulta refere-se especificamente ao nível de Curso Técnico (Nível Médio / Regime Seriado)
+ * ou ao nível de Graduação (Educação Superior), evitando colisão de nomes como Administração e Metalurgia.
+ */
+function detectCourseLevel(text: string): { isTechnical: boolean; isGraduation: boolean } {
+  const isTechnical =
+    /\b(?:cursos?\s+t[eé]cnicos?|t[eé]cnicos?\s+(?:integrados?|subsequentes?|concomitantes?|em\s+(?:administra[cç][aã]o|metalurgia|inform[aá]tica|edifica[cç][oõ]es|eletrot[eé]cnica))|ensino\s+m[eé]dio\s+integrado|educa[cç][aã]o\s+profissional\s+t[eé]cnica|modalidade\s+eja|regime\s+seriado)\b/i.test(
+      text
+    );
+  const isGraduation =
+    /\b(?:gradua[cç][aã]o|bacharelado|licenciatura|engenharia\s+metal[uú]rgica|sistemas?\s+de\s+informa[cç][aã]o|pedagogia|curso\s+superior|tecn[oó]logo|bsi|ppcbsi|ppcadm|ppcemt|ppcped|ppccomp|obbgsin|obbgadm|obbgemt|oblped|oblcomp)\b/i.test(
+      text
+    );
+  return { isTechnical, isGraduation };
+}
+
 /**
  * Formata a query para o formato tsquery do PostgreSQL (FTS).
  * Remove caracteres especiais, expande numerais ordinais e adiciona palavras de apoio da intenção (intent).
@@ -300,8 +434,13 @@ function formatFTSQuery(query: string, intent?: string, fullContextText?: string
 
   // Cláusula focada de período + curso e cláusula tabular para matrizes curriculares (ex: "7 OBBGSIN.040")
   const targetPeriod = detectTargetPeriod(detectionText);
-  const targetCourse = COURSE_PROFILES.find((c) => c.queryRegex.test(detectionText));
+  const { isTechnical, isGraduation } = detectCourseLevel(detectionText);
+  const isPureTechnicalQuery = isTechnical && !isGraduation;
+  const targetCourse = isPureTechnicalQuery
+    ? undefined
+    : COURSE_PROFILES.find((c) => c.queryRegex.test(detectionText));
   const periodOrdinalClause = targetPeriod ? ordinalMap[String(targetPeriod)] : null;
+  const matchedNormativeRules = NORMATIVE_TOPIC_RULES.filter((r) => r.queryRegex.test(detectionText));
 
   const focusedClauses: string[] = [];
   if (codeFTS) focusedClauses.push(codeFTS);
@@ -310,7 +449,7 @@ function formatFTSQuery(query: string, intent?: string, fullContextText?: string
     focusedClauses.push(`(${targetPeriod} & ${targetCourse.ftsClause} & (semestre | optativa | pre | ch | periodo))`);
     focusedClauses.push(`(${periodOrdinalClause} & periodo & ${targetCourse.ftsClause})`);
   }
-  if (targetPeriod) {
+  if (targetPeriod && !isPureTechnicalQuery) {
     focusedClauses.push(
       `(${targetPeriod} & (obbgsin:* | obbgadm:* | obbgemt:* | oblcomp:* | oblped:* | optativa) & (semestre | periodo | ch))`
     );
@@ -321,23 +460,41 @@ function formatFTSQuery(query: string, intent?: string, fullContextText?: string
   if (targetCourse) {
     focusedClauses.push(targetCourse.ftsClause);
   }
+  if (isTechnical) {
+    // Expande consultas sobre cursos técnicos para alcançar também os artigos do "regime seriado" no Regulamento
+    focusedClauses.push(
+      "((curso:* & tecnico:*) | (regime & seriado) | integrado:* | subsequente:* | concomitante:* | (tres & etapas) | (conselho & classe))"
+    );
+  }
+  for (const rule of matchedNormativeRules) {
+    focusedClauses.push(rule.ftsClause);
+  }
 
   mainFTS = focusedClauses.length > 0 ? focusedClauses.join(" | ") : "dummy_fallback_query";
 
   const intentKeywords: Record<string, string> = {
-    ESTRUTURA_CURSOS: "matriz | curricular | periodo",
+    ESTRUTURA_CURSOS: "matriz | curricular | periodo | seriado | modalidade",
     DISCIPLINA_EMENTA: "ementa | ementario | conteudo",
     CONTEUDO: "ementa | ementario | conteudo",
-    INGRESSO_MATRICULA: "matricula | ingresso",
-    AVALIACAO_FREQUENCIA: "frequencia | faltas | nota",
+    INGRESSO_MATRICULA:
+      "matricula | ingresso | transferencia | trancamento | reingresso | isolada | eletiva | renovacao | ajuste | cancelamento | reintegracao",
+    AVALIACAO_FREQUENCIA:
+      "frequencia | faltas | nota | avaliacao | aprovacao | reprovacao | recuperacao | exame | abono | justificativa | atestado | coeficiente | rendimento | progressao | domiciliares",
     ESTAGIO_TCC: "tcc | estagio",
     ATIVIDADES_EXTRAS: "complementares | extensao",
     ASSISTENCIA_BOLSAS: "bolsa | auxilio | transporte | mobilidade",
     INFRA_CAMPUS: "biblioteca | laboratorio | restaurante | refeitorio | sala | bloco | localizacao",
-    DIREITOS_DEVERES: "direitos | deveres",
+    DIREITOS_DEVERES: "direitos | deveres | disciplinar | colegiado | nde",
   };
 
-  if (intent && (intent === "DISCIPLINA_EMENTA" || intent === "DISCIPLINA" || intent === "CONTEUDO")) {
+  const hasExplicitEmentaTerms = /\b(?:ementa|ement[aá]rio|conte[uú]do\s+program[aá]tico|bibliografia)\b/i.test(
+    detectionText
+  );
+  const isPureEmentaIntent =
+    (intent === "DISCIPLINA_EMENTA" || intent === "DISCIPLINA" || intent === "CONTEUDO") &&
+    (matchedNormativeRules.length === 0 || hasExplicitEmentaTerms);
+
+  if (isPureEmentaIntent) {
     mainFTS = `(${mainFTS}) | (ementa | ementario | conteudo | programa)`;
   } else if (intent && intentKeywords[intent]) {
     mainFTS = `(${mainFTS}) | (${intentKeywords[intent]})`;
@@ -349,23 +506,37 @@ function formatFTSQuery(query: string, intent?: string, fullContextText?: string
 /**
  * Aplica heurísticas de re-ranking sobre os candidatos híbridos:
  *   1. Afinidade por curso (ex: Sistemas de Informação / PPCBSI / OBBGSIN vs. outros PPCs)
- *   2. Detecção de linhas tabulares de período na Matriz Curricular (ex: "7 OBBGSIN.040", "7 Optativa III")
- *   3. Diferenciação entre Tabela da Matriz Curricular vs. Fichas Individuais do Ementário
- *   4. Bonificação de código específico de disciplina e ementa
+ *   2. Cobertura normativa para artigos do Regulamento de Ensino (Resolução nº 01/2026)
+ *   3. Detecção de linhas tabulares de período na Matriz Curricular (ex: "7 OBBGSIN.040", "7 Optativa III")
+ *   4. Diferenciação entre Tabela da Matriz Curricular vs. Fichas Individuais do Ementário
+ *   5. Bonificação de código específico de disciplina e ementa
  */
 function applyRerankingBoosts(
   documents: RetrievedChunk[],
   fullSearchText: string,
   intent?: string
 ): void {
-  const isEmentaQuery = intent === "DISCIPLINA_EMENTA" || intent === "DISCIPLINA" || intent === "CONTEUDO";
+  const matchedNormativeRules = NORMATIVE_TOPIC_RULES.filter((r) => r.queryRegex.test(fullSearchText));
+  const hasExplicitEmentaTerms = /\b(?:ementa|ement[aá]rio|conte[uú]do\s+program[aá]tico|bibliografia|objetivos?\s+da\s+disciplina)\b/i.test(
+    fullSearchText
+  );
+
+  // Evita que perguntas normativas contendo a palavra "disciplina" (ex: "dispensa de disciplina",
+  // "disciplina isolada", "disciplina eletiva", "trancar disciplina") sejam tratadas como busca de Ementa
+  const isEmentaQuery =
+    (intent === "DISCIPLINA_EMENTA" || intent === "DISCIPLINA" || intent === "CONTEUDO") &&
+    (matchedNormativeRules.length === 0 || hasExplicitEmentaTerms);
   const isCursoQuery = intent === "CURSO" || intent === "ESTRUTURA_CURSOS";
   const isAskingEquivalenceOrAcea = /equivalen|acea|201[789]|2020/i.test(fullSearchText);
 
   const codeMatch = fullSearchText.match(/(OBBGSIN|OBBGADM|OBBGEMT|OBLCOMP|OBLE?PEDA?)\.?(\d{3})/i);
   const targetCode = codeMatch ? `${codeMatch[1]}.${codeMatch[2]}`.toLowerCase() : null;
 
-  const targetCourse = COURSE_PROFILES.find((c) => c.queryRegex.test(fullSearchText));
+  const { isTechnical, isGraduation } = detectCourseLevel(fullSearchText);
+  const isPureTechnicalQuery = isTechnical && !isGraduation;
+  const targetCourse = isPureTechnicalQuery
+    ? undefined
+    : COURSE_PROFILES.find((c) => c.queryRegex.test(fullSearchText));
   const otherCourses = targetCourse
     ? COURSE_PROFILES.filter((c) => c.id !== targetCourse.id)
     : [];
@@ -414,6 +585,32 @@ function applyRerankingBoosts(
       }
     }
 
+    // 1.1. Afinidade por Nível de Ensino (Curso Técnico / Regime Seriado vs. Graduação)
+    if (isPureTechnicalQuery) {
+      const isGraduationPpcDoc =
+        COURSE_PROFILES.some((cp) => cp.docMatchRegex.test(`${doc.source} ${doc.sectionContext || ""}`)) ||
+        /\b(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}\b/i.test(doc.content);
+      const hasTechnicalOrSeriadoContent =
+        /\b(?:cursos?\s+t[eé]cnicos?|t[eé]cnico\s+(?:integrado|subsequente|concomitante)|educa[cç][aã]o\s+profissional\s+t[eé]cnica|regime\s+seriado|modalidade\s+eja|3\s*\(tr[eê]s\)\s*etapas|30\s*\(trinta\)\s*pontos\s+na\s+primeira\s+etapa|duas\s+recupera[cç][oõ]es\s+parciais|conselho\s+de\s+classe)\b/i.test(
+          docFullText
+        );
+      const isExclusiveGraduationSection =
+        !hasTechnicalOrSeriadoContent &&
+        /\b(?:DOS\s+CURSOS\s+DE\s+GRADUA[CÇ][AÃ]O|Cursos\s+Superiores\s+de\s+Tecnologia|Cursos\s+de\s+Bacharelado|Cursos\s+de\s+Licenciatura|Portador\s+de\s+Diploma\s+de\s+Curso\s+de\s+Gradua[cç][aã]o|exclusivamente\s+para\s+os\s+cursos\s+de\s+gradua[cç][aã]o|regime\s+de\s+matr[íi]culas?\s+por\s+componentes?\s+curriculares?)\b/i.test(
+          docFullText
+        );
+
+      if (isGraduationPpcDoc && !hasTechnicalOrSeriadoContent) {
+        doc.similarity -= 0.20;
+        continue;
+      }
+      if (hasTechnicalOrSeriadoContent) {
+        doc.similarity += 0.24;
+      } else if (isExclusiveGraduationSection) {
+        doc.similarity -= 0.14;
+      }
+    }
+
     // Se o documento pertence comprovadamente a OUTRO curso diferente do perguntado,
     // não aplica bonificações de período, matriz ou ementa para evitar contaminação cruzada entre PPCs.
     if (belongsToOtherCourse) {
@@ -431,13 +628,36 @@ function applyRerankingBoosts(
       doc.similarity += 0.10;
     }
 
-    // 3. Classificação estrutural do chunk: Tabela de Matriz Curricular vs. Ficha Individual de Ementário
+    // 3. Classificação estrutural do chunk: Tabela de Matriz Curricular vs. Ficha Individual de Ementário vs. Artigo Normativo
     const distinctCodes = new Set(
       (doc.content.match(/\b(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}\b/gi) || []).map((c) => c.toUpperCase())
     );
     const hasCourseCodes = distinctCodes.size > 0;
     const isEmentaCard =
       /\bEmenta:\s/i.test(doc.content) || /\bBibliografia\s+b[aá]sica:/i.test(doc.content);
+    const isNormativeChunk =
+      /\bArt\.\s*\d+/i.test(doc.content) ||
+      /regulamento|resolu[cç][aã]o/i.test(`${doc.source} ${doc.sectionContext || ""}`);
+    const isGeneralTeachingRegulation =
+      /regulamento\s*de\s*ensino|novoregulamento|resolu[cç][aã]o\s*n[º°o]?\s*0?1\s*de\s*27\s*de\s*janeiro\s*de\s*2026/i.test(
+        docFullText
+      );
+
+    // 3.1. Cobertura de Tópicos Normativos do Regulamento de Ensino (Arts. 1º a 189)
+    if (matchedNormativeRules.length > 0 && !targetCode && !hasExplicitEmentaTerms) {
+      const matchesTopicChunk = matchedNormativeRules.some((r) => r.chunkMatchRegex.test(docFullText));
+      if (matchesTopicChunk && isNormativeChunk) {
+        doc.similarity += 0.28;
+        if (isGeneralTeachingRegulation && !targetCourse) {
+          doc.similarity += 0.08;
+        }
+      } else if (matchesTopicChunk) {
+        doc.similarity += 0.14;
+      } else if (isEmentaCard) {
+        // Desprioriza fichas de ementa de disciplinas quando a pergunta é sobre normas/regulamento
+        doc.similarity -= 0.12;
+      }
+    }
 
     const tabularTargetMatches = tabularTargetPeriodRegex
       ? (doc.content.match(tabularTargetPeriodRegex) || []).length

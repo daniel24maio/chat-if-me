@@ -64,6 +64,7 @@ REGRAS OBRIGATÓRIAS:
 2. Ao gerar o parâmetro 'query' na ferramenta de busca:
    - Extraia APENAS palavras-chave principais e nomes próprios (proibido usar frases completas, pronomes ou conectivos).
    - SEMPRE EXPANDA SIGLAS acadêmicas (ex: TCC -> Trabalho de Conclusão de Curso, PPC -> Projeto Pedagógico do Curso, AC -> Atividades Complementares, IRA -> Índice de Rendimento Acadêmico).
+   - Se a pergunta for sobre cursos técnicos (integrado, subsequente, concomitante, EJA), mantenha 'curso técnico regime seriado' na query e NUNCA troque por cursos de graduação (Bacharelado ou Engenharia).
 3. Ao gerar o parâmetro 'intent', classifique a intenção estritamente em uma destas 10 categorias:
    - INGRESSO_MATRICULA: Vestibular, SISU, transferências, trancamento, renovação de matrícula.
    - ESTRUTURA_CURSOS: Matriz curricular, listagem de disciplinas de um período/semestre específico (ex: "quais são as matérias do 1º período?", "disciplinas do 3º semestre"), grade do curso, PPC, duração de cursos, regras gerais dos cursos do campus.
@@ -571,7 +572,7 @@ export async function processAgentQuestion(
     ...messages,
     {
       role: "system",
-      content: "DIRETIVA FINAL OBRIGATÓRIA: Sua resposta deve ser baseada EXCLUSIVAMENTE nos trechos de documentos retornados pela ferramenta acima. NÃO se apresente, NÃO liste suas capacidades. Responda diretamente a pergunta do usuário usando os dados dos documentos. Responda em Português do Brasil (pt-BR). Ignore trechos de outras disciplinas não relacionadas à pergunta. NUNCA utilize conhecimento geral externo se o assunto não constar nos documentos retornados e nunca gere exemplos de prompts ou código-fonte.",
+      content: "DIRETIVA FINAL OBRIGATÓRIA: Sua resposta deve ser baseada EXCLUSIVAMENTE nos trechos de documentos retornados pela ferramenta acima. NÃO se apresente, NÃO liste suas capacidades. Responda diretamente a pergunta do usuário usando os dados dos documentos. Responda em Português do Brasil (pt-BR). Ignore trechos de outras disciplinas não relacionadas à pergunta. Quando a pergunta for sobre Cursos Técnicos, utilize prioritariamente as regras do Regulamento de Ensino para Cursos Técnicos e Regime Seriado (Cursos Técnicos Integrados têm regime seriado anual de 3 a 4 anos, 3 etapas de 30+35+35 pontos, frequência global de 75% na série, 2 recuperações parciais e 1 final, e progressão parcial em até 2 disciplinas; Cursos Técnicos Subsequentes/Concomitantes têm regime por componente curricular semestral de 2 a 5/6 semestres) e NÃO misture com regras exclusivas de PPCs de Graduação (Bacharelado/Licenciatura). NUNCA utilize conhecimento geral externo se o assunto não constar nos documentos retornados e nunca gere exemplos de prompts ou código-fonte.",
     }
   ];
 

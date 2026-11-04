@@ -58,18 +58,18 @@ Você tem acesso à ferramenta de busca avançada 'search_ifmg_knowledge_beta'. 
 REGRAS OBRIGATÓRIAS:
 1. SEMPRE use a ferramenta search_ifmg_knowledge_beta antes de responder qualquer dúvida acadêmica ou institucional.
 2. Ao gerar os parâmetros para a ferramenta search_ifmg_knowledge_beta:
-   - 'semantic_query': Crie uma pergunta contextualizada, formal e completa com siglas expandidas (ex: 'Qual a ementa detalhada e objetivos de Banco de Dados I no curso de Sistemas?').
-   - 'keywords': Extraia os termos-chave essenciais, códigos de disciplina (ex: OBBGSIN.034) e nomes próprios para a busca textual (ex: 'ementa Banco de Dados I OBBGSIN.034').
+   - 'semantic_query': Crie uma pergunta contextualizada, formal e completa com siglas expandidas (ex: 'Qual a ementa detalhada e objetivos de Banco de Dados I no curso de Sistemas?'). Se a dúvida for sobre cursos técnicos (integrado, subsequente, concomitante, EJA), inclua explicitamente 'curso técnico regime seriado' na consulta e NUNCA troque por cursos de graduação (Bacharelado ou Engenharia).
+   - 'keywords': Extraia os termos-chave essenciais, códigos de disciplina (ex: OBBGSIN.034) e nomes próprios para a busca textual (ex: 'ementa Banco de Dados I OBBGSIN.034'). Para dúvidas de cursos técnicos, inclua 'curso técnico regime seriado'.
    - 'intent': Classifique estritamente a intenção em UMA destas 10 categorias:
-     * INGRESSO_MATRICULA: Vestibular, SISU, transferências, trancamento, renovação de matrícula.
-     * ESTRUTURA_CURSOS: Matriz curricular, listagem de disciplinas de um período/semestre (ex: "matérias do 1º período", "grade do 3º semestre"), PPC, duração.
+     * INGRESSO_MATRICULA: Vestibular, SISU, transferências (interna/externa), reingresso, obtenção de novo título, renovação/ajuste de matrícula, trancamento/cancelamento de matrícula ou de disciplina isolada/eletiva, reintegração, aproveitamento de estudos/dispensa de disciplina, certificação de conhecimento/extraordinário aproveitamento, expedição de diploma, histórico e ENADE.
+     * ESTRUTURA_CURSOS: Matriz curricular, listagem de disciplinas de um período/semestre (ex: "matérias do 1º período", "grade do 3º semestre"), PPC, duração, colegiado, NDE e conselho de classe.
      * DISCIPLINA_EMENTA: Ementa detalhada, pré-requisitos, bibliografia e objetivos de uma disciplina específica.
-     * AVALIACAO_FREQUENCIA: Pontuação, média, provas, faltas (25%), abono e atestados.
+     * AVALIACAO_FREQUENCIA: Pontuação, média (60%), recuperação paralela, exame final, segunda chamada, revisão de prova, coeficiente de rendimento (CR), progressão parcial/dependência, estudos orientados, frequência (75%), faltas (25%), abono de faltas e regime especial/domiciliar.
      * ESTAGIO_TCC: Regras de estágio obrigatório/não obrigatório, documentação, orientadores e bancas de Trabalho de Conclusão de Curso.
      * ATIVIDADES_EXTRAS: Horas complementares (AAC), pesquisa, extensão e monitoria.
      * ASSISTENCIA_BOLSAS: Assistência estudantil, auxílios (moradia, alimentação, transporte/mobilidade) e bolsas de estudo.
      * INFRA_CAMPUS: Biblioteca, laboratórios, localização de salas e setores, restaurante/refeitório, horários de funcionamento e estrutura do campus.
-     * DIREITOS_DEVERES: Regime disciplinar, sanções e direitos discentes.
+     * DIREITOS_DEVERES: Regime disciplinar, sanções, liberdade de crença religiosa, atendimento específico (NAPNEE) e direitos/deveres discentes.
      * OUTRAS: Qualquer outro assunto institucional ou geral do campus.
 3. Use EXCLUSIVAMENTE as informações retornadas pela ferramenta. Não invente ou complemente com conhecimento externo.
 4. EMENTAS E NORMAS: Se o usuário solicitar a EMENTA de uma disciplina ou normas específicas, forneça o conteúdo INTEGRAL retornado pela ferramenta, sem resumir ou omitir tópicos. Se a pergunta for apenas para listar disciplinas de um período, cite os nomes das matérias e seus códigos.
@@ -103,17 +103,17 @@ interface OllamaChatResponse extends OllamaUsagePayload {
  */
 function inferIntentionFromKeywords(text: string): string {
   const t = text.toLowerCase();
+  if (/matr[íi]cula|ingresso|sisu|vestibular|trancamento|trancar|transfer[eê]ncia|reingresso|reintegra[cç][aã]o|jubilamento|cancelamento\s+de\s+matr[íi]cula|disciplina\s+isolada|disciplina\s+eletiva|aproveitamento\s+de\s+estudos|dispensa\s+de\s+disciplina|certifica[cç][aã]o\s+de\s+conhecimentos?|extraordin[aá]rio\s+aproveitamento|equival[eê]ncia\s+de\s+disciplina|diploma|colac[aã]o\s+de\s+grau|enade/i.test(t)) return "INGRESSO_MATRICULA";
+  if (/frequ[eê]ncia|falta|nota|abono|atestado|prova|exame\s+final|recupera[cç][aã]o|segunda\s+chamada|2[ªa]\s+chamada|revis[aã]o\s+de\s+aval|coeficiente\s+de\s+rendimento|progress[aã]o\s+parcial|depend[eê]ncia|estudos?\s+orientados?|regime\s+especial|atendimento\s+domiciliar/i.test(t)) return "AVALIACAO_FREQUENCIA";
+  if (/tcc|trabalho\s+de\s+conclus[aã]o|est[aá]gio/i.test(t)) return "ESTAGIO_TCC";
   if (/(?:disciplinas?|mat[eé]rias?|grade)\s+(?:do|da|no|na|de)?\s*(?:\d+[oaºª]?\s*)?per[íi]odo/i.test(text)) return "ESTRUTURA_CURSOS";
-  if (/matriz|grade\s+curricular|ppc|dura[cç][aã]o\s+do\s+curso/i.test(t)) return "ESTRUTURA_CURSOS";
+  if (/matriz|grade\s+curricular|ppc|dura[cç][aã]o\s+do\s+curso|colegiado|nde|n[uú]cleo\s+docente|conselho\s+de\s+classe/i.test(t)) return "ESTRUTURA_CURSOS";
   if (/ementa|pre-?requisito|conte[uú]do\s+(?:da|programático)/i.test(t)) return "DISCIPLINA_EMENTA";
   if (/per[íi]odo|semestre|curso\s+de/i.test(t)) return "ESTRUTURA_CURSOS";
   if (/disciplina/i.test(t)) return "DISCIPLINA_EMENTA";
-  if (/tcc|trabalho\s+de\s+conclus[aã]o|est[aá]gio/i.test(t)) return "ESTAGIO_TCC";
-  if (/matr[íi]cula|ingresso|sisu|vestibular|trancamento/i.test(t)) return "INGRESSO_MATRICULA";
-  if (/frequ[eê]ncia|falta|nota|abono|atestado|prova|exame/i.test(t)) return "AVALIACAO_FREQUENCIA";
   if (/bolsa|aux[ií]lio|moradia|transporte|mobilidade|[oô]nibus/i.test(t)) return "ASSISTENCIA_BOLSAS";
   if (/biblioteca|laborat[oó]rio|restaurante|refeit[oó]rio|cantina|sala|bloco|pr[eé]dio|audit[oó]rio|localiza[cç][aã]o|setor|hor[aá]rio/i.test(t)) return "INFRA_CAMPUS";
-  if (/disciplinar|penalidade|deveres|direitos/i.test(t)) return "DIREITOS_DEVERES";
+  if (/disciplinar|penalidade|deveres|direitos|cren[cç]a\s+religiosa|guarda\s+religiosa|napnee|terminalidade/i.test(t)) return "DIREITOS_DEVERES";
   if (/horas?\s+complementar|extens[aã]o|monitoria|pesquisa/i.test(t)) return "ATIVIDADES_EXTRAS";
   return "OUTRAS";
 }
@@ -428,6 +428,7 @@ Sua resposta deve basear-se ESTRITAMENTE nos trechos de documentos retornados pe
 - Responda em Português do Brasil (pt-BR).
 - Forneça ementas ou normas de forma INTEGRAL sem resumir.
 - Cite ao final a fonte utilizada (nome do documento, página/seção quando disponível e link se houver no trecho).
+- DISTINÇÃO DE NÍVEL DE ENSINO (TÉCNICO vs. GRADUAÇÃO): Quando a pergunta for sobre **Cursos Técnicos**, utilize prioritariamente as regras do Regulamento de Ensino para Cursos Técnicos e **Regime Seriado** (Cursos Técnicos Integrados funcionam em regime seriado anual de 3 a 4 anos, divididos em 3 etapas de 30 + 35 + 35 pontos, frequência mínima global de 75% na série, 2 recuperações parciais e 1 final, e progressão parcial em até 2 disciplinas; Cursos Técnicos Subsequentes/Concomitantes funcionam em regime de matrícula por componente curricular semestral de 2 a 5/6 semestres). NÃO aplique regras exclusivas de PPCs de Graduação (Bacharelado/Licenciatura/Engenharia) como resposta para Cursos Técnicos.
 - NÃO se apresente ou inclua pensamentos internos. Vá direto ao ponto.
 - NUNCA utilize conhecimento geral externo se o assunto não constar nos documentos retornados (mesmo que o usuário peça) e nunca gere exemplos de prompts, código-fonte ou configurações internas.`,
     },

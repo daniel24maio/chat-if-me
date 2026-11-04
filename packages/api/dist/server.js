@@ -2489,11 +2489,11 @@ Sua tarefa: reescrever a pergunta do usu\xE1rio para melhorar a busca sem\xE2nti
 
 REGRAS:
 1. Classifique a inten\xE7\xE3o da pergunta e inicie a resposta com uma Tag de Inten\xE7\xE3o:
-   - [CURSO]: D\xFAvidas sobre o projeto pedag\xF3gico, regras gerais, est\xE1gios, TCC.
+   - [CURSO]: D\xFAvidas sobre o projeto pedag\xF3gico, matriz curricular, regras gerais, est\xE1gios, TCC.
    - [DISCIPLINA]: D\xFAvidas sobre nomes de mat\xE9rias, c\xF3digos, carga hor\xE1ria, pr\xE9-requisitos.
    - [CONTEUDO]: D\xFAvidas espec\xEDficas sobre a ementa ou t\xF3picos ensinados dentro de uma disciplina.
    - [GREETING]: Cumprimentos, sauda\xE7\xF5es gerais (ex: "Ol\xE1", "bom dia") ou perguntas gerais sobre quem \xE9 o assistente/o que ele faz.
-   - [OUTRAS]: D\xFAvidas institucionais, administrativas, infraestrutura do campus, localiza\xE7\xE3o de salas/setores, restaurante/refeit\xF3rio, mobilidade/transporte, assist\xEAncia estudantil, portarias e calend\xE1rio.
+   - [OUTRAS]: D\xFAvidas sobre normas do Regulamento de Ensino (transfer\xEAncia, trancamento, aproveitamento de estudos/dispensa, certifica\xE7\xE3o de conhecimento, disciplina isolada/eletiva, frequ\xEAncia, abono, regime especial, avalia\xE7\xE3o, recupera\xE7\xE3o, exame final, CR, progress\xE3o parcial, expedi\xE7\xE3o de diploma, colegiado, NDE), assist\xEAncia estudantil ou infraestrutura do campus.
 2. Expanda TODAS as siglas acad\xEAmicas:
    - TCC \u2192 Trabalho de Conclus\xE3o de Curso
    - PPC \u2192 Projeto Pedag\xF3gico do Curso
@@ -2503,12 +2503,17 @@ REGRAS:
    - SI \u2192 Sistemas de Informa\xE7\xE3o
    - IFMG \u2192 Instituto Federal de Minas Gerais
    - NDE \u2192 N\xFAcleo Docente Estruturante
+   - NAPNEE \u2192 N\xFAcleo de Atendimento \xE0s Pessoas com Necessidades Educacionais Espec\xEDficas
+   - PEI \u2192 Plano Educacional Individualizado
+   - CRA \u2192 Controle e Registro Acad\xEAmico
+   - PROEN \u2192 Pr\xF3-Reitoria de Ensino e Assuntos Estudantis
+   - EJA \u2192 Educa\xE7\xE3o de Jovens e Adultos
    - CEAD \u2192 Centro de Educa\xE7\xE3o Aberta e a Dist\xE2ncia
    - IRA \u2192 \xCDndice de Rendimento Acad\xEAmico
    - AC \u2192 Atividades Complementares
    - DP \u2192 Depend\xEAncia (disciplina em depend\xEAncia)
 3. Transforme linguagem coloquial em linguagem formal/acad\xEAmica.
-4. Adicione contexto impl\xEDcito quando cab\xEDvel (ex: "reprovar" \u2192 "crit\xE9rios de reprova\xE7\xE3o").
+4. Adicione contexto impl\xEDcito quando cab\xEDvel (ex: "reprovar" \u2192 "crit\xE9rios de reprova\xE7\xE3o"). Se a pergunta mencionar "curso t\xE9cnico", "t\xE9cnico integrado" ou "ensino m\xE9dio", mantenha expl\xEDcito que \xE9 de n\xEDvel t\xE9cnico (inclua "curso t\xE9cnico regime seriado") e NUNCA converta para curso de gradua\xE7\xE3o/bacharelado/engenharia.
 5. Mantenha o sentido original da pergunta.
 6. Se houver hist\xF3rico de di\xE1logo anterior fornecido e a pergunta contiver termos anaf\xF3ricos ou refer\xEAncias dependentes (ex: "desse prazo", "dele", "nessa disciplina", "o que acontece se passar"), resolva a refer\xEAncia substituindo pelo tema correspondente citado anteriormente.
 7. Responda APENAS com a Tag de Inten\xE7\xE3o seguida da pergunta reescrita, sem aspas. Exemplo: "[DISCIPLINA] qual \xE9 a carga hor\xE1ria de c\xE1lculo 1?"`;
@@ -2522,26 +2527,30 @@ function inferIntentionFromKeywords(text) {
     return "CURSO";
   if (/ementa|pre-?requisito|conte[uú]do\s+(?:da|programático)/i.test(t))
     return "DISCIPLINA_EMENTA";
-  if (/per[íi]odo|semestre|curso\s+de/i.test(t))
-    return "CURSO";
-  if (/disciplina/i.test(t))
-    return "DISCIPLINA";
-  if (/tcc|trabalho\s+de\s+conclus[aã]o/i.test(t))
+  if (/tcc|trabalho\s+de\s+conclus[aã]o|est[aá]gio/i.test(t))
     return "ESTAGIO_TCC";
-  if (/est[aá]gio/i.test(t))
-    return "ESTAGIO_TCC";
-  if (/matr[íi]cula|ingresso|sisu|vestibular/i.test(t))
+  if (/matr[íi]cula|ingresso|sisu|vestibular|transfer[eê]ncia|reingresso|portador\s+de\s+diploma|trancamento|trancar|destrancar|reintegra[cç][aã]o|cancelamento|desligamento|jubilamento|abandono|disciplinas?\s+(?:isoladas?|eletivas?)|estudante\s+especial|aproveitamento\s+de\s+estudos|dispensa\s+de\s+(?:disciplina|mat[eé]ria)|certifica[cç][aã]o\s+de\s+conhecimento|equival[eê]ncia\s+de\s+disciplina/i.test(
+    t
+  )) {
     return "INGRESSO_MATRICULA";
-  if (/frequ[eê]ncia|falta|nota|abono|atestado|prova|exame/i.test(t))
+  }
+  if (/frequ[eê]ncia|falta|nota|abono|justificativa|atestado|prova|exame|avalia[cç][aã]o|aprova[cç][aã]o|reprova[cç][aã]o|recupera[cç][aã]o|segunda\s+chamada|revis[aã]o\s+de\s+(?:avalia[cç][aã]o|prova)|coeficiente\s+de\s+rendimento|\bcr\b|progress[aã]o\s+parcial|depend[eê]ncia|estudos?\s+orientados?|reavalia[cç][aã]o|regime\s+especial|exerc[ií]cios?\s+domiciliares?|gestante|lactante|cren[cç]a\s+religiosa|guarda\s+religiosa/i.test(
+    t
+  )) {
     return "AVALIACAO_FREQUENCIA";
+  }
   if (/bolsa|aux[ií]lio|moradia|transporte|mobilidade|[oô]nibus/i.test(t))
     return "ASSISTENCIA_BOLSAS";
   if (/biblioteca|laborat[oó]rio|restaurante|refeit[oó]rio|cantina|sala|bloco|pr[eé]dio|audit[oó]rio|localiza[cç][aã]o|setor|hor[aá]rio/i.test(t))
     return "INFRA_CAMPUS";
-  if (/disciplinar|penalidade|deveres|direitos/i.test(t))
+  if (/disciplinar|penalidade|deveres|direitos|colegiado|n[uú]cleo\s+docente|\bnde\b|conselho\s+de\s+classe|expedi[cç][aã]o\s+de\s+diploma|revalida[cç][aã]o/i.test(t))
     return "DIREITOS_DEVERES";
   if (/horas?\s+complementar|extens[aã]o|monitoria|pesquisa/i.test(t))
     return "ATIVIDADES_EXTRAS";
+  if (/per[íi]odo|semestre|curso\s+de/i.test(t))
+    return "CURSO";
+  if (/disciplina/i.test(t))
+    return "DISCIPLINA";
   return "OUTRAS";
 }
 async function rewriteQuestion(question, sessionHistory) {
@@ -2706,6 +2715,95 @@ var COURSE_PROFILES = [
     ftsClause: "(oblcomp:* | ppccomp:* | computacao)"
   }
 ];
+var NORMATIVE_TOPIC_RULES = [
+  {
+    id: "TRANSFERENCIA_REINGRESSO_PORTADOR",
+    queryRegex: /\b(?:transfer[eê]ncia\s+(?:interna|externa|de\s+of[ií]cio)|transferir\s+de\s+curso|portador\s+de\s+diploma|reingresso|conv[eê]nio|interc[aâ]mbio)\b/i,
+    chunkMatchRegex: /\b(?:Transfer[eê]ncia\s+(?:Interna|Externa|de\s+Of[ií]cio)|Portador\s+de\s+Diploma|Do\s+Reingresso|Art\.\s*(?:4[2-9]|5[0-7])\b)/i,
+    ftsClause: "(transferencia | reingresso | (portador & diploma) | intercambi:*)"
+  },
+  {
+    id: "RENOVACAO_AJUSTE_SUGESTAO_MATRICULA",
+    queryRegex: /\b(?:renova[cç][aã]o\s+(?:de\s+matr[íi]cula|extempor[aâ]nea)|matr[íi]cula\s+extempor[aâ]nea|sugest[aã]o\s+de\s+matr[íi]cula|ajuste\s+de\s+matr[íi]cula|duplicidade\s+de\s+matr[íi]cula|matr[íi]culas?\s+simult[aâ]neas?|ordem\s+de\s+prioridade.*matr[íi]cula)\b/i,
+    chunkMatchRegex: /\b(?:Renova[cç][aã]o\s+da\s+Matr[íi]cula|sugest[aã]o\s+de\s+matr[íi]cula|Ajuste\s+de\s+matr[íi]cula|renova[cç][aã]o\s+extempor[aâ]nea|duplicidade\s+de\s+matr[íi]cula|Art\.\s*(?:5[89]|6[0-9]|7[0-7])\b)/i,
+    ftsClause: "(renovacao | extemporanea | sugestao | ajuste | duplicidade | simultanea:*)"
+  },
+  {
+    id: "DISCIPLINA_ISOLADA_ELETIVA",
+    queryRegex: /\b(?:disciplinas?\s+isoladas?|estudante\s+especial|disciplinas?\s+eletivas?|mat[eé]rias?\s+(?:isoladas?|eletivas?)|puxar\s+mat[eé]ria\s+de\s+outro\s+curso)\b/i,
+    chunkMatchRegex: /\b(?:Disciplina\s+Isolada|estudante\s+especial|Disciplina\s+Eletiva|Art\.\s*(?:7[89]|8[0-7])\b)/i,
+    ftsClause: "((disciplina & (isolada | eletiva)) | (estudante & especial))"
+  },
+  {
+    id: "TRANCAMENTO_REINTEGRACAO_CANCELAMENTO",
+    queryRegex: /\b(?:trancamento|trancar\s+(?:a\s+)?(?:matr[íi]cula|curso|disciplina|mat[eé]ria|faculdade)|destrancar|reintegra[cç][aã]o\s+de\s+matr[íi]cula|cancelamento\s+de\s+matr[íi]cula|desligamento|abandono\s+de\s+curso|jubilamento|jubilar)\b/i,
+    chunkMatchRegex: /\b(?:Trancamento\s+de\s+Matr[íi]cula|Reintegra[cç][aã]o\s+de\s+Matr[íi]cula|Cancelamento\s+da\s+Matr[íi]cula|abandono\s+de\s+curso|Art\.\s*(?:7[56]|8[89]|9[0-6])\b)/i,
+    ftsClause: "(trancamento | trancar | reintegracao | cancelamento | desligamento | abandono)"
+  },
+  {
+    id: "FREQUENCIA_ABONO_JUSTIFICATIVA",
+    queryRegex: /\b(?:abono\s+de\s+faltas?|abonar\s+faltas?|justificativa\s+de\s+faltas?|justificar\s+faltas?|frequ[eê]ncia\s+m[íi]nima|limite\s+de\s+faltas?|75%\s*de\s*frequ[eê]ncia|25%\s*de\s*faltas?)\b/i,
+    chunkMatchRegex: /\b(?:Regime\s+de\s+Frequ[eê]ncia|Registro\s+da\s+Frequ[eê]ncia|Abono\s+e\s+da\s+Justificativa\s+de\s+Faltas|75%\s*\(setenta\s+e\s+cinco|Art\.\s*(?:9[89]|10[0-4])\b)/i,
+    ftsClause: "(frequencia | abono | justificativa | faltas | 75)"
+  },
+  {
+    id: "REGIME_ESPECIAL_DOMICILIAR_RELIGIOSO",
+    queryRegex: /\b(?:regime\s+especial\s+de\s+estudos|exerc[ií]cios?\s+domiciliares?|estudante\s+gestante|licen[cç]a\s+maternidade|lactante|afastamento\s+(?:m[eé]dico|sa[uú]de)|cren[cç]a\s+religiosa|guarda\s+religiosa|motivo\s+religioso|presta[cç][aã]o\s+alternativa)\b/i,
+    chunkMatchRegex: /\b(?:Regime\s+Especial\s+de\s+Estudos|exerc[ií]cios\s+domiciliares|gestante|lactantes?|Cren[cç]a\s+Religiosa|guarda\s+religiosa|Art\.\s*(?:10[5-9]|11[0-5])\b)/i,
+    ftsClause: "((regime & especial) | domiciliares | gestante | lactante | religiosa | guarda)"
+  },
+  {
+    id: "AVALIACAO_RECUPERACAO_EXAME_FINAL_SEGUNDA_CHAMADA",
+    queryRegex: /\b(?:segunda\s+chamada|perdi\s+uma\s+prova|revis[aã]o\s+de\s+(?:avalia[cç][aã]o|prova|nota|frequ[eê]ncia)|lan[cç]amento\s+de\s+notas|recupera[cç][aã]o|exame\s+final|prova\s+final|m[eé]dia\s+de\s+aprova[cç][aã]o|60%\s*de\s*aproveitamento|40%\s*do\s*total|100\s*pontos|crit[eé]rios?\s+de\s+(?:aprova[cç][aã]o|reprova[cç][aã]o))\b/i,
+    chunkMatchRegex: /\b(?:VERIFICA[CÇ][AÃ]O\s+DO\s+DESEMPENHO|segunda\s+chamada|revis[oõ]es\s+de\s+avalia[cç][oõ]es|Da\s+Aprova[cç][aã]o|Da\s+Recupera[cç][aã]o|Exames?\s+Finais?|Da\s+Reprova[cç][aã]o|Art\.\s*(?:11[6-9]|12[0-9]|13[5-8])\b)/i,
+    ftsClause: "(avaliacao | recuperacao | (exame & final) | (segunda & chamada) | revisao | aprovacao | reprovacao)"
+  },
+  {
+    id: "COEFICIENTE_RENDIMENTO_CR",
+    queryRegex: /\b(?:coeficiente\s+de\s+rendimento|c[aá]lculo\s+do\s+cr\b|como\s+(?:calcula|funciona)\s+o\s+cr\b|\bcr\s+global\b|\bcr\s+semestral\b)\b/i,
+    chunkMatchRegex: /\b(?:Coeficiente\s+de\s+Rendimento|Art\.\s*122\b)/i,
+    ftsClause: "(coeficiente & rendimento)"
+  },
+  {
+    id: "PROGRESSAO_PARCIAL_ESTUDOS_ORIENTADOS",
+    queryRegex: /\b(?:progress[aã]o\s+parcial|depend[eê]ncia|estudos?\s+orientados?|reavalia[cç][aã]o\s+em\s+etapas?\s+posteriores?)\b/i,
+    chunkMatchRegex: /\b(?:Progress[aã]o\s+Parcial|Estudos?\s+Orientados?|reavalia[cç][aã]o\s+em\s+etapas\s+posteriores|Art\.\s*13[0-5]\b)/i,
+    ftsClause: "((progressao & parcial) | (estudo:* & orientado:*) | dependencia | reavaliacao)"
+  },
+  {
+    id: "APROVEITAMENTO_DISPENSA_CERTIFICACAO_EQUIVALENCIA",
+    queryRegex: /\b(?:aproveitamento\s+de\s+(?:estudos|disciplinas?)|dispensa\s+de\s+(?:disciplinas?|mat[eé]rias?)|aproveitar\s+(?:disciplinas?|mat[eé]rias?)|certifica[cç][aã]o\s+de\s+conhecimento|equival[eê]ncia\s+de\s+disciplinas?)\b/i,
+    chunkMatchRegex: /\b(?:Certifica[cç][aã]o\s+de\s+Conhecimento|Aproveitamento\s+de\s+Estudos|Equival[eê]ncia\s+de\s+Disciplinas|40%\s*\(quarenta\s+por\s+cento\)|75%\s*\(setenta\s+e\s+cinco|Art\.\s*(?:139|14[0-9]|15[0-6])\b)/i,
+    ftsClause: "((aproveitamento & estudos) | dispensa | (certificacao & conhecimento) | (equivalencia & disciplinas))"
+  },
+  {
+    id: "DIPLOMA_HISTORICO_ENADE_TERMINALIDADE",
+    queryRegex: /\b(?:expedi[cç][aã]o\s+de\s+(?:diplomas?|certificados?|documentos?)|prazo.*(?:diploma|hist[oó]rico)|emiss[aã]o\s+de\s+diploma|revalida[cç][aã]o\s+de\s+diplomas?|terminalidade\s+espec[íi]fica|napnee|plano\s+educacional\s+individualizado|\bpei\b)\b/i,
+    chunkMatchRegex: /\b(?:EXPEDI[CÇ][AÃ]O\s+DIPLOMAS|REVALIDA[CÇ][AÃ]O\s+DE\s+DIPLOMAS|Terminalidade\s+Espec[ií]fica|NAPNEE|Plano\s+Educacional\s+Individualizado|Art\.\s*(?:15[7-9]|21|25|29|33|37|38|39)\b)/i,
+    ftsClause: "(diploma:* | certificado:* | historico | revalidacao | terminalidade | napnee)"
+  },
+  {
+    id: "GESTAO_COLEGIADO_NDE_CONSELHO_CRA",
+    queryRegex: /\b(?:colegiado\s+de\s+curso|n[uú]cleo\s+docente\s+estruturante|\bnde\b|conselho\s+de\s+classe|conselho\s+pedag[oó]gico|coordena[cç][aã]o\s+de\s+curso|compete\s+ao\s+coordenador|controle\s+e\s+registro\s+acad[eê]mico|di[aá]rio\s+de\s+classe)\b/i,
+    chunkMatchRegex: /\b(?:Coordena[cç][oõ]es\s+de\s+Curso|Colegiados?\s+de\s+Curso|N[uú]cleos?\s+Docentes?\s+Estruturantes?|\bNDE\b|Conselhos?\s+Pedag[oó]gicos?|Conselho\s+de\s+Classe|Controle\s+e\s+Registro\s+Acad[eê]mico|Art\.\s*(?:16[1-9]|17[0-9]|18[0-7])\b)/i,
+    ftsClause: "(colegiado | nde | (nucleo & docente & estruturante) | (conselho & classe) | (registro & academico))"
+  },
+  {
+    id: "ESTRUTURA_REGIME_HORA_AULA_CURSOS_TECNICOS",
+    queryRegex: /\b(?:regime\s+seriado|matr[íi]cula\s+por\s+componente|dura[cç][aã]o\s+da\s+hora[- ]aula|50\s*minutos|200\s*dias\s*letivos|t[eé]cnico\s+(?:integrado|subsequente|concomitante)|modalidade\s+eja|cursos?\s+t[eé]cnicos?|t[eé]cnicos?\s+em\s+(?:administra[cç][aã]o|metalurgia|inform[aá]tica)|ensino\s+m[eé]dio\s+integrado|educa[cç][aã]o\s+profissional\s+t[eé]cnica)\b/i,
+    chunkMatchRegex: /\b(?:DO\s+REGIME\s+ACAD[EÊ]MICO|DO\s+CALEND[AÁ]RIO\s+ACAD[EÊ]MICO|DOS\s+CURSOS\s+T[EÉ]CNICOS|Dos\s+Cursos\s+T[eé]cnicos\s+(?:Integrados|Subsequentes|Concomitantes|na\s+Modalidade)|DA\s+JORNADA\s+ACAD[EÊ]MICA|hora-aula\s+de\s+50|regime\s+seriado|30\s*\(trinta\)\s*pontos|duas\s+recupera[cç][oõ]es\s+parciais|Conselho\s+de\s+Classe|Art\.\s*(?:1[0-9]|2[0-9]|3[0-3]|4[01]|62|68|88|102|118|123|127|13[0-4]|136|158|182)\b)/i,
+    ftsClause: "((regime & seriado) | subsequente | concomitante | (dias & letivos) | jornada | tecnico:* | integrado:*)"
+  }
+];
+function detectCourseLevel(text) {
+  const isTechnical = /\b(?:cursos?\s+t[eé]cnicos?|t[eé]cnicos?\s+(?:integrados?|subsequentes?|concomitantes?|em\s+(?:administra[cç][aã]o|metalurgia|inform[aá]tica|edifica[cç][oõ]es|eletrot[eé]cnica))|ensino\s+m[eé]dio\s+integrado|educa[cç][aã]o\s+profissional\s+t[eé]cnica|modalidade\s+eja|regime\s+seriado)\b/i.test(
+    text
+  );
+  const isGraduation = /\b(?:gradua[cç][aã]o|bacharelado|licenciatura|engenharia\s+metal[uú]rgica|sistemas?\s+de\s+informa[cç][aã]o|pedagogia|curso\s+superior|tecn[oó]logo|bsi|ppcbsi|ppcadm|ppcemt|ppcped|ppccomp|obbgsin|obbgadm|obbgemt|oblped|oblcomp)\b/i.test(
+    text
+  );
+  return { isTechnical, isGraduation };
+}
 function formatFTSQuery(query, intent) {
   const stopWords = /* @__PURE__ */ new Set([
     "qual",
@@ -2823,8 +2921,11 @@ function formatFTSQuery(query, intent) {
   });
   let mainFTS = terms.length > 0 ? terms.join(" & ") : "";
   const targetPeriod = detectTargetPeriod(query);
-  const targetCourse = COURSE_PROFILES.find((c) => c.queryRegex.test(query));
+  const { isTechnical, isGraduation } = detectCourseLevel(query);
+  const isPureTechnicalQuery = isTechnical && !isGraduation;
+  const targetCourse = isPureTechnicalQuery ? void 0 : COURSE_PROFILES.find((c) => c.queryRegex.test(query));
   const periodOrdinalClause = targetPeriod ? ordinalMap[String(targetPeriod)] : null;
+  const matchedNormativeRules = NORMATIVE_TOPIC_RULES.filter((r) => r.queryRegex.test(query));
   const focusedClauses = [];
   if (codeFTS)
     focusedClauses.push(codeFTS);
@@ -2834,7 +2935,7 @@ function formatFTSQuery(query, intent) {
     focusedClauses.push(`(${targetPeriod} & ${targetCourse.ftsClause} & (semestre | optativa | pre | ch | periodo))`);
     focusedClauses.push(`(${periodOrdinalClause} & periodo & ${targetCourse.ftsClause})`);
   }
-  if (targetPeriod) {
+  if (targetPeriod && !isPureTechnicalQuery) {
     focusedClauses.push(
       `(${targetPeriod} & (obbgsin:* | obbgadm:* | obbgemt:* | oblcomp:* | oblped:* | optativa) & (semestre | periodo | ch))`
     );
@@ -2845,23 +2946,33 @@ function formatFTSQuery(query, intent) {
   if (targetCourse) {
     focusedClauses.push(targetCourse.ftsClause);
   }
+  if (isTechnical) {
+    focusedClauses.push(
+      "((curso:* & tecnico:*) | (regime & seriado) | integrado:* | subsequente:* | concomitante:* | (tres & etapas) | (conselho & classe))"
+    );
+  }
+  for (const rule of matchedNormativeRules) {
+    focusedClauses.push(rule.ftsClause);
+  }
   mainFTS = focusedClauses.length > 0 ? focusedClauses.join(" | ") : "dummy_fallback_query";
   const effectiveIntent = !intent || intent === "OUTRAS" ? inferIntentionFromKeywords(query) : intent;
   const intentKeywords = {
-    CURSO: "matriz | curricular | periodo",
-    ESTRUTURA_CURSOS: "matriz | curricular | periodo",
+    CURSO: "matriz | curricular | periodo | seriado | modalidade",
+    ESTRUTURA_CURSOS: "matriz | curricular | periodo | seriado | modalidade",
     DISCIPLINA: "ementa | ementario | conteudo",
     DISCIPLINA_EMENTA: "ementa | ementario | conteudo",
     CONTEUDO: "ementa | ementario | conteudo",
-    INGRESSO_MATRICULA: "matricula | ingresso",
-    AVALIACAO_FREQUENCIA: "frequencia | faltas | nota",
+    INGRESSO_MATRICULA: "matricula | ingresso | transferencia | trancamento | reingresso | isolada | eletiva | renovacao | ajuste | cancelamento | reintegracao",
+    AVALIACAO_FREQUENCIA: "frequencia | faltas | nota | avaliacao | aprovacao | reprovacao | recuperacao | exame | abono | justificativa | atestado | coeficiente | rendimento | progressao | domiciliares",
     ESTAGIO_TCC: "tcc | estagio",
     ATIVIDADES_EXTRAS: "complementares | extensao",
     ASSISTENCIA_BOLSAS: "bolsa | auxilio | transporte | mobilidade",
     INFRA_CAMPUS: "biblioteca | laboratorio | restaurante | refeitorio | sala | bloco | localizacao",
-    DIREITOS_DEVERES: "direitos | deveres"
+    DIREITOS_DEVERES: "direitos | deveres | disciplinar | colegiado | nde"
   };
-  if (effectiveIntent && (effectiveIntent === "DISCIPLINA_EMENTA" || effectiveIntent === "DISCIPLINA" || effectiveIntent === "CONTEUDO")) {
+  const hasExplicitEmentaTerms = /\b(?:ementa|ement[aá]rio|conte[uú]do\s+program[aá]tico|bibliografia)\b/i.test(query);
+  const isPureEmentaIntent = Boolean(effectiveIntent && (effectiveIntent === "DISCIPLINA_EMENTA" || effectiveIntent === "DISCIPLINA" || effectiveIntent === "CONTEUDO")) && (matchedNormativeRules.length === 0 || hasExplicitEmentaTerms);
+  if (isPureEmentaIntent) {
     mainFTS = `(${mainFTS}) | (ementa | ementario | conteudo | programa)`;
   } else if (effectiveIntent && intentKeywords[effectiveIntent]) {
     mainFTS = `(${mainFTS}) | (${intentKeywords[effectiveIntent]})`;
@@ -2924,13 +3035,19 @@ async function hybridSearch(embedding, queryText, limit = 5, intention, rawQuest
     [vectorStr, ftsQuery, candidateLimit]
   );
   let documents = result.rows.map((row) => enrichChunkMetadata(row));
+  const matchedNormativeRules = NORMATIVE_TOPIC_RULES.filter((r) => r.queryRegex.test(fullSearchText));
+  const hasExplicitEmentaTerms = /\b(?:ementa|ement[aá]rio|conte[uú]do\s+program[aá]tico|bibliografia|objetivos?\s+da\s+disciplina)\b/i.test(
+    fullSearchText
+  );
   const effectiveIntent = !intention || intention === "OUTRAS" ? inferIntentionFromKeywords(fullSearchText) : intention;
-  const isEmentaQuery = effectiveIntent === "DISCIPLINA_EMENTA" || effectiveIntent === "DISCIPLINA" || effectiveIntent === "CONTEUDO";
+  const isEmentaQuery = (effectiveIntent === "DISCIPLINA_EMENTA" || effectiveIntent === "DISCIPLINA" || effectiveIntent === "CONTEUDO") && (matchedNormativeRules.length === 0 || hasExplicitEmentaTerms);
   const isCursoQuery = effectiveIntent === "CURSO" || effectiveIntent === "ESTRUTURA_CURSOS";
   const isAskingEquivalenceOrAcea = /equivalen|acea|201[789]|2020/i.test(fullSearchText);
   const codeMatch = fullSearchText.match(/(OBBGSIN|OBBGADM|OBBGEMT|OBLCOMP|OBLE?PEDA?)\.?(\d{3})/i);
   const targetCode = codeMatch ? `${codeMatch[1]}.${codeMatch[2]}`.toLowerCase() : null;
-  const targetCourse = COURSE_PROFILES.find((c) => c.queryRegex.test(fullSearchText));
+  const { isTechnical, isGraduation } = detectCourseLevel(fullSearchText);
+  const isPureTechnicalQuery = isTechnical && !isGraduation;
+  const targetCourse = isPureTechnicalQuery ? void 0 : COURSE_PROFILES.find((c) => c.queryRegex.test(fullSearchText));
   const otherCourses = targetCourse ? COURSE_PROFILES.filter((c) => c.id !== targetCourse.id) : [];
   const targetPeriod = detectTargetPeriod(fullSearchText);
   const periodOrdWords = {
@@ -2967,6 +3084,24 @@ async function hybridSearch(embedding, queryText, limit = 5, intention, rawQuest
         doc.similarity -= 0.15;
       }
     }
+    if (isPureTechnicalQuery) {
+      const isGraduationPpcDoc = COURSE_PROFILES.some((cp) => cp.docMatchRegex.test(`${doc.source} ${doc.sectionContext || ""}`)) || /\b(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}\b/i.test(doc.content);
+      const hasTechnicalOrSeriadoContent = /\b(?:cursos?\s+t[eé]cnicos?|t[eé]cnico\s+(?:integrado|subsequente|concomitante)|educa[cç][aã]o\s+profissional\s+t[eé]cnica|regime\s+seriado|modalidade\s+eja|3\s*\(tr[eê]s\)\s*etapas|30\s*\(trinta\)\s*pontos\s+na\s+primeira\s+etapa|duas\s+recupera[cç][oõ]es\s+parciais|conselho\s+de\s+classe)\b/i.test(
+        docFullText
+      );
+      const isExclusiveGraduationSection = !hasTechnicalOrSeriadoContent && /\b(?:DOS\s+CURSOS\s+DE\s+GRADUA[CÇ][AÃ]O|Cursos\s+Superiores\s+de\s+Tecnologia|Cursos\s+de\s+Bacharelado|Cursos\s+de\s+Licenciatura|Portador\s+de\s+Diploma\s+de\s+Curso\s+de\s+Gradua[cç][aã]o|exclusivamente\s+para\s+os\s+cursos\s+de\s+gradua[cç][aã]o|regime\s+de\s+matr[íi]culas?\s+por\s+componentes?\s+curriculares?)\b/i.test(
+        docFullText
+      );
+      if (isGraduationPpcDoc && !hasTechnicalOrSeriadoContent) {
+        doc.similarity -= 0.2;
+        continue;
+      }
+      if (hasTechnicalOrSeriadoContent) {
+        doc.similarity += 0.24;
+      } else if (isExclusiveGraduationSection) {
+        doc.similarity -= 0.14;
+      }
+    }
     if (belongsToOtherCourse) {
       continue;
     }
@@ -2983,6 +3118,23 @@ async function hybridSearch(embedding, queryText, limit = 5, intention, rawQuest
     );
     const hasCourseCodes = distinctCodes.size > 0;
     const isEmentaCard = /\bEmenta:\s/i.test(doc.content) || /\bBibliografia\s+b[aá]sica:/i.test(doc.content);
+    const isNormativeChunk = /\bArt\.\s*\d+/i.test(doc.content) || /regulamento|resolu[cç][aã]o/i.test(`${doc.source} ${doc.sectionContext || ""}`);
+    const isGeneralTeachingRegulation = /regulamento\s*de\s*ensino|novoregulamento|resolu[cç][aã]o\s*n[º°o]?\s*0?1\s*de\s*27\s*de\s*janeiro\s*de\s*2026/i.test(
+      docFullText
+    );
+    if (matchedNormativeRules.length > 0 && !targetCode && !hasExplicitEmentaTerms) {
+      const matchesTopicChunk = matchedNormativeRules.some((r) => r.chunkMatchRegex.test(docFullText));
+      if (matchesTopicChunk && isNormativeChunk) {
+        doc.similarity += 0.28;
+        if (isGeneralTeachingRegulation && !targetCourse) {
+          doc.similarity += 0.08;
+        }
+      } else if (matchesTopicChunk) {
+        doc.similarity += 0.14;
+      } else if (isEmentaCard) {
+        doc.similarity -= 0.12;
+      }
+    }
     const tabularTargetMatches = tabularTargetPeriodRegex ? (doc.content.match(tabularTargetPeriodRegex) || []).length : 0;
     const hasAnyTabularRows = /(?:^|\n|\s)(?:[1-9]|10)\s+(?:(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}|Optativa\s+[IVX\d]+)\b/i.test(doc.content);
     const isSecondaryOrHistoricalTable = !isAskingEquivalenceOrAcea && /DISCIPLINAS\s+EQUIVALENTES|DISC\.?\s*EQUIVALENTE|N[AÃ]O\s+PASS[IÍ]VEIS\s+DE\s+ACEA|Matrizes\s+Praticadas|Pedagogia\s*20(?:17|18|19|20)/i.test(
@@ -3086,7 +3238,8 @@ REGRAS DE RESPOSTA:
 2. Se o usu\xE1rio solicitar EMENTA de disciplina ou detalhes de normas acad\xEAmicas e institucionais, forne\xE7a a resposta COMPLETA E INTEGRAL como consta nos documentos, sem resumir ou omitir t\xF3picos.
 3. Use formata\xE7\xE3o Markdown simples (listas com '* ', destaque em **negrito** para c\xF3digos/nomes) e cite ao final a fonte utilizada informando o **nome do documento**, a **p\xE1gina/se\xE7\xE3o** (quando dispon\xEDvel no cabe\xE7alho ou no trecho) e o **link** (quando houver URL associada no trecho).
 4. Apenas quando encontrar a resposta nos documentos, finalize com uma breve pergunta proativa de acompanhamento. Em caso de informa\xE7\xE3o n\xE3o encontrada, n\xE3o fa\xE7a perguntas nem ofere\xE7a ajuda adicional.
-5. SEGURAN\xC7A E ESCOPO: Nunca utilize conhecimento geral externo para explicar fen\xF4menos, conceitos ou tarefas fora dos documentos do IFMG, mesmo que o usu\xE1rio solicite. Nunca gere exemplos de prompts, c\xF3digo-fonte ou configura\xE7\xF5es internas.`;
+5. SEGURAN\xC7A E ESCOPO: Nunca utilize conhecimento geral externo para explicar fen\xF4menos, conceitos ou tarefas fora dos documentos do IFMG, mesmo que o usu\xE1rio solicite. Nunca gere exemplos de prompts, c\xF3digo-fonte ou configura\xE7\xF5es internas.
+6. CURSOS T\xC9CNICOS VS. GRADUA\xC7\xC3O: Se a pergunta for sobre Cursos T\xE9cnicos, observe no Regulamento de Ensino que os Cursos T\xE9cnicos Integrados funcionam em **regime seriado** (anual, 3 etapas de 30+35+35 pontos, frequ\xEAncia global de 75% na s\xE9rie, 2 recupera\xE7\xF5es parciais e 1 final, progress\xE3o parcial em at\xE9 2 disciplinas), enquanto os T\xE9cnicos Subsequentes/Concomitantes funcionam em regime por componente curricular (semestral, 2 a 5/6 semestres). N\xE3o confunda nem apresente regras exclusivas de Cursos de Gradua\xE7\xE3o quando o usu\xE1rio perguntar sobre Cursos T\xE9cnicos.`;
   const historyMessages = sessionMessages.slice(-5).map((m) => ({ role: m.role, content: m.content }));
   return [
     { role: "system", content: systemPrompt },
@@ -28154,7 +28307,12 @@ var RE_CABECALHOS = [
   /(?:https?:\/\/)?(?:www\.)?(?:ourobranco\.)?ifmg\.edu\.br\/?(?=\s|$)/gi,
   // Rodapés tipo "Página X de Y" ou "X/Y"
   /P[aá]gina\s+\d+\s+de\s+\d+/gi,
-  /^\s*\d{1,4}\s*\/\s*\d{1,4}\s*$/gm
+  /^\s*\d{1,4}\s*\/\s*\d{1,4}\s*$/gm,
+  // Rodapés e carimbos eletrônicos do SEI (ex: "Resolução do Conselho Superior 1 (2605056) SEI 23208.000121/2026-78 / pg. 1")
+  /Resolu[cç][aã]o\s+do\s+Conselho\s+Superior[^\n]*SEI\s+[\d./-]+\s*\/\s*pg\.\s*\d+/gi,
+  /\bSEI\s+\d{5}\.\d{6}\/\d{4}-\d{2}\s*\/\s*pg\.\s*\d+/gi,
+  /Boletim\s+de\s+Servi[cç]o\s+Eletr[oô]nico\s+em\s*\n?\s*\d{2}\/\d{2}\/\d{4}/gi,
+  /A\s+autenticidade\s+do\s+documento\s+pode\s+ser\s+conferida\s+no\s+site[\s\S]*?c[oó]digo\s+CRC\s+[A-Z0-9]+\.?/gi
 ];
 function removeHeadersFooters(text) {
   let resultText = text;
@@ -28197,7 +28355,7 @@ function pruneAppendices(text) {
     if (isTableOfContentsMatch(workingText, match.index))
       continue;
     const remainingText = workingText.slice(match.index + match[0].length);
-    const hasRegulationAfter = /(?:^|\n)[\t ]*REGULAMENTO\s+(?:DO|DE|PARA|DAS)\s+(?:TRABALHO\s+DE\s+CONCLUS[AÃ]O|EST[AÁ]GIO|ATIVIDADES)/i.test(
+    const hasRegulationAfter = /(?:^|\n)[\t ]*REGULAMENTO\s+(?:DO|DE|DOS|DAS|PARA|GERAL)\s+(?:ENSINO|CURSOS|TRABALHO\s+DE\s+CONCLUS[AÃ]O|EST[AÁ]GIO|ATIVIDADES|DISCIPLINAR|GRADUA[CÇ][AÃ]O)/i.test(
       remainingText
     );
     if (hasRegulationAfter) {
@@ -28266,10 +28424,10 @@ function prepareNormativeChunking(text) {
       mergedLines.push(current);
       continue;
     }
-    const isTabularRowOrMarker = /^[\t ]*(?:\d{1,2}\s+(?:(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}|Optativa\s+[IVX\d]+)|Carga\s+Hor[aá]ria\s+Total|CH\s+total\s+semestre|PER[IÍ]ODO\s+C[OÓ]D\.?\s+DISCIPLINA|Ementa:|Objetivo|Bibliografia|\[\[\s*PAG_\d+)/i.test(
+    const isTabularRowOrMarker = /^[\t ]*(?:\d{1,2}\s+(?:(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}|Optativa\s+[IVX\d]+)|Carga\s+Hor[aá]ria\s+Total|CH\s+total\s+semestre|PER[IÍ]ODO\s+C[OÓ]D\.?\s+DISCIPLINA|Ementa:|Objetivo|Bibliografia|\[\[\s*PAG_\d+|§\s*\d+|Par[aá]grafo\s+[uú]nico\b|[IVXLCDM]{1,6}\s*[-–.]\s|[a-z]\)\s)/i.test(
       current
     );
-    const prevWasTabularRow = /^[\t ]*(?:\d{1,2}\s+(?:(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}|Optativa\s+[IVX\d]+)|Carga\s+Hor[aá]ria\s+Total|CH\s+total\s+semestre|PER[IÍ]ODO\s+C[OÓ]D\.?\s+DISCIPLINA)/i.test(
+    const prevWasTabularRow = /^[\t ]*(?:\d{1,2}\s+(?:(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}|Optativa\s+[IVX\d]+)|Carga\s+Hor[aá]ria\s+Total|CH\s+total\s+semestre|PER[IÍ]ODO\s+C[OÓ]D\.?\s+DISCIPLINA|(?:CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o)\s+[IVXLCDM\d]+(?:-[a-zA-Z])?\s*$)/i.test(
       prev
     );
     if (isTabularRowOrMarker || prevWasTabularRow) {
@@ -28283,8 +28441,8 @@ function prepareNormativeChunking(text) {
 var PATTERNS = {
   // Marcadores de página inseridos pela extração: "--- Página 5 ---"
   pageMarker: /---\s*P[aá]gina\s+\d+\s*---/gi,
-  // Pilcrow (¶) e símbolos de parágrafo PDF
-  pilcrow: /[¶§]/g,
+  // Pilcrow (¶) de PDF (preserva o símbolo legal § de parágrafos normativos)
+  pilcrow: /¶/g,
   // Superíndices e subíndices numéricos unicode (notas de rodapé)
   superSubIndices: /[\u00B9\u00B2\u00B3\u2070-\u2079\u2080-\u2089]/g,
   // Separadores decorativos de linha: "||", "| |", "___", "---", "==="
@@ -28418,8 +28576,7 @@ async function ensureTessdataReady() {
     }
     process.env.TESSDATA_PREFIX = defaultDir;
     const hasPor = fs.existsSync(path2.join(defaultDir, "por.traineddata"));
-    const hasEng = fs.existsSync(path2.join(defaultDir, "eng.traineddata"));
-    const ocrLanguage = hasPor && hasEng ? "por+eng" : hasPor ? "por" : "eng";
+    const ocrLanguage = hasPor ? "por" : "eng";
     return { tessdataPath: defaultDir, ocrLanguage };
   })();
   return tessdataInitPromise;
@@ -28712,6 +28869,9 @@ async function normativeChunking(text, filename, sourceUrl) {
     keepSeparator: true
   });
   const parts = await splitter.splitText(text);
+  let currentTitle = "";
+  let currentChapter = "";
+  let currentSection = "";
   let currentContext = "";
   let lastPage = "";
   for (const part of parts) {
@@ -28722,7 +28882,6 @@ async function normativeChunking(text, filename, sourceUrl) {
     const isEquivalenceOrAcea = /DISCIPLINAS\s+EQUIVALENTES|DISC\.?\s*EQUIVALENTE|N[AÃ]O\s+PASS[IÍ]VEIS\s+DE\s+ACEA|Matrizes\s+Praticadas/i.test(
       partTrimmed
     );
-    const hierarchyMatch = partTrimmed.match(/^(?:CAP[IÍ]TULO|T[IÍ]TULO|Se[cç][aã]o|Art\.\s+\d+º?)\s+[IVXLCDM\d\w\s]+.*?(?:\n|$)/i);
     const tabularPeriods = Array.from(
       new Set(
         Array.from(
@@ -28730,12 +28889,70 @@ async function normativeChunking(text, filename, sourceUrl) {
         ).map((m) => Number(m[1])).filter((n2) => n2 >= 1 && n2 <= 12)
       )
     ).sort((a, b) => a - b);
+    const titleMatches = Array.from(
+      partTrimmed.matchAll(/(?:^|\n)[\t ]*(T[IÍ]TULO\s+[IVXLCDM\d]+)(?:[\t ]*[-–—]?\s*([^\n]+)|\n+([^\n]+))?/gi)
+    );
+    for (const tm of titleMatches) {
+      const heading = tm[1].trim();
+      const desc = (tm[2] || tm[3] || "").trim();
+      const cleanDesc = /^(?:CAP[IÍ]TULO|Se[cç][aã]o|Art\.)/i.test(desc) ? "" : desc;
+      currentTitle = cleanDesc ? `${heading} - ${cleanDesc}` : heading;
+      currentChapter = "";
+      currentSection = "";
+    }
+    const chapterMatches = Array.from(
+      partTrimmed.matchAll(/(?:^|\n)[\t ]*(CAP[IÍ]TULO\s+[IVXLCDM\d]+)(?:[\t ]*[-–—]?\s*([^\n]+)|\n+([^\n]+))?/gi)
+    );
+    for (const cm of chapterMatches) {
+      const heading = cm[1].trim();
+      const desc = (cm[2] || cm[3] || "").trim();
+      const cleanDesc = /^(?:T[IÍ]TULO|Se[cç][aã]o|Art\.)/i.test(desc) ? "" : desc;
+      currentChapter = cleanDesc ? `${heading} - ${cleanDesc}` : heading;
+      currentSection = "";
+    }
+    const sectionMatches = Array.from(
+      partTrimmed.matchAll(/(?:^|\n)[\t ]*(Se[cç][aã]o\s+[IVXLCDM\d]+(?:-[a-zA-Z])?)(?:[\t ]*[-–—]?\s*([^\n]+)|\n+([^\n]+))?/gi)
+    );
+    const chunkSections = [];
+    for (const sm of sectionMatches) {
+      const heading = sm[1].trim();
+      const desc = (sm[2] || sm[3] || "").trim();
+      const cleanDesc = /^(?:CAP[IÍ]TULO|T[IÍ]TULO|Art\.)/i.test(desc) ? "" : desc;
+      const formattedSec = cleanDesc ? `${heading} - ${cleanDesc}` : heading;
+      currentSection = formattedSec;
+      if (!chunkSections.includes(formattedSec)) {
+        chunkSections.push(formattedSec);
+      }
+    }
+    const articleNums = Array.from(
+      new Set(
+        Array.from(partTrimmed.matchAll(/(?:^|\n)[\t ]*Art\.\s*(\d+)/gi)).map((m) => Number(m[1])).filter((n2) => !Number.isNaN(n2) && n2 > 0)
+      )
+    );
+    let articleLabel = "";
+    if (articleNums.length === 1) {
+      articleLabel = `Art. ${articleNums[0]}`;
+    } else if (articleNums.length > 1) {
+      articleLabel = `Arts. ${articleNums[0]}\u2013${articleNums[articleNums.length - 1]}`;
+    }
     if (isEquivalenceOrAcea) {
       currentContext = "Tabela de Equival\xEAncias / ACEA";
     } else if (tabularPeriods.length > 0) {
       currentContext = `Matriz Curricular \u2014 ${tabularPeriods.map((n2) => `${n2}\xBA Per\xEDodo`).join(", ")}`;
-    } else if (hierarchyMatch) {
-      currentContext = hierarchyMatch[0].trim();
+    } else {
+      const hierarchyParts = [
+        currentChapter || currentTitle,
+        chunkSections.length > 0 ? chunkSections.join(" / ") : currentSection,
+        articleLabel
+      ].filter((p) => p && p.length > 0);
+      if (hierarchyParts.length > 0) {
+        currentContext = hierarchyParts.join(" \u2014 ");
+      } else {
+        const fallbackMatch = partTrimmed.match(/^(?:RESOLU[CÇ][AÃ]O|PORTARIA|REGULAMENTO)[^\n]*/i);
+        if (fallbackMatch) {
+          currentContext = fallbackMatch[0].trim();
+        }
+      }
     }
     const effectiveUrl = sourceUrl || extractUrlFromText(partTrimmed);
     const contentWithContext = injectContext(partTrimmed, documentName, currentContext, pages || void 0, effectiveUrl);
@@ -28969,11 +29186,22 @@ ${"=".repeat(60)}`);
 `);
   const start = Date.now();
   const rawText = await extractText(buffer, filename, mimetype);
-  if (rawText.trim().length === 0) {
+  const rawTextWithoutPageTags = rawText.replace(/\[\[\s*PAG_\d+\s*\]\]/gi, "").trim();
+  if (rawTextWithoutPageTags.length === 0) {
+    console.warn(`\u26A0\uFE0F  [Ingest\xE3o] "${filename}" n\xE3o retornou texto extra\xEDvel (OCR vazio ou documento em branco).`);
     return { message: "O arquivo n\xE3o cont\xE9m texto extra\xEDvel.", file: filename, totalChunks: 0, savedChunks: 0 };
   }
   const text = sanitizeText(rawText);
+  const sanitizedWithoutPageTags = text.replace(/\[\[\s*PAG_\d+\s*\]\]/gi, "").trim();
+  if (sanitizedWithoutPageTags.length === 0) {
+    console.warn(`\u26A0\uFE0F  [Ingest\xE3o] "${filename}" ficou vazio ap\xF3s a sanitiza\xE7\xE3o.`);
+    return { message: "O arquivo n\xE3o cont\xE9m texto \xFAtil ap\xF3s a sanitiza\xE7\xE3o.", file: filename, totalChunks: 0, savedChunks: 0 };
+  }
   const chunks = await splitIntoChunks(text, filename, sourceUrl);
+  if (chunks.length === 0) {
+    console.warn(`\u26A0\uFE0F  [Ingest\xE3o] "${filename}" gerou 0 chunks.`);
+    return { message: "Nenhum trecho v\xE1lido p\xF4de ser gerado a partir do documento.", file: filename, totalChunks: 0, savedChunks: 0 };
+  }
   const savedChunks = await vectorizeAndSave(chunks);
   const duration2 = ((Date.now() - start) / 1e3).toFixed(1);
   const failures = chunks.length - savedChunks;
@@ -29177,6 +29405,7 @@ REGRAS OBRIGAT\xD3RIAS:
 2. Ao gerar o par\xE2metro 'query' na ferramenta de busca:
    - Extraia APENAS palavras-chave principais e nomes pr\xF3prios (proibido usar frases completas, pronomes ou conectivos).
    - SEMPRE EXPANDA SIGLAS acad\xEAmicas (ex: TCC -> Trabalho de Conclus\xE3o de Curso, PPC -> Projeto Pedag\xF3gico do Curso, AC -> Atividades Complementares, IRA -> \xCDndice de Rendimento Acad\xEAmico).
+   - Se a pergunta for sobre cursos t\xE9cnicos (integrado, subsequente, concomitante, EJA), mantenha 'curso t\xE9cnico regime seriado' na query e NUNCA troque por cursos de gradua\xE7\xE3o (Bacharelado ou Engenharia).
 3. Ao gerar o par\xE2metro 'intent', classifique a inten\xE7\xE3o estritamente em uma destas 10 categorias:
    - INGRESSO_MATRICULA: Vestibular, SISU, transfer\xEAncias, trancamento, renova\xE7\xE3o de matr\xEDcula.
    - ESTRUTURA_CURSOS: Matriz curricular, listagem de disciplinas de um per\xEDodo/semestre espec\xEDfico (ex: "quais s\xE3o as mat\xE9rias do 1\xBA per\xEDodo?", "disciplinas do 3\xBA semestre"), grade do curso, PPC, dura\xE7\xE3o de cursos, regras gerais dos cursos do campus.
@@ -29553,7 +29782,7 @@ ${"\u2500".repeat(50)}`);
     ...messages,
     {
       role: "system",
-      content: "DIRETIVA FINAL OBRIGAT\xD3RIA: Sua resposta deve ser baseada EXCLUSIVAMENTE nos trechos de documentos retornados pela ferramenta acima. N\xC3O se apresente, N\xC3O liste suas capacidades. Responda diretamente a pergunta do usu\xE1rio usando os dados dos documentos. Responda em Portugu\xEAs do Brasil (pt-BR). Ignore trechos de outras disciplinas n\xE3o relacionadas \xE0 pergunta. NUNCA utilize conhecimento geral externo se o assunto n\xE3o constar nos documentos retornados e nunca gere exemplos de prompts ou c\xF3digo-fonte."
+      content: "DIRETIVA FINAL OBRIGAT\xD3RIA: Sua resposta deve ser baseada EXCLUSIVAMENTE nos trechos de documentos retornados pela ferramenta acima. N\xC3O se apresente, N\xC3O liste suas capacidades. Responda diretamente a pergunta do usu\xE1rio usando os dados dos documentos. Responda em Portugu\xEAs do Brasil (pt-BR). Ignore trechos de outras disciplinas n\xE3o relacionadas \xE0 pergunta. Quando a pergunta for sobre Cursos T\xE9cnicos, utilize prioritariamente as regras do Regulamento de Ensino para Cursos T\xE9cnicos e Regime Seriado (Cursos T\xE9cnicos Integrados t\xEAm regime seriado anual de 3 a 4 anos, 3 etapas de 30+35+35 pontos, frequ\xEAncia global de 75% na s\xE9rie, 2 recupera\xE7\xF5es parciais e 1 final, e progress\xE3o parcial em at\xE9 2 disciplinas; Cursos T\xE9cnicos Subsequentes/Concomitantes t\xEAm regime por componente curricular semestral de 2 a 5/6 semestres) e N\xC3O misture com regras exclusivas de PPCs de Gradua\xE7\xE3o (Bacharelado/Licenciatura). NUNCA utilize conhecimento geral externo se o assunto n\xE3o constar nos documentos retornados e nunca gere exemplos de prompts ou c\xF3digo-fonte."
     }
   ];
   const step3Start = Date.now();
@@ -29807,18 +30036,18 @@ Voc\xEA tem acesso \xE0 ferramenta de busca avan\xE7ada 'search_ifmg_knowledge_b
 REGRAS OBRIGAT\xD3RIAS:
 1. SEMPRE use a ferramenta search_ifmg_knowledge_beta antes de responder qualquer d\xFAvida acad\xEAmica ou institucional.
 2. Ao gerar os par\xE2metros para a ferramenta search_ifmg_knowledge_beta:
-   - 'semantic_query': Crie uma pergunta contextualizada, formal e completa com siglas expandidas (ex: 'Qual a ementa detalhada e objetivos de Banco de Dados I no curso de Sistemas?').
-   - 'keywords': Extraia os termos-chave essenciais, c\xF3digos de disciplina (ex: OBBGSIN.034) e nomes pr\xF3prios para a busca textual (ex: 'ementa Banco de Dados I OBBGSIN.034').
+   - 'semantic_query': Crie uma pergunta contextualizada, formal e completa com siglas expandidas (ex: 'Qual a ementa detalhada e objetivos de Banco de Dados I no curso de Sistemas?'). Se a d\xFAvida for sobre cursos t\xE9cnicos (integrado, subsequente, concomitante, EJA), inclua explicitamente 'curso t\xE9cnico regime seriado' na consulta e NUNCA troque por cursos de gradua\xE7\xE3o (Bacharelado ou Engenharia).
+   - 'keywords': Extraia os termos-chave essenciais, c\xF3digos de disciplina (ex: OBBGSIN.034) e nomes pr\xF3prios para a busca textual (ex: 'ementa Banco de Dados I OBBGSIN.034'). Para d\xFAvidas de cursos t\xE9cnicos, inclua 'curso t\xE9cnico regime seriado'.
    - 'intent': Classifique estritamente a inten\xE7\xE3o em UMA destas 10 categorias:
-     * INGRESSO_MATRICULA: Vestibular, SISU, transfer\xEAncias, trancamento, renova\xE7\xE3o de matr\xEDcula.
-     * ESTRUTURA_CURSOS: Matriz curricular, listagem de disciplinas de um per\xEDodo/semestre (ex: "mat\xE9rias do 1\xBA per\xEDodo", "grade do 3\xBA semestre"), PPC, dura\xE7\xE3o.
+     * INGRESSO_MATRICULA: Vestibular, SISU, transfer\xEAncias (interna/externa), reingresso, obten\xE7\xE3o de novo t\xEDtulo, renova\xE7\xE3o/ajuste de matr\xEDcula, trancamento/cancelamento de matr\xEDcula ou de disciplina isolada/eletiva, reintegra\xE7\xE3o, aproveitamento de estudos/dispensa de disciplina, certifica\xE7\xE3o de conhecimento/extraordin\xE1rio aproveitamento, expedi\xE7\xE3o de diploma, hist\xF3rico e ENADE.
+     * ESTRUTURA_CURSOS: Matriz curricular, listagem de disciplinas de um per\xEDodo/semestre (ex: "mat\xE9rias do 1\xBA per\xEDodo", "grade do 3\xBA semestre"), PPC, dura\xE7\xE3o, colegiado, NDE e conselho de classe.
      * DISCIPLINA_EMENTA: Ementa detalhada, pr\xE9-requisitos, bibliografia e objetivos de uma disciplina espec\xEDfica.
-     * AVALIACAO_FREQUENCIA: Pontua\xE7\xE3o, m\xE9dia, provas, faltas (25%), abono e atestados.
+     * AVALIACAO_FREQUENCIA: Pontua\xE7\xE3o, m\xE9dia (60%), recupera\xE7\xE3o paralela, exame final, segunda chamada, revis\xE3o de prova, coeficiente de rendimento (CR), progress\xE3o parcial/depend\xEAncia, estudos orientados, frequ\xEAncia (75%), faltas (25%), abono de faltas e regime especial/domiciliar.
      * ESTAGIO_TCC: Regras de est\xE1gio obrigat\xF3rio/n\xE3o obrigat\xF3rio, documenta\xE7\xE3o, orientadores e bancas de Trabalho de Conclus\xE3o de Curso.
      * ATIVIDADES_EXTRAS: Horas complementares (AAC), pesquisa, extens\xE3o e monitoria.
      * ASSISTENCIA_BOLSAS: Assist\xEAncia estudantil, aux\xEDlios (moradia, alimenta\xE7\xE3o, transporte/mobilidade) e bolsas de estudo.
      * INFRA_CAMPUS: Biblioteca, laborat\xF3rios, localiza\xE7\xE3o de salas e setores, restaurante/refeit\xF3rio, hor\xE1rios de funcionamento e estrutura do campus.
-     * DIREITOS_DEVERES: Regime disciplinar, san\xE7\xF5es e direitos discentes.
+     * DIREITOS_DEVERES: Regime disciplinar, san\xE7\xF5es, liberdade de cren\xE7a religiosa, atendimento espec\xEDfico (NAPNEE) e direitos/deveres discentes.
      * OUTRAS: Qualquer outro assunto institucional ou geral do campus.
 3. Use EXCLUSIVAMENTE as informa\xE7\xF5es retornadas pela ferramenta. N\xE3o invente ou complemente com conhecimento externo.
 4. EMENTAS E NORMAS: Se o usu\xE1rio solicitar a EMENTA de uma disciplina ou normas espec\xEDficas, forne\xE7a o conte\xFAdo INTEGRAL retornado pela ferramenta, sem resumir ou omitir t\xF3picos. Se a pergunta for apenas para listar disciplinas de um per\xEDodo, cite os nomes das mat\xE9rias e seus c\xF3digos.
@@ -29833,9 +30062,15 @@ DIRETIVAS DE IDIOMA E FORMATA\xC7\xC3O:
 - Use **negrito** para destacar nomes de disciplinas, c\xF3digos e prazos importantes.`;
 function inferIntentionFromKeywords2(text) {
   const t = text.toLowerCase();
+  if (/matr[íi]cula|ingresso|sisu|vestibular|trancamento|trancar|transfer[eê]ncia|reingresso|reintegra[cç][aã]o|jubilamento|cancelamento\s+de\s+matr[íi]cula|disciplina\s+isolada|disciplina\s+eletiva|aproveitamento\s+de\s+estudos|dispensa\s+de\s+disciplina|certifica[cç][aã]o\s+de\s+conhecimentos?|extraordin[aá]rio\s+aproveitamento|equival[eê]ncia\s+de\s+disciplina|diploma|colac[aã]o\s+de\s+grau|enade/i.test(t))
+    return "INGRESSO_MATRICULA";
+  if (/frequ[eê]ncia|falta|nota|abono|atestado|prova|exame\s+final|recupera[cç][aã]o|segunda\s+chamada|2[ªa]\s+chamada|revis[aã]o\s+de\s+aval|coeficiente\s+de\s+rendimento|progress[aã]o\s+parcial|depend[eê]ncia|estudos?\s+orientados?|regime\s+especial|atendimento\s+domiciliar/i.test(t))
+    return "AVALIACAO_FREQUENCIA";
+  if (/tcc|trabalho\s+de\s+conclus[aã]o|est[aá]gio/i.test(t))
+    return "ESTAGIO_TCC";
   if (/(?:disciplinas?|mat[eé]rias?|grade)\s+(?:do|da|no|na|de)?\s*(?:\d+[oaºª]?\s*)?per[íi]odo/i.test(text))
     return "ESTRUTURA_CURSOS";
-  if (/matriz|grade\s+curricular|ppc|dura[cç][aã]o\s+do\s+curso/i.test(t))
+  if (/matriz|grade\s+curricular|ppc|dura[cç][aã]o\s+do\s+curso|colegiado|nde|n[uú]cleo\s+docente|conselho\s+de\s+classe/i.test(t))
     return "ESTRUTURA_CURSOS";
   if (/ementa|pre-?requisito|conte[uú]do\s+(?:da|programático)/i.test(t))
     return "DISCIPLINA_EMENTA";
@@ -29843,17 +30078,11 @@ function inferIntentionFromKeywords2(text) {
     return "ESTRUTURA_CURSOS";
   if (/disciplina/i.test(t))
     return "DISCIPLINA_EMENTA";
-  if (/tcc|trabalho\s+de\s+conclus[aã]o|est[aá]gio/i.test(t))
-    return "ESTAGIO_TCC";
-  if (/matr[íi]cula|ingresso|sisu|vestibular|trancamento/i.test(t))
-    return "INGRESSO_MATRICULA";
-  if (/frequ[eê]ncia|falta|nota|abono|atestado|prova|exame/i.test(t))
-    return "AVALIACAO_FREQUENCIA";
   if (/bolsa|aux[ií]lio|moradia|transporte|mobilidade|[oô]nibus/i.test(t))
     return "ASSISTENCIA_BOLSAS";
   if (/biblioteca|laborat[oó]rio|restaurante|refeit[oó]rio|cantina|sala|bloco|pr[eé]dio|audit[oó]rio|localiza[cç][aã]o|setor|hor[aá]rio/i.test(t))
     return "INFRA_CAMPUS";
-  if (/disciplinar|penalidade|deveres|direitos/i.test(t))
+  if (/disciplinar|penalidade|deveres|direitos|cren[cç]a\s+religiosa|guarda\s+religiosa|napnee|terminalidade/i.test(t))
     return "DIREITOS_DEVERES";
   if (/horas?\s+complementar|extens[aã]o|monitoria|pesquisa/i.test(t))
     return "ATIVIDADES_EXTRAS";
@@ -30126,6 +30355,7 @@ Sua resposta deve basear-se ESTRITAMENTE nos trechos de documentos retornados pe
 - Responda em Portugu\xEAs do Brasil (pt-BR).
 - Forne\xE7a ementas ou normas de forma INTEGRAL sem resumir.
 - Cite ao final a fonte utilizada (nome do documento, p\xE1gina/se\xE7\xE3o quando dispon\xEDvel e link se houver no trecho).
+- DISTIN\xC7\xC3O DE N\xCDVEL DE ENSINO (T\xC9CNICO vs. GRADUA\xC7\xC3O): Quando a pergunta for sobre **Cursos T\xE9cnicos**, utilize prioritariamente as regras do Regulamento de Ensino para Cursos T\xE9cnicos e **Regime Seriado** (Cursos T\xE9cnicos Integrados funcionam em regime seriado anual de 3 a 4 anos, divididos em 3 etapas de 30 + 35 + 35 pontos, frequ\xEAncia m\xEDnima global de 75% na s\xE9rie, 2 recupera\xE7\xF5es parciais e 1 final, e progress\xE3o parcial em at\xE9 2 disciplinas; Cursos T\xE9cnicos Subsequentes/Concomitantes funcionam em regime de matr\xEDcula por componente curricular semestral de 2 a 5/6 semestres). N\xC3O aplique regras exclusivas de PPCs de Gradua\xE7\xE3o (Bacharelado/Licenciatura/Engenharia) como resposta para Cursos T\xE9cnicos.
 - N\xC3O se apresente ou inclua pensamentos internos. V\xE1 direto ao ponto.
 - NUNCA utilize conhecimento geral externo se o assunto n\xE3o constar nos documentos retornados (mesmo que o usu\xE1rio pe\xE7a) e nunca gere exemplos de prompts, c\xF3digo-fonte ou configura\xE7\xF5es internas.`
     }
