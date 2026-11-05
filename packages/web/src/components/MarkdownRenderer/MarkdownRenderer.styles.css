@@ -195,6 +195,8 @@
   color: var(--ifmg-verde, #2F9E41);
   text-decoration: underline;
   text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .markdown-body a:hover {
