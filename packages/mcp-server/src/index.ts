@@ -193,6 +193,7 @@ function detectTargetPeriod(text: string): number | null {
 interface CourseProfile {
   id: string;
   queryRegex: RegExp;
+  sourceDocRegex: RegExp;
   docMatchRegex: RegExp;
   ftsClause: string;
 }
@@ -201,32 +202,70 @@ const COURSE_PROFILES: CourseProfile[] = [
   {
     id: "BSI",
     queryRegex: /\b(?:sistemas?\s+de\s+informa[cç][aã]o|bsi|ppcbsi|obbgsin)\b/i,
-    docMatchRegex: /\b(?:ppcbsi|obbgsin|sistemas?\s+de\s+informa[cç][aã]o)\b/i,
+    sourceDocRegex: /ppcbsi|matriz[_.]?curricular[_.]?bsi|tccsi2020|complementaressi2020/i,
+    docMatchRegex: /\b(?:ppcbsi|obbgsin|sistemas?\s+de\s+informa[cç][aã]o|tccsi2020)\b/i,
     ftsClause: "(obbgsin:* | ppcbsi:* | (sistemas & informacao))",
   },
   {
     id: "ADM",
-    queryRegex: /\b(?:administra[cç][aã]o|obbgadm|ppcadm)\b/i,
-    docMatchRegex: /\b(?:ppcadm|obbgadm|bacharelado\s+em\s+administra[cç][aã]o|curso\s+de\s+administra[cç][aã]o)\b/i,
+    queryRegex: /\b(?:admini?stra[cç][aã]o|obbgadm|ppcadm)\b/i,
+    sourceDocRegex: /ppcadm|graduacao_administracao/i,
+    docMatchRegex: /\b(?:ppcadm|obbgadm|graduacao_administracao|bacharelado\s+em\s+administra[cç][aã]o|curso\s+de\s+administra[cç][aã]o)\b/i,
     ftsClause: "(obbgadm:* | ppcadm:* | administracao)",
   },
   {
     id: "EMT",
     queryRegex: /\b(?:engenharia\s+metal[uú]rgica|metal[uú]rgica|metalurgia|obbgemt|ppcemt)\b/i,
-    docMatchRegex: /\b(?:ppcemt|obbgemt|engenharia\s+metal[uú]rgica)\b/i,
+    sourceDocRegex: /ppcemt|engmetal|metalrgica|regulamentoestgiosupervisionado_2020/i,
+    docMatchRegex: /\b(?:ppcemt|obbgemt|engmetal|metalrgica|engenharia\s+metal[uú]rgica)\b/i,
     ftsClause: "(obbgemt:* | ppcemt:* | metalurgica)",
   },
   {
     id: "PED",
     queryRegex: /\b(?:pedagogia|obl[e]?peda?|ppcped[a-z]*)\b/i,
-    docMatchRegex: /\b(?:ppcped[a-z]*|obl[e]?peda?|licenciatura\s+em\s+pedagogia|curso\s+de\s+pedagogia)\b/i,
+    sourceDocRegex: /ppcped|pedagogia/i,
+    docMatchRegex: /\b(?:ppcped[a-z]*|obl[e]?peda?|pedagogia|licenciatura\s+em\s+pedagogia|curso\s+de\s+pedagogia)\b/i,
     ftsClause: "(oblped:* | ppcped:* | pedagogia)",
   },
   {
     id: "COMP",
     queryRegex: /\b(?:licenciatura\s+em\s+computa[cç][aã]o|computa[cç][aã]o|oblcomp|ppccomp)\b/i,
+    sourceDocRegex: /ppccomp|computacao/i,
     docMatchRegex: /\b(?:ppccomp|oblcomp|licenciatura\s+em\s+computa[cç][aã]o)\b/i,
     ftsClause: "(oblcomp:* | ppccomp:* | computacao)",
+  },
+];
+
+const TECHNICAL_COURSE_PROFILES: CourseProfile[] = [
+  {
+    id: "TEC_ADM",
+    queryRegex: /\b(?:admini?stra[cç]?[aã]?o)\b/i,
+    sourceDocRegex:
+      /ppct[eé]?cnicointegrado(?:admini?stra[cç]?[aã]?o)|integrado_tecnico_administracao|carga_horaria_tecnico_em_administracao/i,
+    docMatchRegex:
+      /ppct[eé]?cnicointegrado(?:admini?stra[cç]?[aã]?o)|integrado_tecnico_administracao|carga_horaria_tecnico_em_administracao|\bt[eé]cnico\s+(?:integrado\s+)?em\s+administra[cç][aã]o\b/i,
+    ftsClause:
+      "((tecnico:* & administracao:*) | ppctcnicointegradoadministraoourobranco:*)",
+  },
+  {
+    id: "TEC_INF",
+    queryRegex: /\b(?:inform[aá]?tica)\b/i,
+    sourceDocRegex:
+      /ppct[eé]?cnicointegradoinform[aá]?tica|integrado_tecnico_informatica|carga_horaria_tecnico_em_informatica/i,
+    docMatchRegex:
+      /ppct[eé]?cnicointegradoinform[aá]?tica|integrado_tecnico_informatica|carga_horaria_tecnico_em_informatica|\bt[eé]cnico\s+(?:integrado\s+)?em\s+inform[aá]tica\b/i,
+    ftsClause:
+      "((tecnico:* & informatica:*) | ppctcnicointegradoinformticaourobranco:*)",
+  },
+  {
+    id: "TEC_MET",
+    queryRegex: /\b(?:metal[uú]?rgi[ca])\b/i,
+    sourceDocRegex:
+      /ppct[eé]?cnicointegradometalurgia|integrado_tecnico_metalurgia|carga_horaria_tecnico_em_metalurgia/i,
+    docMatchRegex:
+      /ppct[eé]?cnicointegradometalurgia|integrado_tecnico_metalurgia|carga_horaria_tecnico_em_metalurgia|\bt[eé]cnico\s+(?:integrado\s+)?em\s+metalurgia\b/i,
+    ftsClause:
+      "((tecnico:* & metalurgia:*) | ppctcnicointegradometalurgiaourobranco:*)",
   },
 ];
 
@@ -239,7 +278,7 @@ interface NormativeTopicRule {
 
 /**
  * Regras de cobertura para assuntos normativos do Regulamento de Ensino do IFMG
- * (Resolução nº 01/2026 — Arts. 1º a 189).
+ * (Resolução nº 01/2026 — Arts. 1º a 189) e seções normativas de PPCs (Estágio, TCC, Oferta de Cursos).
  */
 const NORMATIVE_TOPIC_RULES: NormativeTopicRule[] = [
   {
@@ -341,25 +380,55 @@ const NORMATIVE_TOPIC_RULES: NormativeTopicRule[] = [
   {
     id: "ESTRUTURA_REGIME_HORA_AULA_CURSOS_TECNICOS",
     queryRegex:
-      /\b(?:regime\s+seriado|matr[íi]cula\s+por\s+componente|dura[cç][aã]o\s+da\s+hora[- ]aula|50\s*minutos|200\s*dias\s*letivos|t[eé]cnico\s+(?:integrado|subsequente|concomitante)|modalidade\s+eja|cursos?\s+t[eé]cnicos?|t[eé]cnicos?\s+em\s+(?:administra[cç][aã]o|metalurgia|inform[aá]tica)|ensino\s+m[eé]dio\s+integrado|educa[cç][aã]o\s+profissional\s+t[eé]cnica)\b/i,
+      /\b(?:regime\s+seriado|matr[íi]cula\s+por\s+componente|dura[cç][aã]o\s+da\s+hora[- ]aula|50\s*minutos|200\s*dias\s*letivos|t[eé]cnico\s+(?:integrado|subsequente|concomitante)|modalidade\s+eja|cursos?\s+t[eé]cnicos?|t[eé]cnicos?\s+(?:(?:em|de)\s+)?(?:admini?stra[cç][aã]o|metal[uú]rgi[ca]|inform[aá]tica)|ensino\s+m[eé]dio\s+integrado|educa[cç][aã]o\s+profissional\s+t[eé]cnica)\b/i,
     chunkMatchRegex:
       /\b(?:DO\s+REGIME\s+ACAD[EÊ]MICO|DO\s+CALEND[AÁ]RIO\s+ACAD[EÊ]MICO|DOS\s+CURSOS\s+T[EÉ]CNICOS|Dos\s+Cursos\s+T[eé]cnicos\s+(?:Integrados|Subsequentes|Concomitantes|na\s+Modalidade)|DA\s+JORNADA\s+ACAD[EÊ]MICA|hora-aula\s+de\s+50|regime\s+seriado|30\s*\(trinta\)\s*pontos|duas\s+recupera[cç][oõ]es\s+parciais|Conselho\s+de\s+Classe|Art\.\s*(?:1[0-9]|2[0-9]|3[0-3]|4[01]|62|68|88|102|118|123|127|13[0-4]|136|158|182)\b)/i,
     ftsClause: "((regime & seriado) | subsequente | concomitante | (dias & letivos) | jornada | tecnico:* | integrado:*)",
   },
+  {
+    id: "ESTAGIO_CURRICULAR_E_TCC",
+    queryRegex:
+      /\b(?:est[aá]gios?|estagiar|estagi[aá]rios?|tcc|trabalho\s+de\s+conclus[aã]o\s+de\s+curso)\b/i,
+    chunkMatchRegex:
+      /\b(?:Concep[cç][aã]o\s+e\s+(?:a\s+)?Composi[cç][aã]o\s+das\s+Atividades\s+de\s+Est[aá]gio|Orienta[cç][aã]o\s+para\s+a\s+Realiza[cç][aã]o\s+do\s+Est[aá]gio|Regulamento\s+(?:Geral\s+)?de\s+Est[aá]gio|Trabalho\s+de\s+Conclus[aã]o\s+de\s+Curso|Lei\s+n[º°.]?\s*11\.?788|n[aã]o[- ]obrigat[oó]rio|ser[aá]\s+(?:n[aã]o[- ]?obrigat[oó]rio|volunt[aá]rio|obrigat[oó]rio)|menor[- ]aprendiz|Carga\s+hor[aá]ria\s+m[ií]nima\s+de\s+80\s*h)\b/i,
+    ftsClause:
+      "((estagio & (obrigatorio | voluntario | curricular | supervisionado | 11788 | 80h | extracurricular | concepcao | orientacao)) | (trabalho & conclusao & curso))",
+  },
+  {
+    id: "OFERTA_CURSOS_CAMPUS",
+    queryRegex:
+      /\b(?:quantas?\s+gradua[cç][oõ]es|quantos?\s+cursos|quais\s+(?:s[aã]o\s+os\s+)?(?:cursos|gradua[cç][oõ]es)|(?:disponibiliza|oferece|tem|possui|existem)\s+(?:quantas?\s+|quantos?\s+|quais\s+)?(?:gradua[cç][oõ]es|cursos\s+superiores|cursos\s+t[eé]cnicos|cursos))\b/i,
+    chunkMatchRegex:
+      /\b(?:Hist[oó]rico\s+do\s+Campus\s+Ouro\s+Branco|tr[eê]s\s+cursos\s+integrados|Administra[cç][aã]o,\s*Metalurgia\s+e\s+Inform[aá]tica|Sistemas\s+de\s+Informa[cç][aã]o[\s\S]{0,120}(?:Engenharia\s+Metal[uú]rgica|Pedagogia|Administra[cç][aã]o))\b/i,
+    ftsClause:
+      "((historico & campus & ouro & branco) | (bacharelado & licenciatura & (sistemas | administracao | metalurgica | pedagogia)) | (tres & cursos & integrados))",
+  },
 ];
+
+/**
+ * Normaliza erros comuns de digitação em consultas acadêmicas antes de aplicar FTS e regexes.
+ */
+function normalizeQueryTypos(text: string): string {
+  return text
+    .replace(/\badmi?nstra[cç][aã]o\b/gi, "administração")
+    .replace(/\badmi?nstracao\b/gi, "administracao")
+    .replace(/\bcarga\s+hor[aá]rio\b/gi, "carga horária")
+    .replace(/\bcursos?\s+t[eé]cnico\b/gi, "cursos técnicos");
+}
 
 /**
  * Detecta se a consulta refere-se especificamente ao nível de Curso Técnico (Nível Médio / Regime Seriado)
  * ou ao nível de Graduação (Educação Superior), evitando colisão de nomes como Administração e Metalurgia.
  */
 function detectCourseLevel(text: string): { isTechnical: boolean; isGraduation: boolean } {
+  const normalized = normalizeQueryTypos(text);
   const isTechnical =
-    /\b(?:cursos?\s+t[eé]cnicos?|t[eé]cnicos?\s+(?:integrados?|subsequentes?|concomitantes?|em\s+(?:administra[cç][aã]o|metalurgia|inform[aá]tica|edifica[cç][oõ]es|eletrot[eé]cnica))|ensino\s+m[eé]dio\s+integrado|educa[cç][aã]o\s+profissional\s+t[eé]cnica|modalidade\s+eja|regime\s+seriado)\b/i.test(
-      text
+    /\b(?:cursos?\s+t[eé]cnicos?|t[eé]cnicos?\s+(?:integrados?|subsequentes?|concomitantes?|(?:(?:em|de)\s+)?(?:admini?stra[cç][aã]o|metal[uú]rgi[ca]|inform[aá]tica|edifica[cç][oõ]es|eletrot[eé]cnica))|ensino\s+m[eé]dio\s+integrado|educa[cç][aã]o\s+profissional\s+t[eé]cnica|modalidade\s+eja|regime\s+seriado|ppct[eé]?cnico|integrado_tecnico|carga_horaria_tecnico)\b/i.test(
+      normalized
     );
   const isGraduation =
-    /\b(?:gradua[cç][aã]o|bacharelado|licenciatura|engenharia\s+metal[uú]rgica|sistemas?\s+de\s+informa[cç][aã]o|pedagogia|curso\s+superior|tecn[oó]logo|bsi|ppcbsi|ppcadm|ppcemt|ppcped|ppccomp|obbgsin|obbgadm|obbgemt|oblped|oblcomp)\b/i.test(
-      text
+    /\b(?:gradua[cç][oõa][eo]?s?|bacharelados?|licenciaturas?|engenharia\s+metal[uú]rgica|sistemas?\s+de\s+informa[cç][aã]o|pedagogia|cursos?\s+superiores?|tecn[oó]logos?|bsi|ppcbsi|ppcadm|ppcemt|ppcped|ppccomp|obbgsin|obbgadm|obbgemt|oblped|oblcomp)\b/i.test(
+      normalized
     );
   return { isTechnical, isGraduation };
 }
@@ -369,10 +438,13 @@ function detectCourseLevel(text: string): { isTechnical: boolean; isGraduation: 
  * Remove caracteres especiais, expande numerais ordinais e adiciona palavras de apoio da intenção (intent).
  */
 function formatFTSQuery(query: string, intent?: string, fullContextText?: string): string {
-  const detectionText = fullContextText ? `${query} ${fullContextText}` : query;
+  const normalizedQuery = normalizeQueryTypos(query);
+  const detectionText = normalizeQueryTypos(fullContextText ? `${query} ${fullContextText}` : query);
   const stopWords = new Set([
-    "qual", "quais", "como", "onde", "quando", "para", "sobre", "entre", "este", "esta",
-    "esses", "essas", "pode", "podia", "poderia", "favor", "voce", "sao", "tem", "ter",
+    "qual", "quais", "quantos", "quantas", "como", "onde", "quando", "para", "sobre", "entre",
+    "este", "esta", "esses", "essas", "pode", "podia", "poderia", "favor", "voce", "sao", "tem",
+    "ter", "possui", "disponibiliza", "disponibilizados", "disponiveis", "oferece", "ofertados",
+    "ofertadas", "existem", "verificar", "verifica", "olhar", "checar", "consultar", "confirmar",
     "conteudo", "conteúdo", "disciplina", "disciplinas", "disiciplina", "disiciplinas",
     "materia", "materias", "matéria", "matérias", "grade", "detalhes", "programa",
     "curso", "cursos", "bacharelado", "licenciatura", "tecnologo", "tecnólogo",
@@ -421,7 +493,7 @@ function formatFTSQuery(query: string, intent?: string, fullContextText?: string
     codeFTS = `(${codeMatch[1].toLowerCase()}:* & (${codeMatch[2]} | ${codeMatch[1].toLowerCase()}.${codeMatch[2]}))`;
   }
 
-  const queryLimpa = query.replace(/[^\p{L}\p{N}\s]/gu, " ").toLowerCase().trim();
+  const queryLimpa = normalizedQuery.replace(/[^\p{L}\p{N}\s]/gu, " ").toLowerCase().trim();
   if (!queryLimpa) return codeFTS || "dummy_fallback_query";
 
   const rawTerms = queryLimpa.split(/\s+/).filter((w) => w.length >= 1 && (w.length >= 2 || /^\d$/.test(w)) && !stopWords.has(w));
@@ -439,8 +511,15 @@ function formatFTSQuery(query: string, intent?: string, fullContextText?: string
   const targetCourse = isPureTechnicalQuery
     ? undefined
     : COURSE_PROFILES.find((c) => c.queryRegex.test(detectionText));
+  const targetTechCourse = isPureTechnicalQuery
+    ? TECHNICAL_COURSE_PROFILES.find((c) => c.queryRegex.test(detectionText))
+    : undefined;
   const periodOrdinalClause = targetPeriod ? ordinalMap[String(targetPeriod)] : null;
   const matchedNormativeRules = NORMATIVE_TOPIC_RULES.filter((r) => r.queryRegex.test(detectionText));
+  const isAskingWorkload =
+    /\b(?:carga\s+hor[aá]ri[ao]|quantas?\s+horas|total\s+de\s+horas|ch\s+total|dura[cç][aã]o)\b/i.test(
+      detectionText
+    );
 
   const focusedClauses: string[] = [];
   if (codeFTS) focusedClauses.push(codeFTS);
@@ -460,11 +539,19 @@ function formatFTSQuery(query: string, intent?: string, fullContextText?: string
   if (targetCourse) {
     focusedClauses.push(targetCourse.ftsClause);
   }
+  if (targetTechCourse) {
+    focusedClauses.push(targetTechCourse.ftsClause);
+  }
   if (isTechnical) {
-    // Expande consultas sobre cursos técnicos para alcançar também os artigos do "regime seriado" no Regulamento
+    // Expande consultas sobre cursos técnicos para alcançar tanto os PPCs técnicos quanto o "regime seriado" no Regulamento
     focusedClauses.push(
       "((curso:* & tecnico:*) | (regime & seriado) | integrado:* | subsequente:* | concomitante:* | (tres & etapas) | (conselho & classe))"
     );
+    if (isAskingWorkload) {
+      focusedClauses.push(
+        "((carga & horaria & total) | (propedeuticas & profissionalizantes) | (distribuicao & carga & horaria & tecnico))"
+      );
+    }
   }
   for (const rule of matchedNormativeRules) {
     focusedClauses.push(rule.ftsClause);
@@ -480,7 +567,7 @@ function formatFTSQuery(query: string, intent?: string, fullContextText?: string
       "matricula | ingresso | transferencia | trancamento | reingresso | isolada | eletiva | renovacao | ajuste | cancelamento | reintegracao",
     AVALIACAO_FREQUENCIA:
       "frequencia | faltas | nota | avaliacao | aprovacao | reprovacao | recuperacao | exame | abono | justificativa | atestado | coeficiente | rendimento | progressao | domiciliares",
-    ESTAGIO_TCC: "tcc | estagio",
+    ESTAGIO_TCC: "tcc | estagio | obrigatorio | voluntario",
     ATIVIDADES_EXTRAS: "complementares | extensao",
     ASSISTENCIA_BOLSAS: "bolsa | auxilio | transporte | mobilidade",
     INFRA_CAMPUS: "biblioteca | laboratorio | restaurante | refeitorio | sala | bloco | localizacao",
@@ -505,17 +592,18 @@ function formatFTSQuery(query: string, intent?: string, fullContextText?: string
 
 /**
  * Aplica heurísticas de re-ranking sobre os candidatos híbridos:
- *   1. Afinidade por curso (ex: Sistemas de Informação / PPCBSI / OBBGSIN vs. outros PPCs)
- *   2. Cobertura normativa para artigos do Regulamento de Ensino (Resolução nº 01/2026)
+ *   1. Afinidade por curso (Graduação e Cursos Técnicos, usando prioritariamente doc.source)
+ *   2. Cobertura normativa para artigos do Regulamento de Ensino (Resolução nº 01/2026) e seções de PPC (Estágio, TCC, Carga Horária, Oferta de Cursos)
  *   3. Detecção de linhas tabulares de período na Matriz Curricular (ex: "7 OBBGSIN.040", "7 Optativa III")
  *   4. Diferenciação entre Tabela da Matriz Curricular vs. Fichas Individuais do Ementário
  *   5. Bonificação de código específico de disciplina e ementa
  */
 function applyRerankingBoosts(
   documents: RetrievedChunk[],
-  fullSearchText: string,
+  rawSearchText: string,
   intent?: string
 ): void {
+  const fullSearchText = normalizeQueryTypos(rawSearchText);
   const matchedNormativeRules = NORMATIVE_TOPIC_RULES.filter((r) => r.queryRegex.test(fullSearchText));
   const hasExplicitEmentaTerms = /\b(?:ementa|ement[aá]rio|conte[uú]do\s+program[aá]tico|bibliografia|objetivos?\s+da\s+disciplina)\b/i.test(
     fullSearchText
@@ -528,6 +616,22 @@ function applyRerankingBoosts(
     (matchedNormativeRules.length === 0 || hasExplicitEmentaTerms);
   const isCursoQuery = intent === "CURSO" || intent === "ESTRUTURA_CURSOS";
   const isAskingEquivalenceOrAcea = /equivalen|acea|201[789]|2020/i.test(fullSearchText);
+  const isAskingWorkload =
+    /\b(?:carga\s+hor[aá]ri[ao]|quantas?\s+horas|total\s+de\s+horas|ch\s+total|dura[cç][aã]o)\b/i.test(
+      fullSearchText
+    );
+  const isEstagioOrTccQuery =
+    intent === "ESTAGIO_TCC" ||
+    intent === "TCC" ||
+    /\b(?:est[aá]gios?|estagiar|estagi[aá]rios?|tcc|trabalho\s+de\s+conclus[aã]o)\b/i.test(fullSearchText);
+  const isCampusCourseOfferQuery =
+    /\b(?:quantas?\s+gradua[cç][oõ]es|quantos?\s+cursos|quais\s+(?:s[aã]o\s+os\s+)?(?:cursos|gradua[cç][oõ]es)|(?:disponibiliza|oferece|tem|possui|existem)\s+(?:quantas?\s+|quantos?\s+|quais\s+)?(?:gradua[cç][oõ]es|cursos\s+superiores|cursos\s+t[eé]cnicos|cursos))\b/i.test(
+      fullSearchText
+    );
+  const hasPpcSpecificAttribute =
+    isAskingWorkload ||
+    isEstagioOrTccQuery ||
+    /\b(?:matriz|grade|ppc|projeto\s+pedag[oó]gico)\b/i.test(fullSearchText);
 
   const codeMatch = fullSearchText.match(/(OBBGSIN|OBBGADM|OBBGEMT|OBLCOMP|OBLE?PEDA?)\.?(\d{3})/i);
   const targetCode = codeMatch ? `${codeMatch[1]}.${codeMatch[2]}`.toLowerCase() : null;
@@ -539,6 +643,12 @@ function applyRerankingBoosts(
     : COURSE_PROFILES.find((c) => c.queryRegex.test(fullSearchText));
   const otherCourses = targetCourse
     ? COURSE_PROFILES.filter((c) => c.id !== targetCourse.id)
+    : [];
+  const targetTechCourse = isPureTechnicalQuery
+    ? TECHNICAL_COURSE_PROFILES.find((c) => c.queryRegex.test(fullSearchText))
+    : undefined;
+  const otherTechCourses = targetTechCourse
+    ? TECHNICAL_COURSE_PROFILES.filter((c) => c.id !== targetTechCourse.id)
     : [];
 
   const targetPeriod = detectTargetPeriod(fullSearchText);
@@ -571,10 +681,23 @@ function applyRerankingBoosts(
     const contentLower = doc.content.toLowerCase();
     const docFullText = `${doc.source} ${doc.sectionContext || ""} ${doc.content}`;
 
-    // 1. Afinidade por Curso (evita colisão entre múltiplos PPCs no banco)
-    const matchesTargetCourse = Boolean(targetCourse && targetCourse.docMatchRegex.test(docFullText));
+    // Identificação estrita do curso pelo nome do arquivo (doc.source), evitando falsos positivos
+    // em páginas de "Histórico do Campus Ouro Branco" que citam nominalmente outros cursos do campus.
+    const sourceMatchedGradCourse = COURSE_PROFILES.find((cp) => cp.sourceDocRegex.test(doc.source));
+    const sourceMatchedTechCourse = TECHNICAL_COURSE_PROFILES.find((tp) => tp.sourceDocRegex.test(doc.source));
+    const isCourseSpecificFile = Boolean(sourceMatchedGradCourse || sourceMatchedTechCourse);
+
+    // 1. Afinidade por Curso de Graduação (evita colisão entre múltiplos PPCs no banco)
+    const matchesTargetCourse = Boolean(
+      targetCourse &&
+        (isCourseSpecificFile
+          ? sourceMatchedGradCourse?.id === targetCourse.id
+          : targetCourse.docMatchRegex.test(docFullText))
+    );
     const belongsToOtherCourse = Boolean(
-      targetCourse && !matchesTargetCourse && otherCourses.some((oc) => oc.docMatchRegex.test(docFullText))
+      targetCourse &&
+        !matchesTargetCourse &&
+        (isCourseSpecificFile || otherCourses.some((oc) => oc.docMatchRegex.test(docFullText)))
     );
 
     if (targetCourse) {
@@ -585,20 +708,46 @@ function applyRerankingBoosts(
       }
     }
 
-    // 1.1. Afinidade por Nível de Ensino (Curso Técnico / Regime Seriado vs. Graduação)
+    // 1.1. Afinidade por Nível de Ensino (Curso Técnico / Regime Seriado vs. Graduação) e Curso Técnico Específico
+    let belongsToOtherTechCourse = false;
     if (isPureTechnicalQuery) {
-      const isGraduationPpcDoc =
-        COURSE_PROFILES.some((cp) => cp.docMatchRegex.test(`${doc.source} ${doc.sectionContext || ""}`)) ||
-        /\b(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}\b/i.test(doc.content);
-      const hasTechnicalOrSeriadoContent =
-        /\b(?:cursos?\s+t[eé]cnicos?|t[eé]cnico\s+(?:integrado|subsequente|concomitante)|educa[cç][aã]o\s+profissional\s+t[eé]cnica|regime\s+seriado|modalidade\s+eja|3\s*\(tr[eê]s\)\s*etapas|30\s*\(trinta\)\s*pontos\s+na\s+primeira\s+etapa|duas\s+recupera[cç][oõ]es\s+parciais|conselho\s+de\s+classe)\b/i.test(
-          docFullText
+      const isTechnicalSourceDoc =
+        Boolean(sourceMatchedTechCourse) ||
+        /ppct[eé]?cnico|integrado_tecnico|carga_horaria_tecnico|manualdoformandotecnicos|formaturacursostecnicos/i.test(
+          doc.source
         );
+      const isGraduationPpcDoc =
+        !isTechnicalSourceDoc &&
+        (Boolean(sourceMatchedGradCourse) ||
+          COURSE_PROFILES.some((cp) => cp.docMatchRegex.test(`${doc.source} ${doc.sectionContext || ""}`)) ||
+          /\b(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}\b/i.test(doc.content));
+      const hasTechnicalOrSeriadoContent =
+        isTechnicalSourceDoc ||
+        (!isGraduationPpcDoc &&
+          /\b(?:cursos?\s+t[eé]cnicos?|t[eé]cnicos?\s+(?:integrados?|subsequentes?|concomitantes?|em\s+(?:administra[cç][aã]o|metalurgia|inform[aá]tica))|educa[cç][aã]o\s+profissional\s+t[eé]cnica|regime\s+seriado|modalidade\s+eja|3\s*\(tr[eê]s\)\s*etapas|30\s*\(trinta\)\s*pontos\s+na\s+primeira\s+etapa|duas\s+recupera[cç][oõ]es\s+parciais|conselho\s+de\s+classe)\b/i.test(
+            docFullText
+          ));
       const isExclusiveGraduationSection =
         !hasTechnicalOrSeriadoContent &&
         /\b(?:DOS\s+CURSOS\s+DE\s+GRADUA[CÇ][AÃ]O|Cursos\s+Superiores\s+de\s+Tecnologia|Cursos\s+de\s+Bacharelado|Cursos\s+de\s+Licenciatura|Portador\s+de\s+Diploma\s+de\s+Curso\s+de\s+Gradua[cç][aã]o|exclusivamente\s+para\s+os\s+cursos\s+de\s+gradua[cç][aã]o|regime\s+de\s+matr[íi]culas?\s+por\s+componentes?\s+curriculares?)\b/i.test(
           docFullText
         );
+
+      if (targetTechCourse) {
+        const matchesTargetTech = isCourseSpecificFile
+          ? sourceMatchedTechCourse?.id === targetTechCourse.id
+          : targetTechCourse.docMatchRegex.test(docFullText);
+        belongsToOtherTechCourse =
+          !matchesTargetTech &&
+          (isCourseSpecificFile || otherTechCourses.some((otc) => otc.docMatchRegex.test(docFullText)));
+
+        if (matchesTargetTech) {
+          doc.similarity += 0.30;
+        } else if (belongsToOtherTechCourse) {
+          doc.similarity -= 0.25;
+          continue;
+        }
+      }
 
       if (isGraduationPpcDoc && !hasTechnicalOrSeriadoContent) {
         doc.similarity -= 0.20;
@@ -613,7 +762,7 @@ function applyRerankingBoosts(
 
     // Se o documento pertence comprovadamente a OUTRO curso diferente do perguntado,
     // não aplica bonificações de período, matriz ou ementa para evitar contaminação cruzada entre PPCs.
-    if (belongsToOtherCourse) {
+    if (belongsToOtherCourse || belongsToOtherTechCourse) {
       continue;
     }
 
@@ -621,10 +770,10 @@ function applyRerankingBoosts(
     if (targetCode && contentLower.includes(targetCode)) {
       doc.similarity += 0.15;
 
-      if (isEmentaQuery && /ementa:/i.test(doc.content)) {
+      if (isEmentaQuery && /ementa\s*(?::|\r?\n)/i.test(doc.content)) {
         doc.similarity += 0.30;
       }
-    } else if (isEmentaQuery && /ementa:/i.test(doc.content)) {
+    } else if (isEmentaQuery && /ementa\s*(?::|\r?\n)/i.test(doc.content)) {
       doc.similarity += 0.10;
     }
 
@@ -633,8 +782,10 @@ function applyRerankingBoosts(
       (doc.content.match(/\b(?:OBBG|OBL)[A-Z]{2,6}\.\d{3}\b/gi) || []).map((c) => c.toUpperCase())
     );
     const hasCourseCodes = distinctCodes.size > 0;
+    // Nos PPCs técnicos, as tabelas de disciplinas usam "Ementa\n" e "Bibliografia Básica\n" sem dois-pontos
     const isEmentaCard =
-      /\bEmenta:\s/i.test(doc.content) || /\bBibliografia\s+b[aá]sica:/i.test(doc.content);
+      /\bEmenta\s*(?::|\r?\n)/i.test(doc.content) ||
+      /\bBibliografia\s+(?:B[aá]sica|Complementar)\s*(?::|\r?\n)/i.test(doc.content);
     const isNormativeChunk =
       /\bArt\.\s*\d+/i.test(doc.content) ||
       /regulamento|resolu[cç][aã]o/i.test(`${doc.source} ${doc.sectionContext || ""}`);
@@ -644,11 +795,17 @@ function applyRerankingBoosts(
       );
 
     // 3.1. Cobertura de Tópicos Normativos do Regulamento de Ensino (Arts. 1º a 189)
-    if (matchedNormativeRules.length > 0 && !targetCode && !hasExplicitEmentaTerms) {
-      const matchesTopicChunk = matchedNormativeRules.some((r) => r.chunkMatchRegex.test(docFullText));
+    // Quando a pergunta pede atributo específico de PPC (carga horária total, estágio por curso, matriz, catálogo de cursos),
+    // evita que a regra genérica ESTRUTURA_REGIME_HORA_AULA_CURSOS_TECNICOS infle o Regulamento Geral acima dos PPCs.
+    const effectiveNormativeRules = hasPpcSpecificAttribute
+      ? matchedNormativeRules.filter((r) => r.id !== "ESTRUTURA_REGIME_HORA_AULA_CURSOS_TECNICOS")
+      : matchedNormativeRules;
+
+    if (effectiveNormativeRules.length > 0 && !targetCode && !hasExplicitEmentaTerms) {
+      const matchesTopicChunk = effectiveNormativeRules.some((r) => r.chunkMatchRegex.test(docFullText));
       if (matchesTopicChunk && isNormativeChunk) {
         doc.similarity += 0.28;
-        if (isGeneralTeachingRegulation && !targetCourse) {
+        if (isGeneralTeachingRegulation && !targetCourse && !targetTechCourse && !hasPpcSpecificAttribute && !isCampusCourseOfferQuery) {
           doc.similarity += 0.08;
         }
       } else if (matchesTopicChunk) {
@@ -656,6 +813,69 @@ function applyRerankingBoosts(
       } else if (isEmentaCard) {
         // Desprioriza fichas de ementa de disciplinas quando a pergunta é sobre normas/regulamento
         doc.similarity -= 0.12;
+      }
+    } else if ((hasPpcSpecificAttribute || isCampusCourseOfferQuery) && isEmentaCard && !isEmentaQuery) {
+      doc.similarity -= 0.12;
+    }
+
+    // 3.2. Boost específico para Obrigatoriedade e Regras de Estágio / TCC nos PPCs e Regulamentos de Estágio
+    if (isEstagioOrTccQuery && !isEmentaCard) {
+      const isEvaluationPassingMention =
+        /\b(?:Crit[eé]rios\s+de\s+Avalia[cç][aã]o\s+dos\s+Discentes|distribui[cç][aã]o\s+de\s+pontos)\b/i.test(
+          docFullText
+        ) &&
+        !/\b(?:Lei\s+n[º°.]?\s*11\.?788|Concep[cç][aã]o\s+e\s+(?:a\s+)?Composi[cç][aã]o\s+das\s+Atividades\s+de\s+Est[aá]gio)\b/i.test(
+          docFullText
+        );
+
+      const hasStrongEstagioOrTccDefinition =
+        !isEvaluationPassingMention &&
+        (/(?:Concep[cç][aã]o\s+e\s+(?:a\s+)?Composi[cç][aã]o\s+das\s+Atividades\s+de\s+Est[aá]gio|Orienta[cç][aã]o\s+para\s+a\s+Realiza[cç][aã]o\s+do\s+Est[aá]gio|Regulamento\s+(?:Geral\s+)?de\s+Est[aá]gio|4\.1[2345]\.?\s+(?:A\s+)?(?:Concep[cç][aã]o|Trabalho\s+de\s+Conclus[aã]o)|7\.1\.?\s+Orienta[cç][aã]o\s+para\s+a\s+Realiza[cç][aã]o\s+do\s+Est[aá]gio)/i.test(
+          docFullText
+        ) ||
+          /(?:n[aã]o[- ]obrigat[oó]rio|ser[aá]\s+(?:n[aã]o[- ]?obrigat[oó]rio|volunt[aá]rio|obrigat[oó]rio)|est[aá]gio[\s\S]{0,140}(?:n[aã]o[- ]?obrigat[oó]rio|volunt[aá]rio|obrigat[oó]rio|extracurricular)|Lei\s+n[º°.]?\s*11\.?788|idade\s+m[ií]nima[\s\S]{0,40}16\s+anos|menor[- ]aprendiz|Carga\s+hor[aá]ria\s+m[ií]nima\s+de\s+80\s*h|n[aã]o\s+(?:prev[eê]|haver[aá]\s+exig[eê]ncia\s+de)\s+(?:a\s+realiza[cç][aã]o\s+de\s+)?(?:um\s+)?Trabalho\s+de\s+Conclus[aã]o)/i.test(
+            docFullText
+          ));
+
+      const isEstagioOrTccRegulationSource =
+        /regulamento.*est[aá]?gio|guia.*est[aá]?gio|regulamento.*tcc|tccsi/i.test(doc.source);
+
+      if (hasStrongEstagioOrTccDefinition) {
+        doc.similarity += 0.34;
+      }
+      if (isEstagioOrTccRegulationSource) {
+        doc.similarity += 0.20;
+      }
+    }
+
+    // 3.3. Boost específico para Carga Horária Total de Cursos (PPCs, Matrizes e Tabelas de Carga Horária)
+    if (isAskingWorkload && !isEmentaCard && !targetCode) {
+      const hasCourseWorkloadSummary =
+        /\b(?:Carga\s+Hor[aá]ria\s+Total|Total\s+do\s+Curso\s*:|Total\s+das\s+Disciplinas\s+(?:Proped[eê]uticas|Profissionalizantes)|CH\s+TOTAL|SUB\s*TOTAL\s*\(Unid|Distribui[cç][aã]o\s+da\s+carga\s+hor[aá]ria|Carga\s+Hor[aá]ria\s+em\s+Disciplinas\s+Obrigat[oó]rias|3\.?442\s*h|3\.?671\s*h|3\.?908\s*h)\b/i.test(
+          docFullText
+        );
+      const isWorkloadTableOrIdentification =
+        /carga_horaria_tecnico|matriz/i.test(doc.source) ||
+        /\bIDENTIFICA[CÇ][AÃ]O\s+DO\s+CURSO\b/i.test(docFullText);
+
+      if (hasCourseWorkloadSummary) {
+        doc.similarity += 0.36;
+        if (isWorkloadTableOrIdentification) {
+          doc.similarity += 0.12;
+        }
+      }
+    }
+
+    // 3.4. Boost específico para Oferta / Catálogo de Cursos do Campus Ouro Branco
+    if (isCampusCourseOfferQuery && !isEmentaCard) {
+      const hasCampusHistoryOrCourseList =
+        /\b(?:Hist[oó]rico\s+do\s+Campus\s+Ouro\s+Branco|tr[eê]s\s+cursos\s+integrados|Administra[cç][aã]o,\s*Metalurgia\s+e\s+Inform[aá]tica|Sistemas\s+de\s+Informa[cç][aã]o[\s\S]{0,160}(?:Engenharia\s+Metal[uú]rgica|Pedagogia|Administra[cç][aã]o))\b/i.test(
+          docFullText
+        );
+      if (hasCampusHistoryOrCourseList) {
+        doc.similarity += 0.34;
+      } else if (isGeneralTeachingRegulation) {
+        doc.similarity -= 0.15;
       }
     }
 
@@ -726,6 +946,90 @@ function applyRerankingBoosts(
       doc.similarity -= 0.15;
     }
   }
+}
+
+/**
+ * Diversifica as fontes no Top-N final quando a pergunta pede atributos específicos de PPC
+ * (carga horária total, obrigatoriedade de estágio, TCC, matriz) ou catálogo de cursos do campus,
+ * evitando que os 4 capítulos de cursos técnicos do Regulamento Geral ocupem todo o Top 5.
+ */
+function diversifyTopDocuments(
+  documents: RetrievedChunk[],
+  limit: number,
+  rawSearchText: string,
+  intent?: string
+): RetrievedChunk[] {
+  if (documents.length <= limit) return documents;
+
+  const fullSearchText = normalizeQueryTypos(rawSearchText);
+  const { isTechnical, isGraduation } = detectCourseLevel(fullSearchText);
+  const isPureTechnicalQuery = isTechnical && !isGraduation;
+  const targetCourse = isPureTechnicalQuery
+    ? undefined
+    : COURSE_PROFILES.find((c) => c.queryRegex.test(fullSearchText));
+  const targetTechCourse = isPureTechnicalQuery
+    ? TECHNICAL_COURSE_PROFILES.find((c) => c.queryRegex.test(fullSearchText))
+    : undefined;
+
+  const hasPpcSpecificAttribute =
+    intent === "ESTAGIO_TCC" ||
+    intent === "TCC" ||
+    /\b(?:carga\s+hor[aá]ri[ao]|quantas?\s+horas|total\s+de\s+horas|ch\s+total|est[aá]gios?|estagiar|tcc|trabalho\s+de\s+conclus[aã]o|matriz|grade|ppc|projeto\s+pedag[oó]gico)\b/i.test(
+      fullSearchText
+    );
+  const isCampusCourseOfferQuery =
+    /\b(?:quantas?\s+gradua[cç][oõ]es|quantos?\s+cursos|quais\s+(?:s[aã]o\s+os\s+)?(?:cursos|gradua[cç][oõ]es)|(?:disponibiliza|oferece|tem|possui|existem)\s+(?:quantas?\s+|quantos?\s+|quais\s+)?(?:gradua[cç][oõ]es|cursos))\b/i.test(
+      fullSearchText
+    );
+
+  if (!hasPpcSpecificAttribute && !isCampusCourseOfferQuery) {
+    return documents.slice(0, limit);
+  }
+
+  const maxGeneralRegulationChunks = 1;
+  const isMultiCourseOverview = !targetCourse && !targetTechCourse;
+
+  const selected: RetrievedChunk[] = [];
+  const deferred: RetrievedChunk[] = [];
+  let generalRegCount = 0;
+  const courseGroupCounts = new Map<string, number>();
+
+  for (const doc of documents) {
+    if (selected.length >= limit) break;
+
+    const isGeneralReg = /novoregulamento|regulamento\s*de\s*ensino/i.test(doc.source);
+    if (isGeneralReg) {
+      if (generalRegCount >= maxGeneralRegulationChunks) {
+        deferred.push(doc);
+        continue;
+      }
+      generalRegCount++;
+      selected.push(doc);
+      continue;
+    }
+
+    if (isMultiCourseOverview) {
+      const techCourse = TECHNICAL_COURSE_PROFILES.find((tp) => tp.sourceDocRegex.test(doc.source));
+      const gradCourse = COURSE_PROFILES.find((cp) => cp.sourceDocRegex.test(doc.source));
+      const groupKey = techCourse?.id || gradCourse?.id || doc.source;
+      const maxPerGroup = isPureTechnicalQuery ? 1 : 2;
+      const currentCount = courseGroupCounts.get(groupKey) || 0;
+      if (currentCount >= maxPerGroup) {
+        deferred.push(doc);
+        continue;
+      }
+      courseGroupCounts.set(groupKey, currentCount + 1);
+    }
+
+    selected.push(doc);
+  }
+
+  for (const doc of deferred) {
+    if (selected.length >= limit) break;
+    selected.push(doc);
+  }
+
+  return selected;
 }
 
 /**
@@ -845,7 +1149,7 @@ async function searchDocuments(
     }
   }
 
-  return documents.slice(0, limit);
+  return diversifyTopDocuments(documents, limit, queryText, intent);
 }
 
 /**
@@ -971,7 +1275,7 @@ async function searchDocumentsBeta(
     }
   }
 
-  return documents.slice(0, limit);
+  return diversifyTopDocuments(documents, limit, fullSearchText, intent);
 }
 
 // ---------------------------------------------------------------------------

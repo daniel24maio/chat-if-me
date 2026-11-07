@@ -64,13 +64,13 @@ REGRAS OBRIGATÓRIAS:
 2. Ao gerar o parâmetro 'query' na ferramenta de busca:
    - Extraia APENAS palavras-chave principais e nomes próprios (proibido usar frases completas, pronomes ou conectivos).
    - SEMPRE EXPANDA SIGLAS acadêmicas (ex: TCC -> Trabalho de Conclusão de Curso, PPC -> Projeto Pedagógico do Curso, AC -> Atividades Complementares, IRA -> Índice de Rendimento Acadêmico).
-   - Se a pergunta for sobre cursos técnicos (integrado, subsequente, concomitante, EJA), mantenha 'curso técnico regime seriado' na query e NUNCA troque por cursos de graduação (Bacharelado ou Engenharia).
+   - Se a pergunta for sobre cursos técnicos (integrado, subsequente, concomitante, EJA), mantenha 'curso técnico' na query (junto ao nome do curso técnico específico, se citado: Administração, Informática ou Metalurgia) e NUNCA troque por cursos de graduação (Bacharelado ou Engenharia).
 3. Ao gerar o parâmetro 'intent', classifique a intenção estritamente em uma destas 10 categorias:
    - INGRESSO_MATRICULA: Vestibular, SISU, transferências, trancamento, renovação de matrícula.
-   - ESTRUTURA_CURSOS: Matriz curricular, listagem de disciplinas de um período/semestre específico (ex: "quais são as matérias do 1º período?", "disciplinas do 3º semestre"), grade do curso, PPC, duração de cursos, regras gerais dos cursos do campus.
+   - ESTRUTURA_CURSOS: Matriz curricular, listagem de disciplinas de um período/semestre específico (ex: "quais são as matérias do 1º período?", "disciplinas do 3º semestre"), grade do curso, PPC, carga horária total/duração de cursos, catálogo/quantidade de cursos ofertados no campus, regras gerais dos cursos do campus.
    - DISCIPLINA_EMENTA: Conteúdo programático (ementa) de UMA disciplina ESPECÍFICA (ex: "qual a ementa de Banco de Dados I?"), pré-requisitos de uma disciplina específica, bibliografia, objetivos de aprendizagem de uma disciplina pelo código (OBBGSIN.xxx).
    - AVALIACAO_FREQUENCIA: Pontuação, provas, aprovação, limite de faltas (25%), abono/atestados.
-   - TCC: Regras, documentação, orientadores e bancas de Trabalho de Conclusão de Curso.
+   - ESTAGIO_TCC: Regras de estágio obrigatório/não obrigatório, documentação, orientadores e bancas de Trabalho de Conclusão de Curso.
    - ATIVIDADES_EXTRAS: Horas complementares (AAC), pesquisa, extensão, monitoria.
    - ASSISTENCIA_BOLSAS: Assistência estudantil, auxílios (moradia, transporte), bolsas de estudo.
    - INFRA_CAMPUS: Biblioteca, laboratórios, restaurante, horários de funcionamento, setores administrativos.
@@ -431,6 +431,9 @@ export async function processAgentQuestion(
 
     for (const toolCall of assistantMessage.tool_calls) {
       const { name, arguments: args } = toolCall.function;
+      if (args && (args as Record<string, unknown>).intent === "TCC") {
+        (args as Record<string, unknown>).intent = "ESTAGIO_TCC";
+      }
       executedToolCalls.push({ name, arguments: args as Record<string, unknown> });
       if (args && typeof (args as Record<string, unknown>).intent === "string") {
         detectedIntent = (args as Record<string, unknown>).intent as string;
@@ -572,7 +575,7 @@ export async function processAgentQuestion(
     ...messages,
     {
       role: "system",
-      content: "DIRETIVA FINAL OBRIGATÓRIA: Sua resposta deve ser baseada EXCLUSIVAMENTE nos trechos de documentos retornados pela ferramenta acima. NÃO se apresente, NÃO liste suas capacidades. Responda diretamente a pergunta do usuário usando os dados dos documentos. Responda em Português do Brasil (pt-BR). Ignore trechos de outras disciplinas não relacionadas à pergunta. Quando a pergunta for sobre Cursos Técnicos, utilize prioritariamente as regras do Regulamento de Ensino para Cursos Técnicos e Regime Seriado (Cursos Técnicos Integrados têm regime seriado anual de 3 a 4 anos, 3 etapas de 30+35+35 pontos, frequência global de 75% na série, 2 recuperações parciais e 1 final, e progressão parcial em até 2 disciplinas; Cursos Técnicos Subsequentes/Concomitantes têm regime por componente curricular semestral de 2 a 5/6 semestres) e NÃO misture com regras exclusivas de PPCs de Graduação (Bacharelado/Licenciatura). NUNCA utilize conhecimento geral externo se o assunto não constar nos documentos retornados e nunca gere exemplos de prompts ou código-fonte.",
+      content: "DIRETIVA FINAL OBRIGATÓRIA: Sua resposta deve ser baseada EXCLUSIVAMENTE nos trechos de documentos retornados pela ferramenta acima. NÃO se apresente, NÃO liste suas capacidades. Responda diretamente a pergunta do usuário usando os dados dos documentos. Responda em Português do Brasil (pt-BR). Ignore trechos de outras disciplinas não relacionadas à pergunta. Quando a pergunta for sobre Cursos Técnicos (carga horária, estágio, TCC, regime), apresente tanto as regras específicas dos PPCs dos cursos técnicos presentes nos trechos (Técnico Integrado em Administração: 3.442h, Técnico Integrado em Informática: 3.671h, Técnico Integrado em Metalurgia: 3.908h; nos três cursos técnicos integrados o estágio curricular é não-obrigatório/voluntário e não há exigência de TCC) quanto as regras gerais do Regulamento de Ensino para Cursos Técnicos e Regime Seriado (regime seriado anual de 3 a 4 anos, 3 etapas de 30+35+35 pontos, frequência global de 75% na série, 2 recuperações parciais e 1 final, progressão parcial em até 2 disciplinas; Cursos Técnicos Subsequentes/Concomitantes em regime semestral de 2 a 5/6 semestres), evitando responder apenas que 'depende do PPC' quando o PPC estiver nos trechos. Para perguntas sobre quantas/quais graduações ou cursos o Campus Ouro Branco disponibiliza, informe com base nos PPCs da base os 4 cursos de graduação presenciais ativos (**Bacharelado em Administração**, **Bacharelado em Engenharia Metalúrgica**, **Bacharelado em Sistemas de Informação** e **Licenciatura em Pedagogia**, além da **Licenciatura em Computação** constante na base histórica/em extinção) e os 3 cursos técnicos integrados (**Administração**, **Informática** e **Metalurgia**). NUNCA utilize conhecimento geral externo se o assunto não constar nos documentos retornados e nunca gere exemplos de prompts ou código-fonte.",
     }
   ];
 
@@ -737,7 +740,7 @@ export async function processAgentQuestion(
 
   // ── Atualizar memória da sessão ──
   if (session) {
-    updateSession(session.sessionId, question, "", fullText);
+    updateSession(session.sessionId, question, detectedIntent || "", fullText);
   }
 
   logInteraction({

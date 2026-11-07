@@ -312,6 +312,27 @@ export function resolveReferences(
     resolvedQuestion = `${resolvedQuestion} (contexto: ${entities.lastTopic})`;
   }
 
+  // Padrão 4: Perguntas curtas de continuação trocando ou especificando o curso
+  // Ex: "pode verificar no curso tecnico de adminstração?", "e no técnico em informática?", "no curso de pedagogia?"
+  if (entities.lastTopic && resolvedQuestion === question) {
+    const hasExplicitNewTopic =
+      /\b(?:ementa|carga\s+hor[aá]ri[ao]|quantas?\s+horas|matr[íi]cula|trancamento|frequ[eê]ncia|faltas?|abono|est[aá]gios?|estagiar|tcc|trabalho\s+de\s+conclus[aã]o|horas?\s+complementares?|atividades?\s+complementares?|bolsas?|aux[ií]lios?|biblioteca|restaurante|refeit[oó]rio|transfer[eê]ncia|dispensa|aproveitamento|recupera[cç][aã]o|exame\s+final|segunda\s+chamada|progress[aã]o\s+parcial|depend[eê]ncia|diploma|quantas?\s+gradua[cç][oõ]es)\b/i.test(
+        resolvedQuestion
+      );
+    const isCourseFollowUp =
+      /\b(?:pode\s+(?:verificar|olhar|checar|ver|consultar|confirmar)|verifique|confira|como\s+(?:[eé]|funciona)\s+(?:no|na|em|para)|e\s+(?:no|na|em|para\s+o|para\s+a)\s+(?:curso|t[eé]cnico|gradua[cç][aã]o|bacharelado|licenciatura)|^(?:no|na|em|para\s+o)\s+(?:curso|t[eé]cnico))\b/i.test(
+        resolvedQuestion
+      ) ||
+      (/^\s*(?:e\s+)?(?:no|na|em|do|da|para)\s+/i.test(resolvedQuestion) &&
+        /\b(?:admini?stra[cç][aã]o|inform[aá]tica|metal[uú]rgi[ca]|sistemas?\s+de\s+informa[cç][aã]o|bsi|pedagogia|computa[cç][aã]o|t[eé]cnico)\b/i.test(
+          resolvedQuestion
+        ));
+
+    if (!hasExplicitNewTopic && isCourseFollowUp) {
+      resolvedQuestion = `${resolvedQuestion} (contexto anterior: ${entities.lastTopic})`;
+    }
+  }
+
   // Loga se houve resolução
   if (resolvedQuestion !== question) {
     console.log(
@@ -396,11 +417,15 @@ export function clearAllSessions(): void {
  */
 function extractEntities(text: string, entities: EntityMemory): void {
   const textLower = text.toLowerCase();
+  let matchedSubjectInTurn: string | null = null;
+  let matchedPeriodInTurn: number | null = null;
+  let matchedTopicInTurn: string | null = null;
 
   // ── Períodos ──
   const numericPeriod = text.match(/(\d+)[ºª°]?\s*per[ií]odo/i);
   if (numericPeriod) {
     const num = Number(numericPeriod[1]);
+    matchedPeriodInTurn = num;
     if (!entities.periods.includes(num)) {
       entities.periods.push(num);
     }
@@ -412,8 +437,11 @@ function extractEntities(text: string, entities: EntityMemory): void {
     sexto: 6, sétimo: 7, oitavo: 8, nono: 9, décimo: 10,
   };
   for (const [nome, num] of Object.entries(periodsInWords)) {
-    if (textLower.includes(`${nome} período`) && !entities.periods.includes(num)) {
-      entities.periods.push(num);
+    if (textLower.includes(`${nome} período`)) {
+      matchedPeriodInTurn = num;
+      if (!entities.periods.includes(num)) {
+        entities.periods.push(num);
+      }
     }
   }
 
@@ -444,45 +472,50 @@ function extractEntities(text: string, entities: EntityMemory): void {
 
   for (const subject of subjects) {
     if (textLower.includes(subject.toLowerCase())) {
+      matchedSubjectInTurn = subject;
       if (!entities.subjects.includes(subject)) {
         entities.subjects.push(subject);
       }
     }
   }
 
-  // ── Temas acadêmicos ──
-  const topics: Record<string, string> = {
-    "pré-requisito": "pré-requisitos",
-    "prerequisito": "pré-requisitos",
-    "carga horária": "carga horária",
-    "ementa": "ementa",
-    "matrícula": "matrícula",
-    "trancamento": "trancamento",
-    "reprovação": "reprovação",
-    "reprovar": "reprovação",
-    "aprovação": "aprovação",
-    "aprovar": "aprovação",
-    "frequência": "frequência",
-    "falta": "frequência",
-    "estágio": "estágio",
-    "atividades complementares": "atividades complementares",
-    "horas complementares": "atividades complementares",
-    "bolsa": "bolsas",
-    "auxílio": "assistência estudantil",
-    "biblioteca": "biblioteca",
-    "laboratório": "laboratório",
-    "disciplina": "disciplinas",
-    "grade curricular": "grade curricular",
-    "matriz curricular": "grade curricular",
-  };
+  // ── Temas acadêmicos (com suporte a plural e ausência de acento) ──
+  const topicPatterns: Array<[RegExp, string]> = [
+    [/\bpr[eé]-?requisitos?\b/i, "pré-requisitos"],
+    [/\bcarga\s+hor[aá]ri[ao]\b/i, "carga horária"],
+    [/\bementas?\b/i, "ementa"],
+    [/\bmatr[ií]culas?\b/i, "matrícula"],
+    [/\btrancamentos?\b/i, "trancamento"],
+    [/\breprova(?:[cç][aã]o|r)\b/i, "reprovação"],
+    [/\baprova(?:[cç][aã]o|r)\b/i, "aprovação"],
+    [/\b(?:frequ[eê]ncia|faltas?)\b/i, "frequência"],
+    [/\best[aá]gios?\b/i, "estágio obrigatório PPC"],
+    [/\b(?:tcc|trabalho\s+de\s+conclus[aã]o)\b/i, "Trabalho de Conclusão de Curso (TCC)"],
+    [/\b(?:atividades|horas)\s+complementares\b/i, "atividades complementares"],
+    [/\bbolsas?\b/i, "bolsas"],
+    [/\baux[ií]lios?\b/i, "assistência estudantil"],
+    [/\bbibliotecas?\b/i, "biblioteca"],
+    [/\blaborat[oó]rios?\b/i, "laboratório"],
+    [/\b(?:grade|matriz)\s+curricular\b/i, "grade curricular"],
+    [/\bdisciplinas?\b/i, "disciplinas"],
+  ];
 
-  for (const [termo, tema] of Object.entries(topics)) {
-    if (textLower.includes(termo) && !entities.topics.includes(tema)) {
-      entities.topics.push(tema);
+  for (const [rx, tema] of topicPatterns) {
+    if (rx.test(textLower)) {
+      matchedTopicInTurn = tema;
+      if (!entities.topics.includes(tema)) {
+        entities.topics.push(tema);
+      }
     }
   }
 
-  if (entities.subjects.length > 0) {
+  if (matchedSubjectInTurn) {
+    entities.lastTopic = matchedSubjectInTurn;
+  } else if (matchedTopicInTurn) {
+    entities.lastTopic = matchedTopicInTurn;
+  } else if (matchedPeriodInTurn !== null) {
+    entities.lastTopic = `${matchedPeriodInTurn}º período`;
+  } else if (entities.subjects.length > 0) {
     entities.lastTopic = entities.subjects[entities.subjects.length - 1];
   } else if (entities.periods.length > 0) {
     entities.lastTopic = `${entities.periods[entities.periods.length - 1]}º período`;
