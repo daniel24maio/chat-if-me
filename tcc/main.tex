@@ -202,6 +202,8 @@ O sistema disponibiliza dois fluxos paralelos para o atendimento às dúvidas do
     \item \textbf{RAG Agêntico (MCP):} O servidor Express estabelece comunicação bidirecional via \textit{stdio} com um servidor MCP autônomo, que expõe a ferramenta \textit{search\_ifmg\_knowledge}. O LLM opera como agente, decidindo de forma autônoma se deve acionar a ferramenta de busca ou responder diretamente. Ao ser invocada, a busca no servidor MCP aplica RRF com priorização léxica ($\alpha = 0,4$) e nota de corte ($\text{score} \ge 0,002$). As evidências retornadas alimentam a síntese final do agente, transmitida via SSE com a identificação explícita dos documentos consultados.
 \end{enumerate}
 
+Em ambos os fluxos, a interface web solicita na etapa inicial de acesso a identificação do perfil institucional do usuário, contemplando o vínculo (estudante de graduação, estudante de curso técnico, docente ou técnico-administrativo), o curso de origem e a fase acadêmica. Esses atributos são acoplados ao estado da sessão para desambiguar consultas curriculares curtas ou implícitas (como dúvidas sobre obrigatoriedade de estágio, matriz curricular ou carga horária que não mencionam o nome do curso) e para estratificar o registro de métricas no banco de dados.
+
 A coexistência dessas duas abordagens visa investigar o compromisso de engenharia (\textit{trade-off}) entre determinismo e autonomia sob modelos locais compactos. A Tabela \ref{tab:tradeoff_rag_mcp} sintetiza as diferenças funcionais e os cenários de indicação de cada \textit{pipeline}. Enquanto o RAG Clássico prioriza menor latência e previsibilidade operacional ao executar a busca de forma fixa e direta, sendo indicado para consultas rotineiras e ambientes de hardware restrito, o RAG Agêntico mediado por MCP confere autonomia decisória ao modelo e isolamento por contratos formais. Essa flexibilidade viabiliza maior governança dos dados e rastreabilidade explícita das fontes consultadas, embora imponha maior tempo de resposta decorrente dos ciclos de orquestração e maior suscetibilidade a omissões na invocação de ferramentas sob modelos de quatro bilhões de parâmetros.
 
 \begin{table}[htbp]
@@ -247,6 +249,44 @@ Para viabilizar a recuperação precisa, os documentos institucionais (PPC, reso
 Durante o uso simultâneo do sistema por múltiplos usuários, o processamento paralelo de perguntas pode sobrecarregar a memória de vídeo (\textit{Video RAM} -- VRAM) da GPU local, resultando em falhas críticas de saturação de memória (\textit{Out-of-Memory} -- OOM). Para evitar esse risco de forma à não aumentar complexidade de adicionar gerenciadores externos de filas ou corretores de mensagens, desenvolveu-se um semáforo assíncrono diretamente na memória da aplicação Express. O mecanismo atua como um controlador de acesso baseado no ciclo de aquisição e liberação de permissões (\textit{acquire/release}): define-se um teto de duas inferências ativas simultâneas (\textit{OLLAMA\_MAX\_CONCURRENT = 2}), limite compatível com a capacidade da placa de vídeo instalada. As requisições que excedem esse limite são enfileiradas de forma assíncrona e aguardam a conclusão das tarefas anteriores. Caso o tempo de espera ultrapasse um limite pré-estabelecido (\textit{timeout}), o sistema notifica o usuário em vez de reter a conexão, preservando a disponibilidade e a estabilidade do servidor sob picos de demanda.
 
 
+\subsection{Delineamento Experimental e Plano Amostral}
+
+Para avaliar o comportamento das arquiteturas RAG Clássica e RAG Agêntica (MCP) em condições reais de consulta acadêmica, definiu-se um protocolo experimental estruturado em duas frentes complementares de coleta: monitoramento automatizado de telemetria e avaliação de percepção por questionário pós-uso. A base documental indexada para os experimentos contemplou os PPCs, ementários e regulamentos de estágio e TCC dos quatro cursos superiores do campus, sendo eles o Bacharelado em Sistemas de Informação (BSI), o Bacharelado em Administração, o Bacharelado em Engenharia Metalúrgica e a Licenciatura em Pedagogia, além dos PPCs dos cursos técnicos (Administração, Informática e Metalurgia) e do Regulamento de Ensino do IFMG.
+
+O planejamento da avaliação com usuários adotou amostragem não probabilística por cotas, dimensionada para abranger os diferentes perfis da comunidade acadêmica que consultam ou aplicam as normas institucionais. Estabeleceu-se uma meta amostral de 38 participantes para a coleta de feedbacks estruturados, distribuída conforme apresentado na Tabela \ref{tab:plano_amostral}. O delineamento previu a participação de 20 estudantes de graduação (cinco de cada curso superior, distribuídos entre as fases inicial, intermediária e concluinte), 10 estudantes vinculados aos cursos técnicos de nível médio, cinco docentes e três Técnicos Administrativos em Educação (TAEs).
+
+\begin{table}[htbp]
+\centering
+\caption{Planejamento amostral estratificado por perfil e vínculo institucional para a avaliação experimental.}
+\label{tab:plano_amostral}
+\vspace{0.3cm}
+\footnotesize
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.25}
+\begin{tabularx}{\textwidth}{>{\RaggedRight\hsize=0.95\hsize}X >{\RaggedRight\hsize=1.35\hsize}X c}
+\toprule
+\textbf{Segmento Institucional} & \textbf{Estratificação e Cursos Abrangidos} & \textbf{Meta Amostral} \\
+\midrule
+Discentes de Graduação & BSI (5), Engenharia Metalúrgica (5), Administração (5) e Licenciatura em Pedagogia (5) & 20 \\
+Discentes de Cursos Técnicos & Cursos Técnicos Integrados e Subsequentes (Administração, Informática e Metalurgia) & 10 \\
+Docentes & Professores atuantes nos cursos técnicos e superiores do campus & 5 \\
+Servidores Técnico-Administrativos & TAEs vinculados a setores administrativos e de suporte ao ensino & 3 \\
+\midrule
+\textbf{Total Planejado} & \textbf{Comunidade Acadêmica do IFMG Campus Ouro Branco} & \textbf{38} \\
+\bottomrule
+\end{tabularx}
+
+\vspace{0.15cm}
+{\small Fonte: Elaborado pelo Próprio Autor.}
+\end{table}
+
+\FloatBarrier
+
+No protocolo de teste, cada participante acessou a aplicação web, informou seu perfil institucional na tela inicial e realizou consultas livres sobre normas acadêmicas, matrizes curriculares, ementas, estágio e TCC, alternando entre o modo RAG Clássico e o modo Agente MCP. Durante as sessões, o módulo de observabilidade registrou automaticamente, em banco de dados relacional, a intenção classificada, o modo selecionado, a latência total, o tempo até o primeiro \textit{token} (\textit{Time to First Token} -- TTFT), os tempos de cada etapa interna do pipeline, o consumo de \textit{tokens}, os documentos oficiais recuperados e os votos binários (positivo ou negativo) atribuídos em cada mensagem. Interações provenientes de funcionalidades em fase preliminar de testes (\textit{agent\_beta}) foram isoladas e excluídas da análise comparativa.
+
+Após a interação prática com o assistente, os participantes responderam a um instrumento de avaliação estruturado. O questionário mensurou seis dimensões: (i) percepção de velocidade de resposta em cada modo (escala ordinal de cinco níveis, de \textit{muito lento} a \textit{muito rápido}); (ii) qualidade, clareza e objetividade das respostas nos modos RAG Clássico e Agente MCP (escala Likert de 1 a 5, de \textit{discordo totalmente} a \textit{concordo totalmente}); (iii) confiabilidade factual e ausência de alucinações frente aos regulamentos vigentes; (iv) preferência comparativa de assertividade entre as duas arquiteturas; (v) usabilidade da interface web; e (vi) estimativa de impacto na redução de buscas manuais em arquivos PDF e de atendimentos presenciais nas coordenações e secretarias.
+
+
 % === NOTAS DE AUXÍLIO PARA DISCUSSÃO COM O ORIENTADOR ===
 % CONCEITO 11: Avaliação de Campo com Grupo Piloto de Usuários Discentes
 % - A aplicação web foi disponibilizada online (https://chat.danielgsilva.com.br/) para um grupo piloto de alunos do IFMG Campus Ouro Branco.
@@ -257,33 +297,41 @@ Durante o uso simultâneo do sistema por múltiplos usuários, o processamento p
 
 
 \section{Experimentos e Resultados}
-% Apenas deixei textos de exemplos simulando o que é necessário ainda escrever ou ajustar para ter noção de quantas página estão sendo escritas até o momento
-Para validar a eficácia e a viabilidade técnica das soluções desenvolvidas, realizou-se uma bateria de testes de desempenho computacional em ambiente homogêneo de \textit{homelab}, seguida de uma avaliação empírica de campo com um grupo piloto de alunos discentes do IFMG Campus Ouro Branco.
+
+Para validar a eficácia e a viabilidade técnica das soluções desenvolvidas, realizou-se a coleta de telemetria computacional em ambiente de auto-hospedagem local (\textit{homelab}), combinada à avaliação de campo junto à comunidade acadêmica do IFMG Campus Ouro Branco.
 
 \subsection{Ambiente Experimental e Configuração de Infraestrutura}
 
-Os experimentos foram conduzidos em infraestrutura de auto-hospedagem local (\textit{self-hosted homelab}). O ambiente computacional consiste em um servidor com sistema operacional Ubuntu 24.04, processador AMD Ryzen 5 7500F (6 núcleos e 12 \textit{threads}), 32~GB de memória RAM, GPU NVIDIA GeForce RTX 5060~Ti com 16~GB de VRAM e suporte a aceleração CUDA, e armazenamento em unidade de estado sólido (\textit{Solid State Drive} -- SSD) de 512~GB com interface PCIe Gen3. Os modelos de linguagem e vetorização operam via servidor \textit{Ollama}: utiliza-se o modelo \textit{qwen3.5:4b} (4 bilhões de parâmetros), com janela de contexto de 2048 \textit{tokens}, para as etapas de reescrita de consulta, raciocínio agêntico e síntese de respostas em português, e o modelo \textit{bge-m3} para a conversão vetorial de fragmentos em $1024$ dimensões. O banco de dados vetorial baseia-se em PostgreSQL 16 com a extensão \textit{pgvector} configurada com índices HNSW para busca aproximada de vizinhos mais próximos.
+Os experimentos foram conduzidos em infraestrutura local auto-hospedada (\textit{self-hosted homelab}). O ambiente computacional conta com um servidor equipado com processador multicore, memória RAM dedicada e GPU NVIDIA com suporte a aceleração CUDA. Os modelos de linguagem e vetorização operam via servidor \textit{Ollama}: utiliza-se o modelo \textit{qwen3.5:4b} (quatro bilhões de parâmetros) para as etapas de reescrita de consulta, raciocínio agêntico e síntese de respostas em português, e o modelo \textit{bge-m3} para a conversão vetorial de fragmentos em $1024$ dimensões. O banco de dados vetorial baseia-se em PostgreSQL 16 com a extensão \textit{pgvector} configurada com índices HNSW para busca aproximada de vizinhos mais próximos e busca textual nativa (\textit{Full-Text Search} -- FTS).
 
-\subsection{Métricas de Latência e Desempenho do Pipeline}
+\subsection{Métricas de Latência, Vazão e Desempenho do Pipeline}
 
-A latência total de atendimento ao usuário foi fracionada e monitorada em quatro etapas principais do pipeline de dados. A Tabela \ref{tab:latencias} sintetiza os tempos médios de resposta registrados durante o processamento de consultas institucionais.
+Durante o período experimental, após a exclusão dos registros de teste do modo \textit{agent\_beta}, foram contabilizadas $291$ interações na base de telemetria, das quais $267$ ($91,8\%$) corresponderam a consultas substantivas e $24$ ($8,2\%$) a saudações iniciais (\textit{GREETING}). A Tabela \ref{tab:latencias} apresenta os tempos medianos (percentil 50 -- P50), médios e de percentil 90 (P90) de cada etapa interna, bem como as métricas consolidadas de latência total, TTFT e consumo de \textit{tokens} para as $267$ consultas substantivas ($156$ no RAG Clássico e $111$ no Agente MCP).
 
 \begin{table}[htbp]
 \centering
-\caption{Métricas de latência média por etapa no pipeline de atendimento local.}
+\caption{Métricas de latência por etapa, TTFT e consumo de \textit{tokens} nas consultas substantivas ($n = 267$).}
 \label{tab:latencias}
 \vspace{0.3cm}
-\small
-\setlength{\tabcolsep}{5pt}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
 \renewcommand{\arraystretch}{1.2}
-\begin{tabularx}{\textwidth}{>{\RaggedRight}X >{\RaggedRight}X c}
+\begin{tabularx}{\textwidth}{l >{\RaggedRight}X c c c}
 \toprule
-\textbf{Etapa do Pipeline} & \textbf{Componente / Modelo} & \textbf{Latência Média (ms)} \\
+\textbf{Modo} & \textbf{Etapa / Métrica do Pipeline} & \textbf{Mediana (P50)} & \textbf{Média} & \textbf{P90} \\
 \midrule
-Reescrita de Consulta (\textit{Query Rewriting}) & Qwen 3.5 4B (\textit{Ollama}) & 800 -- 1500 \\
-Vetorização (\textit{Embedding}) & BGE-M3 (1024d) & 100 -- 300 \\
-Busca Semântica Híbrida & PostgreSQL \textit{pgvector} HNSW + FTS & 50 -- 120 \\
-Síntese e Geração de Resposta & Qwen 3.5 4B (\textit{Streaming} SSE) & 3000 -- 6000 \\
+RAG Clássico & 1. Reescrita de Consulta (\textit{qwen3.5:4b}) & 1.121,5 ms & 5.111,0 ms & 11.123,0 ms \\
+($n = 156$)  & 2. Vetorização (\textit{bge-m3}, 1024d) & 47,0 ms & 110,1 ms & 130,0 ms \\
+             & 3. Busca Híbrida RRF (\textit{pgvector} HNSW + FTS) & 19,0 ms & 22,0 ms & 43,0 ms \\
+             & 4. Síntese e Geração Final (\textit{Streaming} SSE) & 4.257,5 ms & 14.667,1 ms & 43.769,0 ms \\
+             & \textbf{Latência Total / TTFT (RAG Clássico)} & \textbf{6.402,0 / 2.437,0 ms} & \textbf{19.911,0 / 7.427,4 ms} & \textbf{65.180,0 / 17.728,0 ms} \\
+             & \textit{Tokens} de Prompt / \textit{Tokens} Gerados & 4.793,5 / 64,0 & 4.769,8 / 155,1 & 5.675,0 / 422,0 \\
+\midrule
+Agente MCP   & 1. Decisão e Roteamento de Ferramenta (\textit{qwen3.5:4b}) & 5.910,0 ms & 7.423,5 ms & 11.523,0 ms \\
+($n = 111$)  & 2. Execução da Ferramenta MCP via \textit{stdio} & 56,0 ms & 169,1 ms & 85,0 ms \\
+             & 3. Síntese e Geração Final (\textit{Streaming} SSE) & 7.528,0 ms & 9.377,0 ms & 13.421,0 ms \\
+             & \textbf{Latência Total / TTFT (Agente MCP)} & \textbf{13.825,0 / 7.665,0 ms} & \textbf{23.256,9 / 10.635,2 ms} & \textbf{73.311,0 / 15.720,0 ms} \\
+             & \textit{Tokens} de Prompt / \textit{Tokens} Gerados & 7.733,0 / 466,0 & 7.235,8 / 467,0 & 9.260,0 / 613,0 \\
 \bottomrule
 \end{tabularx}
 
@@ -291,28 +339,63 @@ Síntese e Geração de Resposta & Qwen 3.5 4B (\textit{Streaming} SSE) & 3000 -
 {\small Fonte: Elaborado pelo Próprio Autor.}
 \end{table}
 
+\FloatBarrier
 
-Os resultados demonstram que as etapas de recuperação de dados no banco vetorial (vetorização com \textit{bge-m3} e consulta híbrida RRF no \textit{pgvector}) apresentam baixa latência, consumindo juntas menos de $420$~ms. O principal gargalo temporal concentra-se na fase de geração autoregressiva do modelo de linguagem (3 a 6~segundos), tempo que é mitigado no nível de usabilidade pela transmissão incremental de tokens via SSE. O tempo total de primeira resposta (\textit{Time To First Token} -- TTFT) estabilizou-se entre 1,5~s e 2,2~s no pipeline RAG Clássico.
+Os dados da Tabela \ref{tab:latencias} demonstram que as etapas de indexação e recuperação no banco de dados apresentam custo temporal reduzido: no RAG Clássico, a vetorização com \textit{bge-m3} e a busca híbrida RRF somam mediana de $66,0$~ms; no Agente MCP, a execução completa da ferramenta \textit{search\_ifmg\_knowledge} via protocolo \textit{stdio} apresenta mediana de $56,0$~ms. O tempo de processamento concentra-se nas chamadas ao LLM local, que operou com vazão (\textit{throughput}) mediana de $45,3$~\textit{tokens}/s (média de $45,6$~\textit{tokens}/s em $445$ chamadas registradas). Observa-se que o RAG Clássico obteve menor latência mediana total ($6,4$~s contra $13,8$~s no Agente MCP) e menor TTFT mediano ($2,4$~s contra $7,7$~s), uma vez que o agente executa uma etapa prévia de raciocínio e decisão de ferramenta com mediana de $5,9$~s antes de iniciar a emissão da resposta final. Em contrapartida, a mediana de \textit{tokens} gerados no Agente MCP ($466$~\textit{tokens}) foi $7,3$ vezes superior à do RAG Clássico ($64$~\textit{tokens}), refletindo respostas mais detalhadas e menor índice de abstenção.
 
-\subsection{Avaliação de Campo com Grupo Piloto Discente}
+\subsection{Avaliação de Campo: Telemetria de Uso e Questionário com Usuários}
 
-A aplicação foi disponibilizada publicamente via interface web (\texttt{https://chat.danielgsilva.com.br/}) para um grupo piloto de estudantes do IFMG Campus Ouro Branco. Durante a coleta experimental, foram registradas 41 interações de consulta na base persistente da aplicação (desconsiderando os registros do modo experimental Beta). Desse total, os discentes optaram espontaneamente pelo RAG Clássico em 30 consultas (73,2\% do volume total) e pelo RAG Agêntico via MCP em 11 consultas (26,8\%).
+A aplicação foi disponibilizada via interface web (\texttt{https://chat.danielgsilva.com.br/}) para a comunidade do IFMG Campus Ouro Branco. Nas $291$ interações válidas da telemetria, $174$ ($59,8\%$) ocorreram no modo RAG Clássico e $117$ ($40,2\%$) no modo Agente MCP. Quanto ao perfil dos usuários nas interações, registraram-se $146$ consultas de estudantes de graduação ($50,2\%$, distribuídas entre $81$ de BSI, $43$ de Engenharia Metalúrgica, $13$ de Administração e $9$ de Pedagogia), $58$ de estudantes dos cursos técnicos ($19,9\%$), $19$ de TAEs ($6,5\%$), $18$ de docentes ($6,2\%$) e $50$ interações iniciais anteriores à coleta obrigatória de perfil ($17,2\%$). Entre as $204$ interações de discentes identificados, observaram-se $74$ consultas na fase intermediária ($36,3\%$), $67$ na fase inicial ($32,8\%$) e $63$ na fase concluinte ($30,9\%$).
 
-A distribuição temática das consultas concentrou-se na elucidação de ementas e conteúdos de disciplinas (8 consultas), organização da matriz curricular e períodos letivos (9 consultas), normas de TCC e estágio (2 consultas) e regras de assiduidade e faltas (2 consultas). A análise de proveniência na base vetorial revelou que o Projeto Pedagógico de Curso de Sistemas de Informação (\textit{PPCBSI\_2022.pdf}) foi o documento com maior taxa de ativação (34 recuperações diretas), seguido pelo ementário de disciplinas (\textit{Ementario\_BSI\_2020.pdf}, com 29 recuperações) e pelo regulamento de TCC.
+As intenções mais frequentes concentraram-se em dúvidas gerais ou abertas (\textit{OUTRAS}, com $79$ registros ou $27,1\%$), informações gerais de cursos (\textit{CURSO}, com $48$ ou $16,5\%$), matrizes curriculares e carga horária (\textit{ESTRUTURA\_CURSOS}, com $43$ ou $14,8\%$), infraestrutura e setores do campus (\textit{INFRA\_CAMPUS}, com $25$ ou $8,6\%$), saudações (\textit{GREETING}, com $24$ ou $8,2\%$) e normas de estágio e TCC (\textit{ESTAGIO\_TCC}, com $18$ ou $6,2\%$). Os documentos oficiais mais recuperados foram o PPC de BSI (\textit{PPCBSI\_2022.pdf}, em $83$ interações), o PPC de Engenharia Metalúrgica ($60$), o PPC de Pedagogia ($57$ em PDF e $24$ em DOCX), o PPC do Técnico em Administração ($40$), o Regulamento de Ensino do IFMG ($37$), o PPC do Técnico em Informática ($29$) e o PPC do Bacharelado em Administração ($27$).
 
-Quanto às avaliações individuais via botões de feedback, as respostas positivas concentraram-se em consultas de ementas e cálculo de carga horária complementar de graduação. Por outro lado, as avaliações negativas decorreram sobretudo de consultas que demandavam dados dinâmicos ou operacionais não contidos em regulamentos estáticos, como horários de aula semestrais, contatos telefônicos de setores administrativos ou cronogramas de obras do campus. Nesses casos, o sistema aplicou adequadamente o ancoramento factual e recusou a geração de dados inexistentes, evidenciando a necessidade de orientar as expectativas do usuário discente quanto aos limites do escopo normativo.
+Na avaliação direta por mensagem via botões de feedback ($n = 39$ interações avaliadas, correspondendo a $13,4\%$ do total), o modo Agente MCP obteve $60,0\%$ de aprovação ($9$ votos positivos e $6$ negativos), superando os $45,8\%$ do modo RAG Clássico ($11$ positivos e $13$ negativos). A inspeção qualitativa dos $19$ votos negativos indicou que $6$ casos ($31,6\%$) decorreram de perguntas fora do escopo acadêmico ou testes de estresse nos quais o assistente recusou corretamente a resposta; $4$ casos ($21,1\%$) envolveram dados operacionais dinâmicos ausentes nos PPCs estáticos (como horários semanais de aulas e portarias vigentes de coordenação); $5$ casos ($26,3\%$) resultaram de abstenções do RAG Clássico em dúvidas normativas legítimas; e $4$ casos ($21,1\%$) relacionaram-se a consultas curriculares ambíguas.
+
+De forma complementar à telemetria, o questionário estruturado pós-uso contabilizou $39$ participantes (superando a meta amostral de $38$), compostos por $23$ estudantes de graduação ($13$ de BSI e $10$ dos demais cursos superiores), $13$ estudantes de cursos técnicos e $3$ servidores (docentes e TAEs). A Tabela \ref{tab:resultados_avaliacao} relaciona os indicadores de cobertura efetiva extraídos da telemetria com as avaliações de velocidade e qualidade reportadas pelos participantes no questionário.
+
+\begin{table}[htbp]
+\centering
+\caption{Comparativo empírico entre RAG Clássico e Agente MCP na telemetria ($n = 267$) e no questionário ($N = 39$).}
+\label{tab:resultados_avaliacao}
+\vspace{0.3cm}
+\footnotesize
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.25}
+\begin{tabularx}{\textwidth}{>{\RaggedRight\hsize=1.35\hsize}X >{\RaggedRight\hsize=0.825\hsize}X >{\RaggedRight\arraybackslash\hsize=0.825\hsize}X}
+\toprule
+\textbf{Indicador Avaliado} & \textbf{RAG Clássico} & \textbf{RAG Agêntico (MCP)} \\
+\midrule
+Taxa de Resposta Efetiva na Telemetria (excl. \textit{GREETING}) & 34,6\% (54 / 156) & 81,1\% (90 / 111) \\
+Taxa de Abstenção Consciente na Telemetria & 65,4\% (102 / 156) & 14,4\% (16 / 111) \\
+Taxa de Fallback Técnico (\textit{Tool Decision}) & 0,0\% (0 / 156) & 4,5\% (5 / 111) \\
+Aprovação nos Botões de Mensagem ($n = 39$ votos) & 45,8\% (11 / 24) & 60,0\% (9 / 15) \\
+\midrule
+Velocidade Percebida $\ge$ Aceitável ($N = 39$) & 94,9\% (37 / 39) & 97,4\% (38 / 39) \\
+Concordância Positiva em Qualidade -- Geral ($N = 39$) & 53,8\% (média 3,62 / 5,00) & 66,7\% (média 3,69 / 5,00) \\
+Concordância Positiva -- Graduação e Servidores ($n = 26$) & 69,2\% (média 3,88 / 5,00) & 76,9\% (média 4,00 / 5,00) \\
+Preferência Direta de Assertividade ($n = 20$ decisivos) & 30,0\% (6 / 20) & 70,0\% (14 / 20) \\
+\bottomrule
+\end{tabularx}
+
+\vspace{0.15cm}
+{\small Fonte: Elaborado pelo Próprio Autor.}
+\end{table}
+
+\FloatBarrier
+
+Quanto às demais dimensões do questionário ($N = 39$), na avaliação de veracidade factual, $71,8\%$ dos participantes ($28/39$) — ou $80,0\%$ ($28/35$) excluindo os quatro respondentes que informaram não conhecer as normas — atestaram comportamento seguro do sistema, dividindo-se igualmente entre respostas totalmente confiáveis ($35,9\%$) e recusa consciente diante de temas ausentes na base ($35,9\%$). Apenas $12,8\%$ ($5/39$) apontaram omissão parcial de detalhes secundários e $5,1\%$ ($2/39$) relataram divergência factual. A interface web foi avaliada como boa ou excelente por $94,9\%$ dos usuários ($37/39$), mesmo percentual ($94,9\%$) que afirmou que o assistente reduz moderada ($46,2\%$), expressiva ($33,3\%$) ou substancialmente ($15,4\%$) a necessidade de leitura manual de PDFs e de atendimentos presenciais. Por fim, no levantamento de demandas futuras, destacaram-se a integração de mural de avisos e eventos ($76,9\%$), editais de bolsas e assistência estudantil ($74,4\%$) e prazos do calendário acadêmico ($71,8\%$).
 
 \subsection{Análise Comparativa: RAG Clássico vs. Agentic RAG MCP sob Modelos Compactos}
 
-Os dados empíricos registrados no endpoint de observabilidade da aplicação evidenciam o compromisso de engenharia (\textit{trade-off}) decorrente da autonomia agêntica sob modelos compactos locais:
+O cruzamento entre os registros de telemetria e a avaliação dos usuários evidencia os compromissos de engenharia (\textit{trade-offs}) entre as duas arquiteturas quando executadas sob modelos locais de quatro bilhões de parâmetros:
 
 \begin{itemize}
-    \item \textbf{Latência e Aderência do Usuário:} O RAG Clássico registrou tempo médio total de processamento de 57,3 segundos, contra 84,6 segundos no RAG Agêntico via MCP. Essa sobretaxa temporal de 47,7\% (+27,3 segundos) no agente decorre dos múltiplos passos inferenciais exigidos para avaliar a pergunta, formatar os argumentos de chamada da ferramenta (\textit{Tool Calling}), executar a comunicação via \textit{stdio} e sintetizar a resposta final com metadados. Essa diferença de agilidade explica a maior adesão espontânea dos estudantes ao RAG Clássico (73,2\% dos acessos).
-    \item \textbf{Rastreabilidade e Governança no MCP:} Apesar da maior latência, o RAG Agêntico destacou-se pela identificação explícita das fontes normativas consultadas (ex: \textit{RegulamentodeTCCBSInov2021.pdf}) e pelo isolamento formal da ferramenta \textit{search\_ifmg\_knowledge}, garantindo maior transparência e auditabilidade das respostas aos discentes.
-    \item \textbf{Sensibilidade a Janelas em Modelos 4B:} Observou-se que modelos locais compactos de quatro bilhões de parâmetros (\textit{qwen3.5:4b}) apresentam maior sensibilidade à saturação da janela de contexto (2048 tokens), ocasionalmente hesitando na invocação da ferramenta de busca em perguntas com formulação ambígua ou falhando na validação sintática do esquema JSON.
+    \item \textbf{Cobertura de Resposta vs. Abstenção:} O achado empírico mais expressivo residiu na capacidade de recuperação útil: enquanto o RAG Clássico respondeu com conteúdo a apenas $34,6\%$ das consultas substantivas e absteve-se em $65,4\%$, o Agente MCP elevou a taxa de resposta efetiva para $81,1\%$ e reduziu as abstenções para $14,4\%$. Essa diferença decorre da capacidade do agente de reformular os termos de busca na ferramenta \textit{search\_ifmg\_knowledge} e da priorização léxica ($\alpha = 0,4$), o que se refletiu diretamente na maior concordância positiva no questionário ($66,7\%$ no MCP contra $53,8\%$ no RAG) e na preferência de $70,0\%$ entre os usuários que elegeram um modo superior.
+    \item \textbf{Latência Técnica vs. Velocidade Percebida:} Embora o Agente MCP tenha apresentado mediana de latência total $2,16$ vezes maior que a do RAG Clássico ($13,8$~s contra $6,4$~s), a percepção subjetiva de velocidade no questionário manteve a mesma média ponderada ($2,79$ em $4,00$) em ambos os modos, com aprovação superior a $94\%$. A transmissão progressiva via SSE e a exibição visual das ferramentas executadas mitigaram o impacto do tempo de decisão agêntico na experiência do usuário.
+    \item \textbf{Limitações de \textit{Tool Calling} em Modelos 4B:} O principal ponto de atenção do modo Agente MCP sob o modelo \textit{qwen3.5:4b} manifestou-se nos $5$ casos ($4,5\%$ das consultas substantivas) em que a etapa de decisão (\textit{tool\_decision}) consumiu o teto de $512$ \textit{tokens} de raciocínio interno sem concluir a emissão do objeto JSON da ferramenta, acionando a mensagem de contingência. No RAG Clássico, por seguir fluxo linear sem chamada autônoma de ferramentas, não ocorreram falhas de orquestração ($0,0\%$).
 \end{itemize}
 
-Os resultados indicam que, sob infraestrutura computacional restrita e modelos locais de 4B parâmetros, o RAG Clássico entrega a melhor relação entre estabilidade e tempo de resposta ao estudante. Por sua vez, o RAG Agêntico via MCP estabelece uma arquitetura robusta de governança de dados, cuja eficácia operacional plena se beneficia do avanço para modelos locais com oito bilhões de parâmetros ou superiores.
+Os resultados demonstram que o RAG Clássico atua como alternativa de baixa latência e execução determinística para consultas diretas, ao passo que o RAG Agêntico via MCP entrega superioridade na resolução efetiva de dúvidas normativas complexas, na completude das respostas e na rastreabilidade explícita das fontes institucionais.
 
 \section{Conclusão}
 
