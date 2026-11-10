@@ -11,6 +11,7 @@ As seguintes regras foram definidas pelo orientador e devem ser rigorosamente co
    - Evitar aberturas genéricas como "No âmbito dos...", "No cenário atual...". Preferir construções diretas (ex: "Em assistentes virtuais voltados a ambientes universitários...").
    - Evitar adjetivos hiperbólicos de valor (ex: "indispensável", "crucial", "fundamental", "drástico"). Apresentar fatos de maneira sóbria e neutra.
    - **Vocabulário Direto e Acessível:** Preferir termos claros do cotidiano técnico-acadêmico em vez de vocabulário excessivamente rebuscado, arcaico ou pedante (ex: preferir "responder a dúvidas" a "sanar dúvidas de discentes", "diferem" a "diferem de forma drástica", "mudança" a "transição de paradigma"). Manter o rigor acadêmico sem artificialidade.
+   - **Sem Travessões intercalados (`—`):** Não utilizar travessões (`—`) para isolar apostos, exemplos ou explicações no meio das frases; utilizar apenas vírgulas ou parênteses.
 
 3. **Citações e Referência a Trabalhos**:
    - **Regra de Estilo de Citação:** Não prefixar a citação com o sobrenome do autor (evitar "Monteiro \cite{monteiro2021helena}", "Barbosa \cite{barbosa2023chatbot}"). Utilizar citações diretas no corpo da frase (ex: "Em \cite{monteiro2021helena}, foi desenvolvido...", "O trabalho \cite{barbosa2023chatbot} propõe...", "Conforme demonstrado em \cite{modran2025leveraging}...").
@@ -24,6 +25,6 @@ As seguintes regras foram definidas pelo orientador e devem ser rigorosamente co
 
 5. **Formatação de Tabelas e Ilustrações**:
    - **Estrutura Topo / Rodapé:** Inserir sempre o `\caption{...}` e `\label{...}` no **topo** (antes da tabela/imagem), seguido de espaçamento de respiro (`\vspace{0.3cm}`). A fonte deve ficar **obrigatoriamente no rodapé** (`\vspace{0.15cm}` seguido de `{\small Fonte: Elaborado pelo Próprio Autor.}`). Nunca colocar a fonte no topo ou entre o caption e a tabela.
-   - **Contextualização Textual:** Toda tabela deve ser introduzida e discutida criticamente no parágrafo adjacente (evitar tabelas soltas com apenas "A Tabela X sintetiza...").
+   - **Contextualização Textual (Citar Antes, Explicar Depois):** Toda tabela deve ser obrigatoriamente citada no texto **antes** de sua apresentação visual, e toda a explicação/discussão detalhada sobre os dados da tabela deve aparecer **somente após** a tabela.
    - **Largura e Margens:** Utilizar `tabularx` com largura `\textwidth` e colunas `>{\RaggedRight}X` em tabelas com texto descritivo para evitar estouro de margem (`Overfull \hbox`).
    - **Controle de Vazamento:** Utilizar `\FloatBarrier` (pacote `placeins`) antes de novas subseções para impedir que elementos flutuantes cortem tópicos ou listas posteriores.

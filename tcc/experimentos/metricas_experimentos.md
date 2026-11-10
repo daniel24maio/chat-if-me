@@ -1,16 +1,16 @@
 # Consolidação de Métricas e Resultados Experimentais do TCC
 
 Este documento consolida todas as métricas quantitativas e qualitativas coletadas durante a avaliação experimental do assistente virtual acadêmico do IFMG Campus Ouro Branco (**Chat IF-ME**), divididas em duas frentes complementares:
-1. **Telemetria Interna da Aplicação (`N = 291` interações):** Registros persistidos no banco de dados (`chat_interactions` e `chat_participants`), **excluindo os registros do modo experimental `agent_beta`** (15 registros removidos do total bruto de 306), cobrindo o período de `28/09/2026` a `06/11/2026`. Arquivo base sanitizado: [`telemetria_interacoes_sem_beta.csv`](file:///c:/projects/chat-if-me/tcc/experimentos/telemetria_interacoes_sem_beta.csv).
-2. **Questionário de Avaliação com Usuários (`N = 39` participantes):** Respostas estruturadas em escala Likert e questões abertas coletadas entre `13/10/2026` e `05/11/2026`. Arquivo base: [`questionario_avaliacao_usuarios.csv`](file:///c:/projects/chat-if-me/tcc/experimentos/questionario_avaliacao_usuarios.csv).
+1. **Telemetria Interna da Aplicação (`N = 291` interações):** Registros persistidos no banco de dados (`chat_interactions` e `chat_participants`), cobrindo o período de `28/09/2026` a `06/11/2026`. Arquivo base: [`telemetria_interacoes_sem_beta.csv`](file:///c:/projects/chat-if-me/tcc/experimentos/telemetria_interacoes_sem_beta.csv).
+2. **Questionário de Avaliação com Usuários (`N = 40` participantes):** Respostas estruturadas em escala Likert e questões abertas coletadas entre `13/10/2026` e `09/11/2026`. Arquivo base: [`questionario_avaliacao_usuarios.csv`](file:///c:/projects/chat-if-me/tcc/experimentos/questionario_avaliacao_usuarios.csv).
 
 ---
 
-## Parte 1 — Telemetria Interna do Sistema (`N = 291`, excluindo `agent_beta`)
+## Parte 1 — Telemetria Interna do Sistema (`N = 291`)
 
 ### 1.1. Visão Geral e Distribuição por Modo de Operação
 
-Das **291 interações** analisadas (após exclusão do modo `agent_beta`), **267 (91,8%)** correspondem a consultas substantivas e **24 (8,2%)** correspondem a saudações iniciais (`GREETING`, respondidas diretamente sem acionamento da geração final do LLM):
+Das **291 interações** analisadas, **267 (91,8%)** correspondem a consultas substantivas e **24 (8,2%)** correspondem a saudações iniciais (`GREETING`, respondidas diretamente sem acionamento da geração final do LLM):
 
 | Modo de Operação | Total de Interações (`N = 291`) | Consultas Substantivas (excl. `GREETING`, `n = 267`) | Saudações (`GREETING`, `n = 24`) |
 | :--- | :---: | :---: | :---: |
@@ -162,7 +162,7 @@ A comparação entre respostas fundamentadas com conteúdo e abstenções consci
 
 ### 1.6. Avaliações Inline nas Mensagens (👍 / 👎 — `n = 39` avaliações em `N = 291`)
 
-Sem o modo `agent_beta`, **39 das 291 interações (13,4%)** foram avaliadas diretamente pelos usuários através dos botões 👍 (`up`) e 👎 (`down`):
+Das **291 interações**, **39 (13,4%)** foram avaliadas diretamente pelos usuários através dos botões 👍 (`up`) e 👎 (`down`):
 
 | Modo de Operação | Votos Positivos 👍 (`up`) | Votos Negativos 👎 (`down`) | Total Avaliado | Taxa de Aprovação Inline | Sem Avaliação |
 | :--- | :---: | :---: | :---: | :---: | :---: |
@@ -195,102 +195,102 @@ Sem o modo `agent_beta`, **39 das 291 interações (13,4%)** foram avaliadas dir
 
 ---
 
-## Parte 2 — Questionário de Avaliação com Usuários (`N = 39` participantes)
+## Parte 2 — Questionário de Avaliação com Usuários (`N = 40` participantes)
 
-### 2.1. Perfil dos Participantes (`N = 39`)
+### 2.1. Perfil dos Participantes (`N = 40`)
 
 | Perfil / Vínculo no IFMG Campus Ouro Branco | Respostas (`n`) | Proporção (`%`) |
 | :--- | :---: | :---: |
-| **Cursos Técnicos** (Integrado ou Subsequente) | 13 | 33,3% |
-| **Bacharelado em Sistemas de Informação (BSI — Total)** | **13** | **33,3%** |
-| $\quad\hookrightarrow$ *Fase concluinte / TCC / Estágio (7º ao 8º período)* | *6* | *15,4%* |
-| $\quad\hookrightarrow$ *Fase intermediária (4º ao 6º período)* | *5* | *12,8%* |
-| $\quad\hookrightarrow$ *Fase inicial (1º ao 3º período)* | *2* | *5,1%* |
-| **Outros Cursos de Graduação** (Administração, Eng. Metalúrgica ou Pedagogia) | 10 | 25,6% |
-| **Docentes ou Servidores Técnico-Administrativos (TAE)** | 3 | 7,7% |
-| **Total** | **39** | **100,0%** |
+| **Cursos Técnicos** (Integrado ou Subsequente) | 13 | 32,5% |
+| **Bacharelado em Sistemas de Informação (BSI — Total)** | **13** | **32,5%** |
+| $\quad\hookrightarrow$ *Fase concluinte / TCC / Estágio (7º ao 8º período)* | *6* | *15,0%* |
+| $\quad\hookrightarrow$ *Fase intermediária (4º ao 6º período)* | *5* | *12,5%* |
+| $\quad\hookrightarrow$ *Fase inicial (1º ao 3º período)* | *2* | *5,0%* |
+| **Outros Cursos de Graduação** (Administração, Eng. Metalúrgica ou Pedagogia) | 10 | 25,0% |
+| **Docentes ou Servidores Técnico-Administrativos (TAE)** | 4 | 10,0% |
+| **Total** | **40** | **100,0%** |
 
 ---
 
 ### 2.2. Percepção de Velocidade e Qualidade: RAG Clássico vs. Agente MCP
 
-#### 2.2.1. Percepção de Velocidade / Latência (`N = 39`)
+#### 2.2.1. Percepção de Velocidade / Latência (`N = 40`)
 *(Escala de 0 a 4: Muito lento = 0, Lento = 1, Aceitável = 2, Rápido = 3, Muito rápido = 4)*
 
 | Avaliação de Velocidade | Modo RAG Clássico | Modo Agente MCP |
 | :--- | :---: | :---: |
-| **Muito rápido (4)** | 7 (17,9%) | 7 (17,9%) |
-| **Rápido (3)** | 19 (48,7%) | 18 (46,2%) |
-| **Aceitável (2)** | 11 (28,2%) | 13 (33,3%) |
-| **Lento (1)** | 2 (5,1%) | 1 (2,6%) |
+| **Muito rápido (4)** | 7 (17,5%) | 7 (17,5%) |
+| **Rápido (3)** | 19 (47,5%) | 19 (47,5%) |
+| **Aceitável (2)** | 12 (30,0%) | 13 (32,5%) |
+| **Lento (1)** | 2 (5,0%) | 1 (2,5%) |
 | **Muito lento (0)** | 0 (0,0%) | 0 (0,0%) |
-| **Aprovação de Velocidade ($\ge$ Aceitável)** | **37 (94,9%)** | **38 (97,4%)** |
-| **Percepção Ágil (Rápido + Muito rápido)** | **26 (66,7%)** | **25 (64,1%)** |
-| **Média Ponderada (0–4)** | **2,79** | **2,79** |
+| **Aprovação de Velocidade ($\ge$ Aceitável)** | **38 (95,0%)** | **39 (97,5%)** |
+| **Percepção Ágil (Rápido + Muito rápido)** | **26 (65,0%)** | **26 (65,0%)** |
+| **Média Ponderada (0–4)** | **2,78** | **2,80** |
 
-* **Comparação pareada por indivíduo:** 22 respondentes (56,4%) atribuíram a mesma categoria de velocidade aos dois modos; 9 (23,1%) avaliaram o Agente MCP como mais rápido e 8 (20,5%) avaliaram o RAG Clássico como mais rápido. Embora a mediana de latência técnica do Agente MCP seja superior (13,8 s vs. 6,4 s no RAG), a transmissão contínua via *streaming* SSE e a exibição imediata do status das ferramentas mantiveram a sensação subjetiva de agilidade idêntica (média **2,79** em ambos).
+* **Comparação pareada por indivíduo:** 22 respondentes (55,0%) atribuíram a mesma categoria de velocidade aos dois modos; 10 (25,0%) avaliaram o Agente MCP como mais rápido e 8 (20,0%) avaliaram o RAG Clássico como mais rápido. Embora a mediana de latência técnica do Agente MCP seja superior (13,8 s vs. 6,4 s no RAG), a transmissão contínua via *streaming* SSE e a exibição imediata do status das ferramentas mantiveram a sensação subjetiva de agilidade equivalente (média **2,78** no RAG e **2,80** no MCP).
 
-#### 2.2.2. Qualidade, Objetividade e Esclarecimento da Dúvida (`N = 39`)
+#### 2.2.2. Qualidade, Objetividade e Esclarecimento da Dúvida (`N = 40`)
 *(Escala Likert de 1 a 5: Discordo totalmente = 1 a Concordo totalmente = 5)*
 
 | Nível de Concordância | Modo RAG Clássico | Modo Agente MCP |
 | :--- | :---: | :---: |
-| **Concordo totalmente (5)** *(precisas, diretas e fundamentadas)* | 7 (17,9%) | 7 (17,9%) |
-| **Concordo parcialmente (4)** *(claras e suficientes para a dúvida)* | 14 (35,9%) | 19 (48,7%) |
-| **Neutro (3)** *(medianas ou parcialmente esclarecedoras)* | 15 (38,5%) | 8 (20,5%) |
-| **Discordo parcialmente (2)** *(incompletas ou vagas)* | 2 (5,1%) | 4 (10,3%) |
-| **Discordo totalmente (1)** *(confusas, evasivas ou sem relação)* | 1 (2,6%) | 1 (2,6%) |
-| **Avaliação Positiva (Concordo Total + Parcial)** | **21 (53,8%)** | **26 (66,7%)** |
-| **Não Rejeição (Positivas + Neutras)** | **36 (92,3%)** | **34 (87,2%)** |
-| **Média Likert (1–5)** | **3,62** | **3,69** |
+| **Concordo totalmente (5)** *(precisas, diretas e fundamentadas)* | 7 (17,5%) | 7 (17,5%) |
+| **Concordo parcialmente (4)** *(claras e suficientes para a dúvida)* | 15 (37,5%) | 20 (50,0%) |
+| **Neutro (3)** *(medianas ou parcialmente esclarecedoras)* | 15 (37,5%) | 8 (20,0%) |
+| **Discordo parcialmente (2)** *(incompletas ou vagas)* | 2 (5,0%) | 4 (10,0%) |
+| **Discordo totalmente (1)** *(confusas, evasivas ou sem relação)* | 1 (2,5%) | 1 (2,5%) |
+| **Avaliação Positiva (Concordo Total + Parcial)** | **22 (55,0%)** | **27 (67,5%)** |
+| **Não Rejeição (Positivas + Neutras)** | **37 (92,5%)** | **35 (87,5%)** |
+| **Média Likert (1–5)** | **3,63** | **3,70** |
 
-* **Convergência com a Telemetria:** O salto na aprovação positiva de **53,8% (RAG)** para **66,7% (Agente MCP)** reflete diretamente a queda na taxa de abstenção observada nos logs do servidor (de 65,4% de abstenções no RAG para 14,4% no Agente MCP).
+* **Convergência com a Telemetria:** O salto na aprovação positiva de **55,0% (RAG)** para **67,5% (Agente MCP)** reflete diretamente a queda na taxa de abstenção observada nos logs do servidor (de 65,4% de abstenções no RAG para 14,4% no Agente MCP).
 
-#### 2.2.3. Recorte de Qualidade por Segmento de Público (`N = 39`)
+#### 2.2.3. Recorte de Qualidade por Segmento de Público (`N = 40`)
 
 | Segmento de Público | `n` | RAG Positivo ($\ge 4$) | Média RAG | MCP Positivo ($\ge 4$) | Média MCP |
 | :--- | :---: | :---: | :---: | :---: | :---: |
 | **Outra Graduação** (Adm, Eng. Metalúrgica, Pedagogia) | 10 | **80,0%** (8/10) | 4,10 | **70,0%** (7/10) | 4,00 |
-| **Docentes e Servidores TAE** | 3 | **66,7%** (2/3) | 4,00 | **100,0%** (3/3) | 4,00 |
+| **Docentes e Servidores TAE** | 4 | **75,0%** (3/4) | 4,00 | **100,0%** (4/4) | 4,00 |
 | **BSI** (1º ao 8º período) | 13 | **61,5%** (8/13) | 3,69 | **76,9%** (10/13) | 4,00 |
-| **Subtotal — Ensino Superior + Servidores** | **26** | **69,2% (18/26)** | **3,88** | **76,9% (20/26)** | **4,00** |
+| **Subtotal — Ensino Superior + Servidores** | **27** | **70,4% (19/27)** | **3,89** | **77,8% (21/27)** | **4,00** |
 | **Cursos Técnicos** (Integrado/Subsequente) | 13 | **23,1%** (3/13) | 3,08 | **46,2%** (6/13) | 3,08 |
 
 ---
 
-### 2.3. Veracidade Factual, Preferência de Modo, Interface e Impacto Institucional (`N = 39`)
+### 2.3. Veracidade Factual, Preferência de Modo, Interface e Impacto Institucional (`N = 40`)
 
 #### 2.3.1. Veracidade e Confiabilidade Factual
 | Comportamento Observado | Respostas (`n`) | Proporção (`%`) |
 | :--- | :---: | :---: |
-| **Totalmente confiável** *(sem informações falsas; consistente com as normas)* | 14 | 35,9% |
-| **Recusa consciente** *(informou corretamente quando o tema não constava na base)* | 14 | 35,9% |
-| **Divergência leve ou omissão** *(parcialmente correta, omitiu detalhe secundário)* | 5 | 12,8% |
-| **Não sei avaliar** *(sem conhecimento prévio suficiente das normas)* | 4 | 10,3% |
-| **Alucinação factual evidente** *(informação incorreta ou contrária às normas)* | 2 | 5,1% |
-| **Comportamento Factual Seguro (Confiável + Recusa Consciente)** | **28 / 39** | **71,8%** *(ou **80,0%** [28/35] entre avaliadores aptos)* |
+| **Totalmente confiável** *(sem informações falsas; consistente com as normas)* | 15 | 37,5% |
+| **Recusa consciente** *(informou corretamente quando o tema não constava na base)* | 14 | 35,0% |
+| **Divergência leve ou omissão** *(parcialmente correta, omitiu detalhe secundário)* | 5 | 12,5% |
+| **Não sei avaliar** *(sem conhecimento prévio suficiente das normas)* | 4 | 10,0% |
+| **Alucinação factual evidente** *(informação incorreta ou contrária às normas)* | 2 | 5,0% |
+| **Comportamento Factual Seguro (Confiável + Recusa Consciente)** | **29 / 40** | **72,5%** *(ou **80,6%** [29/36] entre avaliadores aptos)* |
 
 #### 2.3.2. Preferência e Assertividade Comparada entre os Modos
 | Escolha do Usuário | Respostas (`n`) | Proporção (`%`) |
 | :--- | :---: | :---: |
-| **Modo Agente MCP mais assertivo e coerente** | **14** | **35,9%** |
-| **Prefiro ambos disponíveis** *(considera ambos úteis)* | 9 | 23,1% |
-| **Ambos foram semelhantes** *(nível equivalente de assertividade)* | 9 | 23,1% |
-| **Modo RAG Clássico mais assertivo e coerente** | 6 | 15,4% |
-| **Indiferente** | 1 | 2,6% |
+| **Modo Agente MCP mais assertivo e coerente** | **14** | **35,0%** |
+| **Ambos foram semelhantes** *(nível equivalente de assertividade)* | 10 | 25,0% |
+| **Prefiro ambos disponíveis** *(considera ambos úteis)* | 9 | 22,5% |
+| **Modo RAG Clássico mais assertivo e coerente** | 6 | 15,0% |
+| **Indiferente** | 1 | 2,5% |
 
 * Entre os 20 participantes que elegeram um modo como claramente superior ao outro (`14` vs. `6`), **70,0% (14/20) preferiram o Modo Agente MCP**, contra **30,0% (6/20)** que preferiram o Modo RAG Clássico.
 
 #### 2.3.3. Experiência de Uso da Interface Web (UX/UI) e Impacto na Autonomia Discente
-* **Avaliação da Interface Web:** **94,9% de aprovação positiva (37/39)** — sendo **21 (53,8%)** *"Boa e intuitiva"*, **16 (41,0%)** *"Excelente"*, **2 (5,1%)** *"Regular"* e **0 (0,0%)** *"Ruim / Muito ruim"*.
-* **Impacto na Redução de Demanda Presencial e Leitura Manual de PDFs:** **94,9% de impacto positivo (37/39)** — sendo **18 (46,2%)** *"Reduz moderadamente"*, **13 (33,3%)** *"Reduz expressivamente"*, **6 (15,4%)** *"Reduz substancialmente"*, **2 (5,1%)** *"Reduz pouco"* e **0 (0,0%)** *"Não reduz"*.
+* **Avaliação da Interface Web:** **95,0% de aprovação positiva (38/40)** — sendo **22 (55,0%)** *"Boa e intuitiva"*, **16 (40,0%)** *"Excelente"*, **2 (5,0%)** *"Regular"* e **0 (0,0%)** *"Ruim / Muito ruim"*.
+* **Impacto na Redução de Demanda Presencial e Leitura Manual de PDFs:** **95,0% de impacto positivo (38/40)** — sendo **18 (45,0%)** *"Reduz moderadamente"*, **14 (35,0%)** *"Reduz expressivamente"*, **6 (15,0%)** *"Reduz substancialmente"*, **2 (5,0%)** *"Reduz pouco"* e **0 (0,0%)** *"Não reduz"*.
 
-#### 2.3.4. Demanda por Novos Serviços e Integrações Futuras (`N = 39`, múltipla escolha)
-1. **Mural de avisos dinâmicos e notícias** (suspensão de aulas, eventos, palestras): **30 votos (76,9%)**
-2. **Assistência estudantil e editais de bolsas** (auxílio-permanência, monitoria, IC): **29 votos (74,4%)**
-3. **Prazos do calendário acadêmico** (trancamento, aproveitamento, rematrícula SIGAA): **28 votos (71,8%)**
-4. **Cardápio e serviços da cantina/refeitório**: **26 votos (66,7%)**
-5. **Diretório de contatos e horários de atendimento docente**: **23 votos (59,0%)**
-6. **Transporte e horários de ônibus** (linhas municipais e intermunicipais): **22 votos (56,4%)**
-7. **Localização física de espaços no campus** (blocos, salas, laboratórios): **15 votos (38,5%)**
+#### 2.3.4. Demanda por Novos Serviços e Integrações Futuras (`N = 40`, múltipla escolha)
+1. **Mural de avisos dinâmicos e notícias** (suspensão de aulas, eventos, palestras): **31 votos (77,5%)**
+2. **Assistência estudantil e editais de bolsas** (auxílio-permanência, monitoria, IC): **30 votos (75,0%)**
+3. **Prazos do calendário acadêmico** (trancamento, aproveitamento, rematrícula SIGAA): **29 votos (72,5%)**
+4. **Cardápio e serviços da cantina/refeitório**: **27 votos (67,5%)**
+5. **Diretório de contatos e horários de atendimento docente**: **24 votos (60,0%)**
+6. **Transporte e horários de ônibus** (linhas municipais e intermunicipais): **23 votos (57,5%)**
+7. **Localização física de espaços no campus** (blocos, salas, laboratórios): **16 votos (40,0%)**
 
