@@ -78,7 +78,7 @@ Do ponto de vista tecnológico, a extração automatizada de informações a par
 
 Diversos esforços na literatura buscaram automatizar o atendimento discente por meio de assistentes virtuais baseados em Processamento de Linguagem Natural (PLN) tradicional \cite{monteiro2021helena} ou em arquiteturas de Geração Aumentada por Recuperação (\textit{Retrieval-Augmented Generation} -- RAG) alimentadas por Interfaces de Programação de Aplicação (\textit{Application Programming Interfaces} -- APIs) comerciais em nuvem \cite{barbosa2023chatbot}. Contudo, essas abordagens anteriores enfrentam limitações relevantes: enquanto os motores de PLN tradicionais exigem o mapeamento manual e rígido de intenções e fluxos de diálogo, as soluções baseadas em APIs proprietárias dependem de custos recorrentes por requisição e comprometem a privacidade de dados institucionais ao processá-los em servidores externos. Além disso, observa-se uma lacuna no uso de protocolos abertos de governança de contexto, como o \textit{Model Context Protocol} (MCP) \cite{sabbag2025mcp}, que permitam delimitar de forma estrita o raio de atuação de agentes autônomos locais sobre resoluções normativas complexas. Assim, persiste a necessidade de investigações que combinem a execução 100\% local de modelos open-source com a busca híbrida otimizada e o controle de contexto via MCP sob hardware computacional restrito.
 
-Com o objetivo de superar as limitações identificadas na literatura, a proposta deste trabalho consiste no desenvolvimento e na avaliação comparativa de um Produto Mínimo Viável (\textit{Minimum Viable Product} -- MVP) de assistente virtual acadêmico baseado na arquitetura RAG, operando sob infraestrutura estritamente local e de código aberto no Instituto Federal de Minas Gerais (IFMG) Campus Ouro Branco. O sistema contrapõe duas abordagens de recuperação informacional sobre o ecossistema normativo institucional: um pipeline de RAG Clássico determinístico e uma arquitetura agêntica governada pelo MCP. Ao condicionar a geração probabilística de modelos de linguagem locais à extração de evidências fidedignas dos regulamentos vigentes, a solução visa conferir autonomia de consulta aos discentes, reduzir a demanda por atendimentos informativos de rotina nos setores administrativos e garantir a auditabilidade estrita das normas acadêmicas informadas.
+Com o objetivo de superar as limitações identificadas na literatura, a proposta deste trabalho consiste no desenvolvimento e na avaliação comparativa de um Produto Mínimo Viável (\textit{Minimum Viable Product} -- MVP) de assistente virtual acadêmico baseado na arquitetura RAG, operando sob infraestrutura estritamente local e de código aberto no Instituto Federal de Minas Gerais (IFMG) Campus Ouro Branco. O sistema combina segmentação semântica orientada à estrutura de documentos normativos e busca híbrida (vetorial e léxica) para contrapor duas abordagens de recuperação: um pipeline de RAG Clássico determinístico e uma arquitetura agêntica governada pelo MCP em modo estrito de leitura. Ao vincular a geração de respostas dos modelos locais aos trechos extraídos dos Projetos Pedagógicos e regulamentos vigentes, a solução visa conferir autonomia de consulta aos estudantes, reduzir a demanda por atendimentos informativos de rotina nos setores administrativos e garantir a rastreabilidade das normas informadas. A validação em campo com discentes, docentes e técnicos administrativos demonstrou a viabilidade técnica de operar o serviço localmente sem custos de API externa e com alta fidelidade normativa, revelando que o RAG Clássico oferece menor tempo de resposta e estabilidade determinística sob modelos compactos, enquanto o Agente MCP amplia de forma expressiva a taxa de problemas resolvidos, a satisfação dos usuários e a transparência na citação das fontes oficiais.
 
 
 % === NOTAS DE AUXÍLIO PARA DISCUSSÃO COM O ORIENTADOR ===
@@ -317,98 +317,243 @@ Os experimentos foram conduzidos em infraestrutura local auto-hospedada (\textit
 
 \subsection{Métricas de Latência, Vazão e Desempenho do Pipeline}
 
-Durante o período experimental, foram contabilizadas $291$ interações na base de telemetria, das quais $267$ ($91,8\%$) corresponderam a consultas substantivas e $24$ ($8,2\%$) a saudações iniciais (\textit{GREETING}). As métricas de desempenho temporal e consumo de recursos para as $267$ consultas substantivas ($156$ no RAG Clássico e $111$ no Agente MCP) são apresentadas na Tabela \ref{tab:latencias}.
+Para avaliar o desempenho temporal de cada arquitetura em condições reais de uso, foram analisadas as consultas substantivas registradas pelo módulo de telemetria nos modos RAG Clássico e Agente MCP, desconsiderando-se as interações restritas a saudações iniciais. A comparação entre as medianas de tempo de cada etapa interna do pipeline, do TTFT e da latência total nos dois modos de operação é apresentada na Figura \ref{fig:latencias_pipeline}.
 
-\begin{table}[!htb]
+\begin{figure}[!htb]
 \centering
-\caption{Métricas de latência por etapa, TTFT e consumo de \textit{tokens} nas consultas substantivas ($n = 267$).}
-\label{tab:latencias}
+\caption{Comparativo das medianas de latência por etapa, TTFT e tempo total nas consultas substantivas ($n = 267$).}
+\label{fig:latencias_pipeline}
 \vspace{0.3cm}
-\footnotesize
-\setlength{\tabcolsep}{4pt}
-\renewcommand{\arraystretch}{1.12}
-\begin{tabularx}{\textwidth}{l >{\RaggedRight}X c c c}
-\toprule
-\textbf{Modo} & \textbf{Etapa / Métrica do Pipeline} & \textbf{Mediana (P50)} & \textbf{Média} & \textbf{P90} \\
-\midrule
-RAG Clássico & 1. Reescrita de Consulta (\textit{qwen3.5:4b}) & 1.121,5 ms & 5.111,0 ms & 11.123,0 ms \\
-($n = 156$)  & 2. Vetorização (\textit{bge-m3}, 1024d) & 47,0 ms & 110,1 ms & 130,0 ms \\
-             & 3. Busca Híbrida RRF (\textit{pgvector} HNSW + FTS) & 19,0 ms & 22,0 ms & 43,0 ms \\
-             & 4. Síntese e Geração Final (\textit{Streaming} SSE) & 4.257,5 ms & 14.667,1 ms & 43.769,0 ms \\
-             & \textbf{Latência Total / TTFT (ms)} & \textbf{6.402,0 / 2.437,0} & \textbf{19.911,0 / 7.427,4} & \textbf{65.180,0 / 17.728,0} \\
-             & \textit{Tokens} de Prompt / \textit{Tokens} Gerados & 4.793,5 / 64,0 & 4.769,8 / 155,1 & 5.675,0 / 422,0 \\
-\midrule
-Agente MCP   & 1. Decisão e Roteamento de Ferramenta (\textit{qwen3.5:4b}) & 5.910,0 ms & 7.423,5 ms & 11.523,0 ms \\
-($n = 111$)  & 2. Execução da Ferramenta MCP via \textit{stdio} & 56,0 ms & 169,1 ms & 85,0 ms \\
-             & 3. Síntese e Geração Final (\textit{Streaming} SSE) & 7.528,0 ms & 9.377,0 ms & 13.421,0 ms \\
-             & \textbf{Latência Total / TTFT (ms)} & \textbf{13.825,0 / 7.665,0} & \textbf{23.256,9 / 10.635,2} & \textbf{73.311,0 / 15.720,0} \\
-             & \textit{Tokens} de Prompt / \textit{Tokens} Gerados & 7.733,0 / 466,0 & 7.235,8 / 467,0 & 9.260,0 / 613,0 \\
-\bottomrule
-\end{tabularx}
+\resizebox{0.96\textwidth}{!}{%
+\begin{tikzpicture}[font=\sffamily\footnotesize]
+  \definecolor{ragbar}{HTML}{2563EB}
+  \definecolor{ragbg}{HTML}{EFF6FF}
+  \definecolor{mcpbar}{HTML}{059669}
+  \definecolor{mcpbg}{HTML}{ECFDF5}
+  \definecolor{gridgray}{HTML}{D1D5DB}
+
+  % Faixa de legenda superior centralizada (sem risco de sobreposição)
+  \fill[gray!8, draw=gray!35, line width=0.5pt, rounded corners=2pt] (-4.60, 0.55) rectangle (7.80, 1.10);
+  \node[anchor=center, font=\sffamily\footnotesize\bfseries, text=black!85] at (1.60, 0.825) {%
+    \textcolor{ragbar}{\rule[-0.15ex]{0.38cm}{0.24cm}}\hspace{0.18cm}Modo RAG Clássico ($n = 156$)%
+    \hspace{1.10cm}%
+    \textcolor{mcpbar}{\rule[-0.15ex]{0.38cm}{0.24cm}}\hspace{0.18cm}Modo Agente MCP ($n = 111$)%
+  };
+
+  % Eixo e grades verticais (Escala: 0 s a 15 s -> 1 s = 0.44 cm, largura = 6.60 cm)
+  \foreach \s in {0, 3, 6, 9, 12, 15} {
+    \pgfmathsetmacro{\xpos}{\s * 0.44}
+    \draw[gridgray, dashed, line width=0.5pt] (\xpos, 0.35) -- (\xpos, -4.95);
+    \node[anchor=north, font=\sffamily\scriptsize, text=black!70] at (\xpos, -5.00) {\s\,s};
+  }
+  \draw[black!60, line width=0.6pt] (0, 0.35) -- (0, -4.95);
+
+  % Macro com rótulo em linha única (sem quebra de linha)
+  \newcommand{\parlatencia}[6]{
+    \node[anchor=east, font=\sffamily\footnotesize\bfseries, text=black!85] at (-0.20, #1) {#2};
+    % Barra RAG Clássico
+    \pgfmathsetmacro{\wrag}{max(0.06, #3 * 0.44)}
+    \fill[ragbar, rounded corners=1.2pt] (0, #1 + 0.04) rectangle (\wrag, #1 + 0.31);
+    \node[anchor=west, font=\sffamily\scriptsize, text=black!90] at ({\wrag + 0.12}, #1 + 0.175) {\textbf{#4}};
+    % Barra Agente MCP
+    \pgfmathsetmacro{\wmcp}{max(0.06, #5 * 0.44)}
+    \fill[mcpbar, rounded corners=1.2pt] (0, #1 - 0.31) rectangle (\wmcp, #1 - 0.04);
+    \node[anchor=west, font=\sffamily\scriptsize, text=black!90] at ({\wmcp + 0.12}, #1 - 0.175) {\textbf{#6}};
+  }
+
+  \parlatencia{-0.15}{Latência Total (Mediana)}{6.402}{6,40 s}{13.825}{13,83 s}
+  \parlatencia{-1.20}{Tempo até o 1º \textit{Token} (TTFT)}{2.437}{2,44 s}{7.665}{7,67 s}
+  \parlatencia{-2.25}{Síntese e Geração Final (SSE)}{4.2575}{4,26 s}{7.528}{7,53 s}
+  \parlatencia{-3.30}{Preparação / Decisão no LLM}{1.1215}{1,12 s}{5.910}{5,91 s}
+  \parlatencia{-4.35}{Busca no Banco (Híbrida / MCP)}{0.066}{0,07 s (66 ms)}{0.056}{0,06 s (56 ms)}
+\end{tikzpicture}%
+}
 
 \vspace{0.15cm}
 {\small Fonte: Elaborado pelo Próprio Autor.}
-\end{table}
+\end{figure}
 
-Os dados da Tabela \ref{tab:latencias}, expressos pela mediana (percentil 50 -- P50), média e percentil 90 (P90), demonstram que as etapas de indexação e recuperação no banco de dados apresentam custo temporal reduzido: no RAG Clássico, a vetorização com \textit{bge-m3} e a busca híbrida RRF somam mediana de $66,0$~ms; no Agente MCP, a execução completa da ferramenta \textit{search\_ifmg\_knowledge} via protocolo \textit{stdio} apresenta mediana de $56,0$~ms. O tempo de processamento concentra-se nas chamadas ao LLM local, que operou com vazão (\textit{throughput}) mediana de $45,3$~\textit{tokens}/s (média de $45,6$~\textit{tokens}/s em $445$ chamadas registradas). Observa-se que o RAG Clássico obteve menor latência mediana total ($6,4$~s contra $13,8$~s no Agente MCP) e menor TTFT mediano ($2,4$~s contra $7,7$~s), uma vez que o agente executa uma etapa prévia de raciocínio e decisão de ferramenta com mediana de $5,9$~s antes de iniciar a emissão da resposta final. Em contrapartida, a mediana de \textit{tokens} gerados no Agente MCP ($466$~\textit{tokens}) foi $7,3$ vezes superior à do RAG Clássico ($64$~\textit{tokens}), refletindo respostas mais detalhadas e menor índice de abstenção.
+Os resultados da Figura \ref{fig:latencias_pipeline} demonstram que as etapas de indexação e recuperação no banco de dados apresentaram custo temporal irrisório nas duas arquiteturas. No RAG Clássico, a vetorização pelo modelo \textit{bge-m3} ($47$~ms) somada à busca híbrida RRF no PostgreSQL ($19$~ms) exigiu mediana de apenas $66$~ms, enquanto no Agente MCP a execução completa da ferramenta \textit{search\_ifmg\_knowledge} via comunicação \textit{stdio} registrou mediana de $56$~ms. Esses valores confirmam que a busca híbrida local e o isolamento de processos pelo protocolo MCP não introduzem atrasos perceptíveis, concentrando o tempo de execução nas inferências do modelo \textit{qwen3.5:4b}, que operou com vazão mediana de $45,3$~\textit{tokens}/s.
+
+Na comparação global entre os fluxos, o RAG Clássico obteve menor latência mediana total ($6,40$~s) e menor tempo de resposta inicial ($2,44$~s de TTFT), uma vez que executa apenas uma reescrita curta de consulta ($1,12$~s) antes de iniciar a síntese ($4,26$~s). O Agente MCP apresentou mediana total de $13,83$~s e TTFT de $7,67$~s porque realiza uma etapa prévia de raciocínio autônomo para decidir e parametrizar a chamada da ferramenta ($5,91$~s) antes de sintetizar a resposta final ($7,53$~s). Em contrapartida, o volume mediano de texto gerado pelo Agente MCP foi de $466$~\textit{tokens} por resposta contra $64$~\textit{tokens} no RAG Clássico, demonstrando que o tempo adicional reflete respostas mais detalhadas e menor ocorrência de abstenções.
 
 \FloatBarrier
 
 \subsection{Avaliação de Campo: Telemetria de Uso e Questionário com Usuários}
 
-A aplicação foi disponibilizada via interface web (\texttt{https://chat.danielgsilva.com.br/}) para a comunidade do IFMG Campus Ouro Branco. Nas $291$ interações válidas da telemetria, $174$ ($59,8\%$) ocorreram no modo RAG Clássico e $117$ ($40,2\%$) no modo Agente MCP. Quanto ao perfil dos usuários nas interações, registraram-se $146$ consultas de estudantes de graduação ($50,2\%$, distribuídas entre $81$ de BSI, $43$ de Engenharia Metalúrgica, $13$ de Administração e $9$ de Pedagogia), $58$ de estudantes dos cursos técnicos ($19,9\%$), $19$ de TAEs ($6,5\%$), $18$ de docentes ($6,2\%$) e $50$ interações iniciais anteriores à coleta obrigatória de perfil ($17,2\%$). Entre as $204$ interações de discentes identificados, observaram-se $74$ consultas na fase intermediária ($36,3\%$), $67$ na fase inicial ($32,8\%$) e $63$ na fase concluinte ($30,9\%$).
+O assistente virtual foi disponibilizado em ambiente web (\texttt{https://chat.danielgsilva.com.br/}) para acesso aberto pela comunidade do IFMG Campus Ouro Branco, contabilizando $291$ interações válidas na telemetria ($174$ no modo RAG Clássico e $117$ no modo Agente MCP). A distribuição dessas interações quanto ao vínculo institucional dos usuários e às categorias de dúvidas consultadas é apresentada na Figura \ref{fig:perfil_telemetria}.
 
-As intenções mais frequentes concentraram-se em dúvidas gerais ou abertas (\textit{OUTRAS}, com $79$ registros ou $27,1\%$), informações gerais de cursos (\textit{CURSO}, com $48$ ou $16,5\%$), matrizes curriculares e carga horária (\textit{ESTRUTURA\_CURSOS}, com $43$ ou $14,8\%$), infraestrutura e setores do campus (\textit{INFRA\_CAMPUS}, com $25$ ou $8,6\%$), saudações (\textit{GREETING}, com $24$ ou $8,2\%$) e normas de estágio e TCC (\textit{ESTAGIO\_TCC}, com $18$ ou $6,2\%$). Os documentos oficiais mais recuperados foram o PPC de BSI (\textit{PPCBSI\_2022.pdf}, em $83$ interações), o PPC de Engenharia Metalúrgica ($60$), o PPC de Pedagogia ($57$ em PDF e $24$ em DOCX), o PPC do Técnico em Administração ($40$), o Regulamento de Ensino do IFMG ($37$), o PPC do Técnico em Informática ($29$) e o PPC do Bacharelado em Administração ($27$).
-
-De forma complementar à telemetria, o questionário estruturado pós-uso contabilizou $40$ participantes (superando a meta amostral de $38$), compostos por $23$ estudantes de graduação ($13$ de BSI e $10$ dos demais cursos superiores), $13$ estudantes de cursos técnicos e $4$ servidores (docentes e TAEs). A consolidação comparativa entre os indicadores extraídos da telemetria e as avaliações reportadas pelos participantes no questionário é apresentada na Tabela \ref{tab:resultados_avaliacao}.
-
-\begin{table}[!htb]
+\begin{figure}[!htb]
 \centering
-\caption{Comparativo empírico entre RAG Clássico e Agente MCP na telemetria ($n = 267$) e no questionário ($N = 40$).}
-\label{tab:resultados_avaliacao}
+\caption{Distribuição das interações na telemetria por perfil de usuário e por categoria de consulta ($N = 291$).}
+\label{fig:perfil_telemetria}
 \vspace{0.3cm}
-\footnotesize
-\setlength{\tabcolsep}{5pt}
-\renewcommand{\arraystretch}{1.2}
-\begin{tabularx}{\textwidth}{>{\RaggedRight\hsize=1.35\hsize}X >{\RaggedRight\hsize=0.825\hsize}X >{\RaggedRight\arraybackslash\hsize=0.825\hsize}X}
-\toprule
-\textbf{Indicador Avaliado} & \textbf{RAG Clássico} & \textbf{RAG Agêntico (MCP)} \\
-\midrule
-Taxa de Resposta Efetiva na Telemetria (excl. \textit{GREETING}) & 34,6\% (54 / 156) & 81,1\% (90 / 111) \\
-Taxa de Abstenção Consciente na Telemetria & 65,4\% (102 / 156) & 14,4\% (16 / 111) \\
-Taxa de Fallback Técnico (\textit{Tool Decision}) & 0,0\% (0 / 156) & 4,5\% (5 / 111) \\
-Aprovação nos Botões de Mensagem ($n = 39$ votos) & 45,8\% (11 / 24) & 60,0\% (9 / 15) \\
-\midrule
-Velocidade Percebida $\ge$ Aceitável ($N = 40$) & 95,0\% (38 / 40) & 97,5\% (39 / 40) \\
-Concordância Positiva em Qualidade -- Geral ($N = 40$) & 55,0\% (média 3,63 / 5,00) & 67,5\% (média 3,70 / 5,00) \\
-Concordância Positiva -- Graduação e Servidores ($n = 27$) & 70,4\% (média 3,89 / 5,00) & 77,8\% (média 4,00 / 5,00) \\
-Preferência Direta de Assertividade ($n = 20$ decisivos) & 30,0\% (6 / 20) & 70,0\% (14 / 20) \\
-\bottomrule
-\end{tabularx}
+\resizebox{0.96\textwidth}{!}{%
+\begin{tikzpicture}[font=\sffamily\footnotesize]
+  \definecolor{profbar}{HTML}{3B82F6}
+  \definecolor{profbg}{HTML}{EFF6FF}
+  \definecolor{intbar}{HTML}{4F46E5}
+  \definecolor{intbg}{HTML}{EEF2FF}
+  \definecolor{gridgray}{HTML}{D1D5DB}
+
+  % =========================================================================
+  % PAINEL (a): PERFIL DOS USUÁRIOS
+  % =========================================================================
+  \fill[profbg, draw=profbar, line width=0.6pt, rounded corners=2pt] (-4.90, 0.50) rectangle (7.80, 1.02);
+  \node[anchor=center, font=\sffamily\footnotesize\bfseries, text=profbar!85!black] at (1.45, 0.76) {(a) Interações por Vínculo Institucional ($N = 291$)};
+
+  % Escala: 0% a 60% = 6.00 cm (1% = 0.10 cm)
+  \foreach \p in {0, 15, 30, 45, 60} {
+    \pgfmathsetmacro{\xpos}{\p * 0.10}
+    \draw[gridgray, dashed, line width=0.45pt] (\xpos, 0.35) -- (\xpos, -2.55);
+    \node[anchor=north, font=\sffamily\scriptsize, text=black!65] at (\xpos, -2.60) {\p\%};
+  }
+  \draw[black!60, line width=0.6pt] (0, 0.35) -- (0, -2.55);
+
+  \newcommand{\barraprof}[4]{
+    \node[anchor=east, font=\sffamily\footnotesize, text=black!85] at (-0.20, #1) {#2};
+    \pgfmathsetmacro{\wbar}{max(0.05, #3 * 0.10)}
+    \fill[profbar, rounded corners=1.2pt] (0, #1 - 0.15) rectangle (\wbar, #1 + 0.15);
+    \node[anchor=west, font=\sffamily\footnotesize, text=black!90] at ({\wbar + 0.12}, #1) {\textbf{#4}};
+  }
+
+  \barraprof{0.00}{Estudantes de Graduação}{50.2}{50,2\% (146)}
+  \barraprof{-0.58}{Estudantes de Cursos Técnicos}{19.9}{19,9\% (58)}
+  \barraprof{-1.16}{Acessos Iniciais (Sem Filtro)}{17.2}{17,2\% (50)}
+  \barraprof{-1.74}{Técnicos Administrativos (TAEs)}{6.5}{6,5\% (19)}
+  \barraprof{-2.32}{Docentes}{6.2}{6,2\% (18)}
+
+  % =========================================================================
+  % PAINEL (b): TEMAS MAIS CONSULTADOS
+  % =========================================================================
+  \fill[intbg, draw=intbar, line width=0.6pt, rounded corners=2pt] (-4.90, -3.70) rectangle (7.80, -3.18);
+  \node[anchor=center, font=\sffamily\footnotesize\bfseries, text=intbar!85!black] at (1.45, -3.44) {(b) Principais Temas Acadêmicos Consultados ($N = 291$)};
+
+  \foreach \p in {0, 15, 30, 45, 60} {
+    \pgfmathsetmacro{\xpos}{\p * 0.10}
+    \draw[gridgray, dashed, line width=0.45pt] (\xpos, -3.85) -- (\xpos, -7.35);
+    \node[anchor=north, font=\sffamily\scriptsize, text=black!65] at (\xpos, -7.40) {\p\%};
+  }
+  \draw[black!60, line width=0.6pt] (0, -3.85) -- (0, -7.35);
+
+  \newcommand{\barraint}[4]{
+    \node[anchor=east, font=\sffamily\footnotesize, text=black!85] at (-0.20, #1) {#2};
+    \pgfmathsetmacro{\wbar}{max(0.05, #3 * 0.10)}
+    \fill[intbar, rounded corners=1.2pt] (0, #1 - 0.15) rectangle (\wbar, #1 + 0.15);
+    \node[anchor=west, font=\sffamily\footnotesize, text=black!90] at ({\wbar + 0.12}, #1) {\textbf{#4}};
+  }
+
+  \barraint{-4.20}{Dúvidas Acadêmicas Gerais}{27.1}{27,1\% (79)}
+  \barraint{-4.78}{Informações sobre Cursos}{16.5}{16,5\% (48)}
+  \barraint{-5.36}{Matrizes e Carga Horária}{14.8}{14,8\% (43)}
+  \barraint{-5.94}{Infraestrutura e Setores}{8.6}{8,6\% (25)}
+  \barraint{-6.52}{Saudações Iniciais}{8.2}{8,2\% (24)}
+  \barraint{-7.10}{Normas de Estágio e TCC}{6.2}{6,2\% (18)}
+\end{tikzpicture}%
+}
 
 \vspace{0.15cm}
 {\small Fonte: Elaborado pelo Próprio Autor.}
-\end{table}
+\end{figure}
 
-Como demonstrado na Tabela \ref{tab:resultados_avaliacao}, na avaliação direta por mensagem via botões de feedback ($n = 39$ interações avaliadas, correspondendo a $13,4\%$ do total), o modo Agente MCP obteve $60,0\%$ de aprovação ($9$ votos positivos e $6$ negativos), superando os $45,8\%$ do modo RAG Clássico ($11$ positivos e $13$ negativos). A inspeção qualitativa dos $19$ votos negativos indicou que $6$ casos ($31,6\%$) decorreram de perguntas fora do escopo acadêmico ou testes de estresse nos quais o assistente recusou corretamente a resposta; $4$ casos ($21,1\%$) envolveram dados operacionais dinâmicos ausentes nos PPCs estáticos (como horários semanais de aulas e portarias vigentes de coordenação); $5$ casos ($26,3\%$) resultaram de abstenções do RAG Clássico em dúvidas normativas legítimas; e $4$ casos ($21,1\%$) relacionaram-se a consultas curriculares ambíguas. No questionário ($N = 40$), a velocidade foi considerada aceitável, rápida ou muito rápida por $95,0\%$ dos participantes no RAG Clássico e por $97,5\%$ no Agente MCP, enquanto a concordância positiva quanto à clareza e qualidade das respostas passou de $55,0\%$ no RAG Clássico para $67,5\%$ no Agente MCP no público geral, alcançando $70,4\%$ e $77,8\%$, respectivamente, no estrato formado por estudantes de graduação e servidores ($n = 27$).
+Conforme ilustrado na Figura \ref{fig:perfil_telemetria}, o público estudantil protagonizou mais de $70\%$ dos acessos identificados, com distribuição equilibrada entre alunos das fases inicial, intermediária e concluinte e participação majoritária dos cursos de BSI e Engenharia Metalúrgica, além dos cursos técnicos. As buscas concentraram-se em dúvidas sobre a rotina acadêmica, funcionamento dos cursos, grades curriculares e exigências de estágio e TCC, o que levou o motor de busca a recuperar prioritariamente os Projetos Pedagógicos de Curso (com destaque para BSI, Pedagogia, Engenharia Metalúrgica e Administração) e o Regulamento de Ensino do IFMG. De forma complementar à telemetria, aplicou-se o questionário pós-uso junto a $40$ participantes (superando a meta amostral de $38$), cujos indicadores consolidados em comparação com a telemetria são apresentados para cada modo de uso na Figura \ref{fig:resultados_avaliacao}.
 
-Quanto às demais dimensões do questionário ($N = 40$), na avaliação de veracidade factual, $72,5\%$ dos participantes ($29/40$), ou $80,6\%$ ($29/36$) excluindo os quatro respondentes que informaram não conhecer as normas, atestaram comportamento seguro do sistema, dividindo-se entre respostas totalmente confiáveis ($37,5\%$, $15/40$) e recusa consciente diante de temas ausentes na base ($35,0\%$, $14/40$). Apenas $12,5\%$ ($5/40$) apontaram omissão parcial de detalhes secundários e $5,0\%$ ($2/40$) relataram divergência factual. A interface web foi avaliada como boa ($55,0\%$) ou excelente ($40,0\%$) por $95,0\%$ dos usuários ($38/40$), mesmo percentual ($95,0\%$) que afirmou que o assistente reduz moderada ($45,0\%$), expressiva ($35,0\%$) ou substancialmente ($15,0\%$) a necessidade de leitura manual de PDFs e de atendimentos presenciais. Por fim, no levantamento de demandas futuras, destacaram-se a integração de mural de avisos e eventos ($77,5\%$), editais de bolsas e assistência estudantil ($75,0\%$) e prazos do calendário acadêmico ($72,5\%$).
+\begin{figure}[!htb]
+\centering
+\caption{Indicadores consolidados da telemetria ($n = 267$) e do questionário ($N = 40$) por modo de operação.}
+\label{fig:resultados_avaliacao}
+\vspace{0.3cm}
+\resizebox{0.96\textwidth}{!}{%
+\begin{tikzpicture}[font=\sffamily\footnotesize]
+  \definecolor{ragbar}{HTML}{2563EB}
+  \definecolor{ragbg}{HTML}{EFF6FF}
+  \definecolor{mcpbar}{HTML}{059669}
+  \definecolor{mcpbg}{HTML}{ECFDF5}
+  \definecolor{gridgray}{HTML}{D1D5DB}
+  \definecolor{sepgray}{HTML}{9CA3AF}
+
+  % =========================================================================
+  % PAINEL (a): MODO RAG CLÁSSICO
+  % =========================================================================
+  \fill[ragbg, draw=ragbar, line width=0.6pt, rounded corners=2pt] (-4.90, 0.55) rectangle (8.30, 1.08);
+  \node[anchor=center, font=\sffamily\footnotesize\bfseries, text=ragbar!85!black] at (1.70, 0.815) {(a) Modo RAG Clássico (Telemetria: $n = 156$ | Questionário: $N = 40$)};
+
+  % Escala: 0% a 100% = 6.00 cm
+  \foreach \p in {0, 20, 40, 60, 80, 100} {
+    \pgfmathsetmacro{\xpos}{(\p / 100.0) * 6.00}
+    \draw[gridgray, dashed, line width=0.45pt] (\xpos, 0.35) -- (\xpos, -4.35);
+    \node[anchor=north, font=\sffamily\scriptsize, text=black!65] at (\xpos, -4.40) {\p\%};
+  }
+  \draw[black!60, line width=0.6pt] (0, 0.35) -- (0, -4.35);
+  \draw[sepgray, dotted, line width=0.6pt] (-4.90, -2.01) -- (8.30, -2.01);
+
+  \newcommand{\barrarag}[4]{
+    \node[anchor=east, font=\sffamily\footnotesize, text=black!85] at (-0.20, #1) {#2};
+    \pgfmathsetmacro{\wbar}{max(0.05, (#3 / 100.0) * 6.00)}
+    \fill[ragbar, rounded corners=1.2pt] (0, #1 - 0.15) rectangle (\wbar, #1 + 0.15);
+    \node[anchor=west, font=\sffamily\footnotesize, text=black!90] at ({\wbar + 0.12}, #1) {\textbf{#4}};
+  }
+
+  \barrarag{0.05}{Taxa de Resposta Efetiva}{34.6}{34,6\% (54/156)}
+  \barrarag{-0.53}{Taxa de Abstenção Consciente}{65.4}{65,4\% (102/156)}
+  \barrarag{-1.11}{Falha de Decisão (\textit{Fallback})}{0.0}{0,0\% (0/156)}
+  \barrarag{-1.69}{Aprovação nos Botões do Chat}{45.8}{45,8\% (11/24)}
+  \barrarag{-2.33}{Velocidade Percebida Adequada}{95.0}{95,0\% (38/40)}
+  \barrarag{-2.91}{Qualidade das Respostas (Geral)}{55.0}{55,0\% (nota 3,63/5)}
+  \barrarag{-3.49}{Qualidade (Graduação e Servidores)}{70.4}{70,4\% (nota 3,89/5)}
+  \barrarag{-4.07}{Preferência Direta do Usuário}{30.0}{30,0\% (6/20)}
+
+  % =========================================================================
+  % PAINEL (b): MODO RAG AGÊNTICO (MCP)
+  % =========================================================================
+  \fill[mcpbg, draw=mcpbar, line width=0.6pt, rounded corners=2pt] (-4.90, -5.65) rectangle (8.30, -5.12);
+  \node[anchor=center, font=\sffamily\footnotesize\bfseries, text=mcpbar!85!black] at (1.70, -5.385) {(b) Modo RAG Agêntico -- MCP (Telemetria: $n = 111$ | Questionário: $N = 40$)};
+
+  \foreach \p in {0, 20, 40, 60, 80, 100} {
+    \pgfmathsetmacro{\xpos}{(\p / 100.0) * 6.00}
+    \draw[gridgray, dashed, line width=0.45pt] (\xpos, -5.85) -- (\xpos, -10.55);
+    \node[anchor=north, font=\sffamily\scriptsize, text=black!65] at (\xpos, -10.60) {\p\%};
+  }
+  \draw[black!60, line width=0.6pt] (0, -5.85) -- (0, -10.55);
+  \draw[sepgray, dotted, line width=0.6pt] (-4.90, -8.21) -- (8.30, -8.21);
+
+  \newcommand{\barramcp}[4]{
+    \node[anchor=east, font=\sffamily\footnotesize, text=black!85] at (-0.20, #1) {#2};
+    \pgfmathsetmacro{\wbar}{max(0.05, (#3 / 100.0) * 6.00)}
+    \fill[mcpbar, rounded corners=1.2pt] (0, #1 - 0.15) rectangle (\wbar, #1 + 0.15);
+    \node[anchor=west, font=\sffamily\footnotesize, text=black!90] at ({\wbar + 0.12}, #1) {\textbf{#4}};
+  }
+
+  \barramcp{-6.15}{Taxa de Resposta Efetiva}{81.1}{81,1\% (90/111)}
+  \barramcp{-6.73}{Taxa de Abstenção Consciente}{14.4}{14,4\% (16/111)}
+  \barramcp{-7.31}{Falha de Decisão (\textit{Fallback})}{4.5}{4,5\% (5/111)}
+  \barramcp{-7.89}{Aprovação nos Botões do Chat}{60.0}{60,0\% (9/15)}
+  \barramcp{-8.53}{Velocidade Percebida Adequada}{97.5}{97,5\% (39/40)}
+  \barramcp{-9.11}{Qualidade das Respostas (Geral)}{67.5}{67,5\% (nota 3,70/5)}
+  \barramcp{-9.69}{Qualidade (Graduação e Servidores)}{77.8}{77,8\% (nota 4,00/5)}
+  \barramcp{-10.27}{Preferência Direta do Usuário}{70.0}{70,0\% (14/20)}
+\end{tikzpicture}%
+}
+
+\vspace{0.15cm}
+{\small Fonte: Elaborado pelo Próprio Autor.}
+\end{figure}
+
+A comparação apresentada na Figura \ref{fig:resultados_avaliacao} evidencia a diferença de cobertura entre os dois modos. Na telemetria, enquanto o RAG Clássico respondeu de forma efetiva a $34,6\%$ das consultas e absteve-se em $65,4\%$, o Agente MCP elevou a taxa de respostas com conteúdo para $81,1\%$ e reduziu as abstenções para $14,4\%$, registrando apenas $4,5\%$ de falhas na etapa de decisão de ferramenta. Essa maior capacidade resolutiva refletiu-se na aprovação pelos botões de feedback da interface ($60,0\%$ no Agente MCP contra $45,8\%$ no RAG Clássico). A revisão qualitativa dos votos negativos nos botões mostrou que as insatisfações decorreram sobretudo de perguntas fora do escopo acadêmico recusadas corretamente pelo sistema, dúvidas sobre horários semanais de aula não contidos nos PPCs estáticos e abstenções excessivas do modo clássico.
+
+Nos indicadores do questionário (metade inferior de cada painel na Figura \ref{fig:resultados_avaliacao}), ambos os modos alcançaram aprovação igual ou superior a $95,0\%$ quanto à velocidade percebida. Na avaliação de clareza e qualidade das respostas, o Agente MCP superou o RAG Clássico tanto no público geral ($67,5\%$ contra $55,0\%$) quanto no grupo formado por graduandos e servidores ($77,8\%$ contra $70,4\%$, atingindo nota média de $4,00$ em $5,00$), além de concentrar $70,0\%$ da preferência direta entre os usuários que apontaram diferença entre as arquiteturas. Nas perguntas gerais sobre confiabilidade e utilidade da ferramenta, $80,6\%$ dos respondentes que conheciam as normas institucionais confirmaram a veracidade factual e a recusa segura do assistente diante de temas ausentes nos documentos, e $95,0\%$ aprovaram a usabilidade da interface web e afirmaram que o sistema reduz a necessidade de leitura manual de PDFs extensos e de atendimentos presenciais, sugerindo como extensões futuras a inclusão de avisos de eventos, editais de bolsas e prazos do calendário acadêmico.
 
 \FloatBarrier
 
 \subsection{Análise Comparativa e Confronto com a Literatura Correlata}
 
-O cruzamento entre os registros de telemetria e a avaliação dos usuários evidencia os compromissos de engenharia (\textit{trade-offs}) entre as duas arquiteturas quando executadas sob modelos locais de quatro bilhões de parâmetros:
+A análise conjunta da telemetria e da avaliação com usuários evidencia os compromissos de engenharia (\textit{trade-offs}) entre as duas arquiteturas sob modelos locais de quatro bilhões de parâmetros. O contraste principal residiu no equilíbrio entre cobertura de resposta e abstenção: o Agente MCP superou amplamente o RAG Clássico ($81,1\%$ contra $34,6\%$ de respostas efetivas) graças à autonomia para reformular os termos de busca na ferramenta \textit{search\_ifmg\_knowledge} e à priorização léxica no RRF ($\alpha = 0,4$), que favoreceu a localização exata de artigos, cargas horárias e códigos de disciplinas. No aspecto temporal, embora o ciclo adicional de decisão do Agente MCP tenha elevado a mediana de latência técnica ($13,83$~s contra $6,40$~s), a percepção de velocidade dos usuários manteve aprovação equivalente nos dois modos, pois a exibição em tempo real dos \textit{tokens} via SSE e o indicador visual de consulta aos documentos atenuaram a espera percebida.
 
-\begin{itemize}
-    \item \textbf{Cobertura de Resposta vs. Abstenção:} O achado empírico mais expressivo residiu na capacidade de recuperação útil: enquanto o RAG Clássico respondeu com conteúdo a apenas $34,6\%$ das consultas substantivas e absteve-se em $65,4\%$, o Agente MCP elevou a taxa de resposta efetiva para $81,1\%$ e reduziu as abstenções para $14,4\%$. Essa diferença decorre da capacidade do agente de reformular os termos de busca na ferramenta \textit{search\_ifmg\_knowledge} e da priorização léxica ($\alpha = 0,4$), o que se refletiu diretamente na maior concordância positiva no questionário ($67,5\%$ no MCP contra $55,0\%$ no RAG) e na preferência de $70,0\%$ entre os usuários que elegeram um modo superior.
-    \item \textbf{Latência Técnica vs. Velocidade Percebida:} Embora o Agente MCP tenha apresentado mediana de latência total $2,16$ vezes maior que a do RAG Clássico ($13,8$~s contra $6,4$~s), a percepção subjetiva de velocidade no questionário manteve médias ponderadas equivalentes na escala de $0$ a $4$ ($2,78$ no RAG Clássico e $2,80$ no Agente MCP), com aprovação igual ou superior a $95,0\%$. A transmissão progressiva via SSE e a exibição visual das ferramentas executadas mitigaram o impacto do tempo de decisão agêntico na experiência do usuário.
-    \item \textbf{Limitações de \textit{Tool Calling} em Modelos 4B:} O principal ponto de atenção do modo Agente MCP sob o modelo \textit{qwen3.5:4b} manifestou-se nos $5$ casos ($4,5\%$ das consultas substantivas) em que a etapa de decisão (\textit{tool\_decision}) consumiu o teto de $512$ \textit{tokens} de raciocínio interno sem concluir a emissão do objeto JSON da ferramenta, acionando a mensagem de contingência. No RAG Clássico, por seguir fluxo linear sem chamada autônoma de ferramentas, não ocorreram falhas de orquestração ($0,0\%$).
-\end{itemize}
+Por outro lado, os testes demonstraram a limitação de modelos compactos de quatro bilhões de parâmetros na invocação autônoma de ferramentas (\textit{Tool Calling}). No modo Agente MCP, $4,5\%$ das consultas consumiram o limite de raciocínio interno na etapa de decisão sem concluir a chamada JSON da ferramenta, acionando a resposta de contingência, ao passo que o fluxo linear do RAG Clássico não apresentou falhas de orquestração ($0,0\%$). Dessa forma, o RAG Clássico mostra-se indicado como opção determinística e de resposta imediata para dúvidas simples, enquanto o RAG Agêntico via MCP destaca-se na resolução de consultas normativas complexas que exigem maior completude e rastreabilidade explícita das fontes.
 
-Os resultados demonstram que o RAG Clássico atua como alternativa de baixa latência e execução determinística para consultas diretas, ao passo que o RAG Agêntico via MCP entrega superioridade na resolução efetiva de dúvidas normativas complexas, na completude das respostas e na rastreabilidade explícita das fontes institucionais.
+No confronto com a literatura voltada ao atendimento universitário, os resultados validam os avanços desta proposta. Em \cite{monteiro2021helena}, o assistente construído no IBM Watson restringiu-se a 12 intenções fixas de um único curso e assimilou $71,8\%$ das mensagens iniciais dos alunos, exigindo curadoria manual e retreinamento da árvore de diálogo para elevar a taxa de acerto na semana seguinte, além de perder precisão diante de variações de escrita. Neste trabalho, a busca híbrida abrangeu múltiplos cursos técnicos e superiores sem mapeamento manual de intenções, atingindo $81,1\%$ de cobertura efetiva no modo Agente MCP sobre perguntas abertas. Em relação a \cite{barbosa2023chatbot}, cuja validação utilizou apenas perguntas sintéticas via API paga do GPT-4 e relatou a emissão de respostas genéricas quando os documentos não continham a informação exata, esta pesquisa validou o sistema em uso real com a comunidade acadêmica, sem custos de API externa e com alto índice de fidelidade normativa e abstenção segura.
 
-No confronto com os trabalhos relacionados, os resultados empíricos validam os avanços desta proposta. Em \cite{monteiro2021helena}, o assistente em IBM Watson limitou-se a 12 intenções fixas de um único curso e assimilou $71,8\%$ das mensagens na primeira semana de testes com usuários ($56/78$), exigindo curadoria manual e retreinamento da árvore de diálogo para alcançar $93,6\%$ na semana seguinte, além de sofrer queda de acurácia para $81,0\%$ diante de variações de escrita; neste trabalho, a busca híbrida abrangeu múltiplos cursos técnicos e superiores sem mapeamento manual de fluxos, atingindo $81,1\%$ de cobertura efetiva no modo Agente MCP sobre consultas abertas reais. Em relação a \cite{barbosa2023chatbot}, cuja validação ocorreu apenas de forma sintética sobre as 240 perguntas de \cite{monteiro2021helena} ($90,4\%$ de acerto via API paga do GPT-4) e relatou a geração de respostas genéricas não fundamentadas quando os documentos não continham a resposta exata, esta pesquisa avançou ao avaliar o sistema em campo ($291$ interações e $40$ questionários) com custo zero de API e $80,6\%$ de confiabilidade factual e abstenção segura entre os conhecedores das normas. Os ganhos do Agente MCP sobre o RAG Clássico ($81,1\%$ contra $34,6\%$ de cobertura e nota média $4,00/5,00$ entre graduandos e servidores) convergem com \cite{modran2025leveraging}, em que a adição do protocolo MCP elevou a recuperação no topo (\textit{Recall@1}) de $0,42$ para $0,64$, a fidelidade de citação de $0,68$ para $0,86$ e a avaliação factual humana de $3,4$ para $4,4$ em escala de 5 pontos. Por fim, a latência mediana do Agente MCP em GPU local ($13,8$~s) situou-se na mesma faixa de $11$ a $16$~s reportada na arquitetura multiagente MCP de \cite{oliveira2025arquitetura} com modelo em nuvem (\textit{gpt-4o-mini}); contudo, enquanto \cite{oliveira2025arquitetura} registrou falha crítica de alucinação de parâmetros na exclusão indevida de um servidor de produção (\textit{delete\_server}), o contrato estritamente de leitura aqui implementado eliminou riscos de modificação do ambiente e conteve as falhas de chamada de ferramenta do modelo 4B em $4,5\%$ de mensagens seguras de contingência.
+Por fim, sob a ótica do protocolo MCP, a superioridade empírica do modo agêntico sobre o pipeline linear converge com os achados de \cite{modran2025leveraging}, estudo no qual a adição do MCP também elevou de forma consistente a precisão de recuperação no topo, a fidelidade de citação e a avaliação humana das respostas. Adicionalmente, a latência mediana do Agente MCP em GPU local ($13,83$~s) situou-se na mesma faixa de $11$ a $16$~s reportada na arquitetura multiagente de \cite{oliveira2025arquitetura} com modelo em nuvem (\textit{gpt-4o-mini}). Contudo, enquanto em \cite{oliveira2025arquitetura} foi registrada falha crítica de alucinação de parâmetros que resultou na exclusão acidental de um servidor de produção, o contrato estritamente de leitura implementado neste trabalho eliminou riscos ao ambiente institucional e conteve as limitações do modelo local compacto em mensagens seguras de contingência.
 
 \section{Conclusão}
 
