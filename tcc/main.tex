@@ -78,7 +78,10 @@ Do ponto de vista tecnológico, a extração automatizada de informações a par
 
 Diversos esforços na literatura buscaram automatizar o atendimento discente por meio de assistentes virtuais baseados em Processamento de Linguagem Natural (PLN) tradicional \cite{monteiro2021helena} ou em arquiteturas de Geração Aumentada por Recuperação (\textit{Retrieval-Augmented Generation} -- RAG) alimentadas por Interfaces de Programação de Aplicação (\textit{Application Programming Interfaces} -- APIs) comerciais em nuvem \cite{barbosa2023chatbot}. Contudo, essas abordagens anteriores enfrentam limitações relevantes: enquanto os motores de PLN tradicionais exigem o mapeamento manual e rígido de intenções e fluxos de diálogo, as soluções baseadas em APIs proprietárias dependem de custos recorrentes por requisição e comprometem a privacidade de dados institucionais ao processá-los em servidores externos. Além disso, observa-se uma lacuna no uso de protocolos abertos de governança de contexto, como o \textit{Model Context Protocol} (MCP) \cite{sabbag2025mcp}, que permitam delimitar de forma estrita o raio de atuação de agentes autônomos locais sobre resoluções normativas complexas. Assim, persiste a necessidade de investigações que combinem a execução 100\% local de modelos open-source com a busca híbrida otimizada e o controle de contexto via MCP sob hardware computacional restrito.
 
-Com o objetivo de superar as limitações identificadas na literatura, a proposta deste trabalho consiste no desenvolvimento e na avaliação comparativa de um Produto Mínimo Viável (\textit{Minimum Viable Product} -- MVP) de assistente virtual acadêmico baseado na arquitetura RAG, operando sob infraestrutura estritamente local e de código aberto no Instituto Federal de Minas Gerais (IFMG) Campus Ouro Branco. O sistema combina segmentação semântica orientada à estrutura de documentos normativos e busca híbrida (vetorial e léxica) para contrapor duas abordagens de recuperação: um pipeline de RAG Clássico determinístico e uma arquitetura agêntica governada pelo MCP em modo estrito de leitura. Ao vincular a geração de respostas dos modelos locais aos trechos extraídos dos Projetos Pedagógicos e regulamentos vigentes, a solução visa conferir autonomia de consulta aos estudantes, reduzir a demanda por atendimentos informativos de rotina nos setores administrativos e garantir a rastreabilidade das normas informadas. A validação em campo com discentes, docentes e técnicos administrativos demonstrou a viabilidade técnica de operar o serviço localmente sem custos de API externa e com alta fidelidade normativa, revelando que o RAG Clássico oferece menor tempo de resposta e estabilidade determinística sob modelos compactos, enquanto o Agente MCP amplia de forma expressiva a taxa de problemas resolvidos, a satisfação dos usuários e a transparência na citação das fontes oficiais.
+Este trabalho tem como objetivo desenvolver e avaliar comparativamente um Produto Mínimo Viável (\textit{Minimum Viable Product} -- MVP) de assistente virtual acadêmico baseado em RAG sob infraestrutura local e de código aberto para o Instituto Federal de Minas Gerais (IFMG) Campus Ouro Branco. O sistema combina segmentação semântica normativa e busca híbrida (vetorial e léxica) em PostgreSQL para contrapor o pipeline de RAG Clássico determinístico à arquitetura de RAG Agêntico governada pelo MCP em modo estrito de leitura. Nos experimentos com $291$ interações de telemetria e $40$ avaliações da comunidade acadêmica, a solução operou localmente sem custos de API externa e atingiu $80,6\%$ de fidelidade normativa, demonstrando que o RAG Clássico obteve menor latência mediana ($6,40$~s) e execução determinística, enquanto o Agente MCP alcançou maior cobertura de respostas efetivas ($81,1\%$ contra $34,6\%$), preferência dos usuários ($70,0\%$) e rastreabilidade explícita das fontes.
+
+O restante deste trabalho está organizado da seguinte forma: a Seção~\ref{sec:trabalhos-relacionados} apresenta os trabalhos relacionados; a Seção~\ref{sec:fundamentacao} aborda a fundamentação teórica; a Seção~\ref{sec:metodologia} descreve a metodologia aplicada; a Seção~\ref{sec:resultados} apresenta os experimentos realizados e os resultados obtidos; e a Seção~\ref{sec:conclusao} expõe as conclusões, limitações e possibilidades de trabalhos futuros.
+
 
 
 % === NOTAS DE AUXÍLIO PARA DISCUSSÃO COM O ORIENTADOR ===
@@ -88,12 +91,12 @@ Com o objetivo de superar as limitações identificadas na literatura, a propost
 % - Modran (2025): Usa MCP + ACP focado em tutoria/aprendizado adaptativo (ajusta nível do aluno).
 % - Oliveira (2025): Usa MCP para operações ativas de escrita/gerenciamento em servidores OpenStack.
 % - Minha Proposta: 100% Local (Ollama + bge-m3 + qwen3.5:4b), busca híbrida RRF com boost por intenção, RAG Clássico vs MCP em modo de leitura estrita.
-\section{Trabalhos Relacionados}
-No atendimento a estudantes em ambientes universitários, o trabalho \cite{monteiro2021helena} desenvolveu o assistente virtual Helena para o Departamento de Computação da Universidade Federal de Ouro Preto (UFOP). O sistema foi criado para responder a dúvidas de alunos sobre processos e normas da instituição utilizando a plataforma IBM Watson Assistant. Em termos técnicos, a solução em \cite{monteiro2021helena} baseia-se em PLN tradicional, o que exige mapear intenções manualmente e construir fluxos de diálogo fixos com regras rígidas. Diferente dessa abordagem, a proposta deste trabalho adota a arquitetura RAG sobre documentos oficiais. Essa escolha evita a necessidade de recriar fluxos manuais a cada atualização de normas, permitindo que o modelo monte as respostas de forma direta e dinâmica a partir dos regulamentos vigentes.
+\section{Trabalhos Relacionados}\label{sec:trabalhos-relacionados}
+No atendimento a estudantes em ambientes universitários, \cite{monteiro2021helena} desenvolveu o assistente virtual Helena para o Departamento de Computação da Universidade Federal de Ouro Preto (UFOP). O sistema foi criado para responder a dúvidas de alunos sobre processos e normas da instituição utilizando a plataforma IBM Watson Assistant. Em termos técnicos, a solução em \cite{monteiro2021helena} baseia-se em PLN tradicional, o que exige mapear intenções manualmente e construir fluxos de diálogo fixos com regras rígidas. Diferente dessa abordagem, a proposta deste trabalho adota a arquitetura RAG sobre documentos oficiais. Essa escolha evita a necessidade de recriar fluxos manuais a cada atualização de normas, permitindo que o modelo monte as respostas de forma direta e dinâmica a partir dos regulamentos vigentes.
 
 A aplicação de modelos de linguagem para esclarecer dúvidas acadêmicas também foi avaliada em \cite{barbosa2023chatbot}, com o desenvolvimento de um assistente para a Pró-Reitoria de Graduação da UFOP. A arquitetura descrita em \cite{barbosa2023chatbot} utiliza a biblioteca LlamaIndex integrada à API do ChatGPT (OpenAI), recuperando fragmentos de manuais e documentos salvos em formato JSON. Embora o objetivo de aplicação seja próximo ao deste estudo, as decisões de infraestrutura e recuperação são distintas. O sistema em \cite{barbosa2023chatbot} depende de serviços pagos em nuvem comercial, gerando custos contínuos por requisição e enviando dados da instituição para servidores externos. Em contrapartida, esta pesquisa opera com infraestrutura $100\%$ local e gratuita com o ecossistema Ollama. Além disso, enquanto \cite{barbosa2023chatbot} realiza buscas vetoriais simples apenas na memória do sistema, a solução proposta neste trabalho adota busca híbrida persistente em PostgreSQL com reclassificação por relevância.
 
-No uso de agentes de IA na educação, \cite{modran2025leveraging} propôs uma arquitetura que integra RAG, o MCP e o \textit{Agent Communication Protocol} (ACP). Este estudo teve como foco a tutoria adaptativa, empregando o MCP para acompanhar o perfil do aluno e ajustar o nível pedagógico das respostas. Enquanto em \cite{modran2025leveraging} o protocolo modula a complexidade do conteúdo didático, nesta pesquisa o MCP atua como camada de segurança e controle de dados. O objetivo é assegurar que o agente consulte apenas regulamentos oficiais e auditados, evitando respostas incorretas ou inventadas.
+No uso de agentes de IA na educação, \cite{modran2025leveraging} propôs uma arquitetura que integra RAG, o MCP e o \textit{Agent Communication Protocol} (ACP). Este estudo teve como foco a tutoria adaptativa, empregando o MCP para acompanhar o perfil do aluno e ajustar o nível pedagógico das respostas. Enquanto em \cite{modran2025leveraging} o protocolo modula a complexidade do conteúdo didático, nesta pesquisa o MCP atua como camada de segurança e controle de dados, com o objetivo de assegurar que o agente consulte apenas regulamentos oficiais e auditados, evitando respostas incorretas ou inventadas.
 
 O emprego do MCP como padrão de comunicação e controle de sistemas também foi explorado em \cite{oliveira2025arquitetura} para a gerência automatizada de servidores em nuvem OpenStack. Esse estudo demonstrou a eficácia do protocolo para expor ferramentas e dados a modelos generativos por meio de contratos formais de interface. Contudo, o modo de operação é diferente: enquanto em \cite{oliveira2025arquitetura} os agentes executam ações ativas que modificam o ambiente (como criar e apagar servidores virtuais), o assistente desenvolvido neste trabalho opera estritamente em modo de leitura. Essa restrição funciona como barreira de proteção, garantindo que o agente apenas consulte informações institucionais sem risco de modificações indevidas. A Tabela \ref{tab:trabalhos_relacionados} apresenta a síntese comparativa dos trabalhos correlatos analisados.
 
@@ -130,9 +133,7 @@ A análise conjunta dos trabalhos correlatos listados na Tabela \ref{tab:trabalh
 
 \FloatBarrier
 
-\section{Fundamentação Teórica}
-
-Esta seção apresenta o embasamento conceitual deste trabalho, abordando modelos de linguagem e o problema de alucinação, a arquitetura RAG, os mecanismos de indexação vetorial e busca híbrida, e a governança de contexto via MCP.
+\section{Fundamentação Teórica}\label{sec:fundamentacao}
 
 \subsection{Modelos de Linguagem e o Fenômeno da Alucinação}
 
@@ -196,8 +197,8 @@ Em que $d$ denota um fragmento contido no conjunto de resultados $D$, $\mathrm{r
 % CONCEITO 10: Semáforo de VRAM no Ollama (queue.service.ts)
 % - Limita a inferência paralela em GPU local (iniciado em OLLAMA_MAX_CONCURRENT = 2 e ajustado nos testes para 6) para evitar estouro de VRAM (Out-Of-Memory / OOM).
 
-\section{Metodologia}
-A metodologia deste trabalho compreende o desenvolvimento de um ecossistema de software estruturado em monorepo (\textit{npm workspaces}), projetado para implementar e comparar duas abordagens de recuperação de informações em ambiente local: o RAG Clássico determinístico e o RAG Agêntico mediado pelo protocolo MCP.
+\section{Metodologia}\label{sec:metodologia}
+A metodologia deste trabalho compreende o desenvolvimento de um software estruturado em monorepo (\textit{npm workspaces}), projetado para implementar e comparar duas abordagens de recuperação de informações em ambiente local: o RAG Clássico determinístico e o RAG Agêntico mediado pelo protocolo MCP.
 
 
 \subsection{Abordagens Arquiteturais Comparativas}
@@ -213,6 +214,8 @@ Em ambos os fluxos, a interface web solicita na etapa inicial de acesso a identi
 
 A coexistência dessas duas abordagens permite avaliar o compromisso de engenharia (\textit{trade-off}) entre determinismo e autonomia sob modelos locais compactos. Enquanto o RAG Clássico opera com fluxo de execução determinístico e acoplado à aplicação, priorizando menor latência por inferência direta, alta previsibilidade operacional e citação de fontes embutida no texto (sendo indicado para consultas rotineiras em hardware restrito), o RAG Agêntico mediado por MCP confere autonomia decisória ao modelo e isolamento de acesso por contratos formais. Essa arquitetura agêntica proporciona maior governança de dados e rastreabilidade explícita de metadados para auditoria das normas consultadas, embora imponha maior tempo de resposta decorrente dos ciclos de orquestração e maior suscetibilidade a omissões na invocação de ferramentas (\textit{Tool Calling}) em modelos de quatro bilhões de parâmetros.
 
+\FloatBarrier
+
 
 \subsection{Pipeline de Ingestão e Sanitização de Documentos}
 
@@ -225,12 +228,8 @@ Durante o uso simultâneo do sistema por múltiplos usuários, o processamento p
 
 
 \subsection{Delineamento Experimental}
-
 Para avaliar o comportamento das arquiteturas RAG Clássica e RAG Agêntica (MCP) em condições reais de consulta acadêmica, definiu-se um protocolo experimental estruturado em duas frentes complementares de coleta: monitoramento automatizado de telemetria e avaliação de percepção por questionário pós-uso. A base documental indexada para os experimentos contemplou os PPCs, ementários e regulamentos de estágio e TCC dos quatro cursos superiores do campus, sendo eles o Bacharelado em Sistemas de Informação (BSI), o Bacharelado em Administração, o Bacharelado em Engenharia Metalúrgica e a Licenciatura em Pedagogia, além dos PPCs dos cursos técnicos (Administração, Informática e Metalurgia) e do Regulamento de Ensino do IFMG.
-
 A avaliação com usuários buscou abranger participantes de todas as categorias da comunidade acadêmica que consultam ou aplicam as normas institucionais, contemplando estudantes de graduação (nas fases inicial, intermediária e concluinte), estudantes dos cursos técnicos integrados e subsequentes, docentes e Técnicos Administrativos em Educação (TAEs). No protocolo de teste, cada participante acessou a aplicação web, informou seu perfil institucional na tela inicial e realizou consultas livres sobre normas acadêmicas, matrizes curriculares, ementas, estágio e TCC, alternando entre o modo RAG Clássico e o modo Agente MCP. Durante as sessões, o módulo de observabilidade registrou automaticamente, em banco de dados relacional, a intenção classificada, o modo selecionado, a latência total, o tempo até o primeiro \textit{token} (\textit{Time to First Token} -- TTFT), os tempos de cada etapa interna do pipeline, o consumo de \textit{tokens}, os documentos oficiais recuperados e os votos binários (positivo ou negativo) atribuídos em cada mensagem.
-
-Após a interação prática com o assistente, os participantes responderam a um instrumento de avaliação estruturado. O questionário mensurou seis dimensões: (i) percepção de velocidade de resposta em cada modo (escala ordinal de cinco níveis, de \textit{muito lento} a \textit{muito rápido}); (ii) qualidade, clareza e objetividade das respostas nos modos RAG Clássico e Agente MCP (escala Likert de 1 a 5, de \textit{discordo totalmente} a \textit{concordo totalmente}); (iii) confiabilidade factual e ausência de alucinações frente aos regulamentos vigentes; (iv) preferência comparativa de assertividade entre as duas arquiteturas; (v) usabilidade da interface web; e (vi) estimativa de impacto na redução de buscas manuais em arquivos PDF e de atendimentos presenciais nas coordenações e secretarias.
 
 
 % === NOTAS DE AUXÍLIO PARA DISCUSSÃO COM O ORIENTADOR ===
@@ -242,9 +241,7 @@ Após a interação prática com o assistente, os participantes responderam a um
 % - Comparativo de Preferência de Usuários: RAG Clássico (mais rápido e direto) vs Agente MCP (mais explicativo e detalhado com exibição visual de fontes).
 
 
-\section{Experimentos e Resultados}
-
-Para validar a eficácia e a viabilidade técnica das soluções desenvolvidas, realizou-se a coleta de telemetria computacional em ambiente de auto-hospedagem local (\textit{homelab}), combinada à avaliação de campo junto à comunidade acadêmica do IFMG Campus Ouro Branco.
+\section{Experimentos e Resultados}\label{sec:resultados}
 
 \subsection{Ambiente Experimental e Configuração de Infraestrutura}
 
@@ -361,15 +358,15 @@ O assistente virtual foi disponibilizado em ambiente web (\texttt{https://chat.d
   % =========================================================================
   % PAINEL (b): TEMAS MAIS CONSULTADOS
   % =========================================================================
-  \fill[intbg, draw=intbar, line width=0.6pt, rounded corners=2pt] (-4.90, -3.70) rectangle (7.80, -3.18);
-  \node[anchor=center, font=\sffamily\footnotesize\bfseries, text=intbar!85!black] at (1.45, -3.44) {(b) Principais Temas Acadêmicos Consultados ($N = 291$)};
+  \fill[intbg, draw=intbar, line width=0.6pt, rounded corners=2pt] (-4.90, -3.35) rectangle (7.80, -2.83);
+  \node[anchor=center, font=\sffamily\footnotesize\bfseries, text=intbar!85!black] at (1.45, -3.09) {(b) Principais Temas Acadêmicos Consultados ($N = 291$)};
 
   \foreach \p in {0, 15, 30, 45, 60} {
     \pgfmathsetmacro{\xpos}{\p * 0.10}
-    \draw[gridgray, dashed, line width=0.45pt] (\xpos, -3.85) -- (\xpos, -7.35);
-    \node[anchor=north, font=\sffamily\scriptsize, text=black!65] at (\xpos, -7.40) {\p\%};
+    \draw[gridgray, dashed, line width=0.45pt] (\xpos, -3.50) -- (\xpos, -7.00);
+    \node[anchor=north, font=\sffamily\scriptsize, text=black!65] at (\xpos, -7.05) {\p\%};
   }
-  \draw[black!60, line width=0.6pt] (0, -3.85) -- (0, -7.35);
+  \draw[black!60, line width=0.6pt] (0, -3.50) -- (0, -7.00);
 
   \newcommand{\barraint}[4]{
     \node[anchor=east, font=\sffamily\footnotesize, text=black!85] at (-0.20, #1) {#2};
@@ -378,12 +375,12 @@ O assistente virtual foi disponibilizado em ambiente web (\texttt{https://chat.d
     \node[anchor=west, font=\sffamily\footnotesize, text=black!90] at ({\wbar + 0.12}, #1) {\textbf{#4}};
   }
 
-  \barraint{-4.20}{Dúvidas Acadêmicas Gerais}{27.1}{27,1\% (79)}
-  \barraint{-4.78}{Informações sobre Cursos}{16.5}{16,5\% (48)}
-  \barraint{-5.36}{Matrizes e Carga Horária}{14.8}{14,8\% (43)}
-  \barraint{-5.94}{Infraestrutura e Setores}{8.6}{8,6\% (25)}
-  \barraint{-6.52}{Saudações Iniciais}{8.2}{8,2\% (24)}
-  \barraint{-7.10}{Normas de Estágio e TCC}{6.2}{6,2\% (18)}
+  \barraint{-3.85}{Dúvidas Acadêmicas Gerais}{27.1}{27,1\% (79)}
+  \barraint{-4.43}{Informações sobre Cursos}{16.5}{16,5\% (48)}
+  \barraint{-5.01}{Matrizes e Carga Horária}{14.8}{14,8\% (43)}
+  \barraint{-5.59}{Infraestrutura e Setores}{8.6}{8,6\% (25)}
+  \barraint{-6.17}{Saudações Iniciais}{8.2}{8,2\% (24)}
+  \barraint{-6.75}{Normas de Estágio e TCC}{6.2}{6,2\% (18)}
 \end{tikzpicture}%
 }
 
@@ -392,6 +389,8 @@ O assistente virtual foi disponibilizado em ambiente web (\texttt{https://chat.d
 \end{figure}
 
 Conforme ilustrado na Figura \ref{fig:perfil_telemetria}, o público estudantil protagonizou mais de $70\%$ dos acessos identificados, com distribuição equilibrada entre alunos das fases inicial, intermediária e concluinte e participação majoritária dos cursos de BSI e Engenharia Metalúrgica, além dos cursos técnicos. As buscas concentraram-se em dúvidas sobre a rotina acadêmica, funcionamento dos cursos, grades curriculares e exigências de estágio e TCC, o que levou o motor de busca a recuperar prioritariamente os Projetos Pedagógicos de Curso (com destaque para BSI, Pedagogia, Engenharia Metalúrgica e Administração) e o Regulamento de Ensino do IFMG. De forma complementar à telemetria, aplicou-se o questionário pós-uso junto a $40$ participantes da comunidade acadêmica, cujos indicadores consolidados em comparação com a telemetria são apresentados para cada modo de uso na Figura \ref{fig:resultados_avaliacao}.
+
+\FloatBarrier
 
 \begin{figure}[!htb]
 \centering
@@ -474,23 +473,23 @@ Conforme ilustrado na Figura \ref{fig:perfil_telemetria}, o público estudantil 
 {\small Fonte: Elaborado pelo Próprio Autor.}
 \end{figure}
 
-A comparação apresentada na Figura \ref{fig:resultados_avaliacao} evidencia a diferença de cobertura entre os dois modos. Na telemetria, enquanto o RAG Clássico respondeu de forma efetiva a $34,6\%$ das consultas e absteve-se em $65,4\%$, o Agente MCP elevou a taxa de respostas com conteúdo para $81,1\%$ e reduziu as abstenções para $14,4\%$, registrando apenas $4,5\%$ de falhas na etapa de decisão de ferramenta. Essa maior capacidade resolutiva refletiu-se na aprovação pelos botões de feedback da interface ($60,0\%$ no Agente MCP contra $45,8\%$ no RAG Clássico). A revisão qualitativa dos votos negativos nos botões mostrou que as insatisfações decorreram sobretudo de perguntas fora do escopo acadêmico recusadas corretamente pelo sistema, dúvidas sobre horários semanais de aula não contidos nos PPCs estáticos e abstenções excessivas do modo clássico.
+A comparação na Figura \ref{fig:resultados_avaliacao} evidencia a diferença de cobertura entre os dois modos. Na telemetria, enquanto o RAG Clássico respondeu efetivamente a $34,6\%$ das consultas e absteve-se em $65,4\%$, o Agente MCP elevou as respostas efetivas para $81,1\%$ e reduziu as abstenções para $14,4\%$, com apenas $4,5\%$ de falhas na decisão de ferramenta. Essa capacidade resolutiva refletiu-se na aprovação pelos botões da interface ($60,0\%$ no Agente MCP contra $45,8\%$ no RAG Clássico), cujos votos negativos decorreram de perguntas fora do escopo recusadas pelo sistema, dúvidas sobre horários de aula ausentes nos PPCs e abstenções do modo clássico.
 
-Nos indicadores do questionário (metade inferior de cada painel na Figura \ref{fig:resultados_avaliacao}), ambos os modos alcançaram aprovação igual ou superior a $95,0\%$ quanto à velocidade percebida. Na avaliação de clareza e qualidade das respostas, o Agente MCP superou o RAG Clássico tanto no público geral ($67,5\%$ contra $55,0\%$) quanto no grupo formado por graduandos e servidores ($77,8\%$ contra $70,4\%$, atingindo nota média de $4,00$ em $5,00$), além de concentrar $70,0\%$ da preferência direta entre os usuários que apontaram diferença entre as arquiteturas. Nas perguntas gerais sobre confiabilidade e utilidade da ferramenta, $80,6\%$ dos respondentes que conheciam as normas institucionais confirmaram a veracidade factual e a recusa segura do assistente diante de temas ausentes nos documentos, e $95,0\%$ aprovaram a usabilidade da interface web e afirmaram que o sistema reduz a necessidade de leitura manual de PDFs extensos e de atendimentos presenciais, sugerindo como extensões futuras a inclusão de avisos de eventos, editais de bolsas e prazos do calendário acadêmico.
+Nos dados do questionário (metade inferior de cada painel na Figura \ref{fig:resultados_avaliacao}), ambos os modos obtiveram aprovação igual ou superior a $95,0\%$ na velocidade percebida. Quanto à clareza e qualidade, o Agente MCP superou o RAG Clássico no público geral ($67,5\%$ contra $55,0\%$) e entre graduandos e servidores ($77,8\%$ contra $70,4\%$, com média de $4,00/5$), concentrando $70,0\%$ da preferência direta dos usuários. Nas questões gerais, $80,6\%$ dos conhecedores das normas confirmaram a fidelidade factual e a recusa segura diante de temas ausentes nos documentos, e $95,0\%$ aprovaram a usabilidade da interface e a redução de leituras manuais de PDFs e de atendimentos presenciais, sugerindo incluir avisos de eventos, editais de bolsas e prazos do calendário acadêmico.
 
 \FloatBarrier
 
 \subsection{Análise Comparativa e Confronto com a Literatura Correlata}
 
+
 A análise conjunta da telemetria e do questionário evidencia os compromissos de engenharia (\textit{trade-offs}) entre as duas arquiteturas sob modelos locais de quatro bilhões de parâmetros. A superioridade do Agente MCP na cobertura de respostas deveu-se à autonomia para reformular termos de busca na ferramenta \textit{search\_ifmg\_knowledge} e à priorização léxica no RRF ($\alpha = 0,4$), que favoreceu a localização exata de artigos, cargas horárias e códigos de disciplinas. Embora o ciclo adicional de decisão tenha elevado a latência técnica do modo agêntico, a transmissão em tempo real via SSE e o indicador visual de consulta mantiveram a aprovação de velocidade equivalente nos dois modos. Por outro lado, as falhas pontuais de invocação JSON (\textit{Tool Calling}) no Agente MCP frente à ausência de erros de orquestração no fluxo linear demonstram que o RAG Clássico permanece indicado para consultas diretas e imediatas, enquanto o RAG Agêntico destaca-se em dúvidas normativas complexas que exigem maior completude e rastreabilidade de fontes.
 
 No confronto com a literatura correlata, os resultados validam os avanços desta proposta. Enquanto o assistente em \cite{monteiro2021helena} restringiu-se a $12$ intenções fixas de um único curso ($71,8\%$ de assimilação inicial) e exigiu curadoria manual contínua, a busca híbrida proposta atendeu a múltiplos cursos técnicos e superiores sem mapeamento prévio, alcançando $81,1\%$ de cobertura efetiva no modo Agente MCP sobre perguntas abertas. Diferente de \cite{barbosa2023chatbot}, que avaliou apenas perguntas sintéticas via API paga e relatou respostas genéricas diante de lacunas documentais, este estudo validou o sistema com a comunidade acadêmica sem custos externos e com alta taxa de abstenção segura ($80,6\%$). Por fim, os ganhos de cobertura e avaliação humana obtidos com o protocolo MCP convergem com \cite{modran2025leveraging}, e a latência mediana em GPU local ($13,83$~s) manteve-se na faixa de $11$ a $16$~s reportada em nuvem por \cite{oliveira2025arquitetura}, com a vantagem de que o contrato estritamente de leitura eliminou riscos de ações destrutivas por alucinação de parâmetros.
 
-\section{Conclusão}
 
-Este trabalho apresentou o projeto, a implementação e a avaliação comparativa de um MVP de assistente virtual acadêmico concebido para o IFMG Campus Ouro Branco, combinando RAG Clássico e RAG Agêntico via MCP sob infraestrutura 100\% local e de código aberto.
+\section{Conclusão}\label{sec:conclusao}
 
-A validação empírica em $291$ interações de telemetria e $40$ avaliações com discentes, docentes e TAEs demonstrou que é viável disponibilizar um serviço institucional confiável e de baixo custo sem recorrer a APIs pagas em nuvem ou expor dados acadêmicos a servidores externos. A implementação do pipeline de busca híbrida (\textit{pgvector} HNSW e FTS via RRF ponderado), combinada ao \textit{chunking} semântico orientado ao domínio e ao semáforo de concorrência de VRAM, assegurou latência de recuperação no banco inferior a $70$~ms, respostas fundamentadas nos regulamentos e $80,6\%$ de confiabilidade factual e abstenção segura entre os conhecedores das normas.
+Este trabalho apresentou o projeto, a implementação e a avaliação comparativa de um MVP de assistente virtual acadêmico concebido para o IFMG Campus Ouro Branco, combinando RAG Clássico e RAG Agêntico via MCP sob infraestrutura 100\% local e de código aberto. A validação empírica em $291$ interações de telemetria e $40$ avaliações com discentes, docentes e TAEs demonstrou que é viável disponibilizar um serviço institucional confiável e de baixo custo sem recorrer a APIs pagas em nuvem ou expor dados acadêmicos a servidores externos. A implementação do pipeline de busca híbrida (\textit{pgvector} HNSW e FTS via RRF ponderado), combinada ao \textit{chunking} semântico orientado ao domínio e ao semáforo de concorrência de VRAM, assegurou latência de recuperação no banco inferior a $70$~ms, respostas fundamentadas nos regulamentos e $80,6\%$ de confiabilidade factual e abstenção segura entre os conhecedores das normas.
 
 Constatou-se que o RAG Clássico oferece menor latência mediana ($6,4$~s) e estabilidade determinística, enquanto o Agente MCP alcança superioridade na cobertura de respostas efetivas ($81,1\%$ contra $34,6\%$) e na preferência dos usuários ($70,0\%$). Como limitação da pesquisa, destaca-se a restrição do porte do modelo de linguagem local suportado pelo hardware disponível (quatro bilhões de parâmetros), o que ocasionou $4,5\%$ de falhas de \textit{Tool Calling} autônomo na abordagem agêntica via MCP quando comparada ao determinismo do RAG Clássico.
 
